@@ -309,7 +309,7 @@ a:hover { color: var(--accent-bright); }
   display: flex;
   align-items: stretch;
   gap: 0;
-  max-width: 560px;
+  max-width: 720px;
   border: 1px solid var(--border);
   border-radius: 3px;
   overflow: hidden;
@@ -319,11 +319,13 @@ a:hover { color: var(--accent-bright); }
 .install-block code {
   flex: 1;
   font-family: var(--mono);
-  font-size: 0.9rem;
+  font-size: 0.78rem;
   padding: 0.9rem 1.1rem;
   color: var(--text);
   display: flex;
   align-items: center;
+  word-break: break-all;
+  line-height: 1.4;
 }
 
 .install-block code .prompt { color: var(--accent); margin-right: 0.55rem; }

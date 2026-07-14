@@ -145,11 +145,15 @@
 
     <section class="lp-section" id="install">
       <h2>Install</h2>
-      <p class="section-lede">Terminal-native. Bring your own model keys.</p>
+      <p class="section-lede">One line in your terminal. Bring your own model keys.</p>
       <div class="install-block">
-        <code id="install-cmd" data-cmd="pip install -U aider-chat && z"><span class="prompt">$</span>pip install -U aider-chat &amp;&amp; z</code>
+        <code id="install-cmd" data-cmd="curl -fsSL https://raw.githubusercontent.com/Nate-git05/z/main/install.sh | sh"><span class="prompt">$</span>curl -fsSL https://raw.githubusercontent.com/Nate-git05/z/main/install.sh | sh</code>
         <button type="button" id="copy-install" aria-label="Copy install command">Copy</button>
       </div>
+      <p class="section-lede" style="margin-top:1rem">
+        macOS / Linux. Puts <span style="font-family:var(--mono);color:var(--text)">z</span> on your PATH.
+        Then set your API key and run <span style="font-family:var(--mono);color:var(--text)">z</span> in a project.
+      </p>
     </section>
 
     <section class="lp-section" id="waitlist">
