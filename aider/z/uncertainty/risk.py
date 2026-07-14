@@ -1,0 +1,170 @@
+"""
+Independent risk and confidence tier derivation from concrete signals.
+
+Never self-rated by the model as a numeric score — tiers come from checkable facts.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import List, Optional, Sequence
+
+from .schema import (
+    NodeType,
+    Tier,
+    path_looks_high_stakes,
+    path_looks_migration,
+    text_looks_high_stakes,
+)
+
+
+@dataclass
+class DetectionSignals:
+    """Concrete, checkable facts collected during / after a change."""
+
+    files_changed: List[str] = field(default_factory=list)
+    symbols_changed: List[str] = field(default_factory=list)
+    high_stakes_hit: bool = False
+    migration_hit: bool = False
+    tests_relevant_exist: Optional[bool] = None  # None = unknown
+    tests_passed: Optional[bool] = None
+    live_api_verified: Optional[bool] = None  # None = N/A, False = assumed
+    pattern_match_found: Optional[bool] = None
+    conflicting_patterns: bool = False
+    reference_count: int = 0
+    blast_radius_threshold: int = 5
+    todo_markers_near_change: bool = False
+    unverifiable_config_refs: List[str] = field(default_factory=list)
+    edge_cases_listed: List[str] = field(default_factory=list)
+    requirement_gaps: List[str] = field(default_factory=list)
+    mcp_unverifiable: bool = False
+    closely_matches_tested_pattern: bool = False
+
+
+def _max_tier(*tiers: Tier) -> Tier:
+    order = {Tier.LOW: 0, Tier.MEDIUM: 1, Tier.HIGH: 2}
+    return max(tiers, key=lambda t: order[t])
+
+
+def _min_conf(*tiers: Tier) -> Tier:
+    order = {Tier.HIGH: 2, Tier.MEDIUM: 1, Tier.LOW: 0}
+    return min(tiers, key=lambda t: order[t])
+
+
+def derive_risk_tier(signals: DetectionSignals, node_type: NodeType) -> Tier:
+    """
+    Risk = how bad if wrong. Independent of confidence.
+    Category alone can force Medium/High (payments, auth, migrations).
+    """
+    risk = Tier.LOW
+
+    if signals.high_stakes_hit or signals.migration_hit:
+        risk = _max_tier(risk, Tier.MEDIUM)
+
+    if node_type == NodeType.MIGRATION_RISK:
+        risk = _max_tier(risk, Tier.MEDIUM)
+
+    if node_type in (
+        NodeType.SHARED_LOGIC,
+        NodeType.UNVERIFIABLE_CONFIG,
+        NodeType.API_ASSUMPTION,
+    ):
+        if signals.high_stakes_hit:
+            risk = _max_tier(risk, Tier.HIGH)
+        else:
+            risk = _max_tier(risk, Tier.MEDIUM)
+
+    if signals.reference_count >= signals.blast_radius_threshold * 2:
+        risk = _max_tier(risk, Tier.HIGH)
+    elif signals.reference_count >= signals.blast_radius_threshold:
+        risk = _max_tier(risk, Tier.MEDIUM)
+
+    if signals.tests_relevant_exist is True and signals.tests_passed is False:
+        risk = _max_tier(risk, Tier.HIGH)
+
+    if node_type == NodeType.REQUIREMENT_GAP:
+        risk = _max_tier(risk, Tier.MEDIUM)
+
+    if node_type == NodeType.HIGH_CONFIDENCE:
+        if signals.high_stakes_hit or signals.migration_hit:
+            risk = _max_tier(risk, Tier.MEDIUM)
+        else:
+            risk = Tier.LOW
+
+    for f in signals.files_changed:
+        if path_looks_high_stakes(f):
+            risk = _max_tier(risk, Tier.MEDIUM)
+        if path_looks_migration(f):
+            risk = _max_tier(risk, Tier.MEDIUM)
+
+    return risk
+
+
+def derive_confidence_tier(signals: DetectionSignals, node_type: NodeType) -> Tier:
+    """
+    Confidence = how sure about correctness of what was done.
+    Derived from tests, live verification, pattern match — not model self-score.
+    """
+    if node_type == NodeType.HIGH_CONFIDENCE:
+        return Tier.HIGH
+
+    conf = Tier.MEDIUM
+
+    if signals.tests_relevant_exist is True and signals.tests_passed is True:
+        conf = Tier.HIGH
+    elif signals.tests_relevant_exist is True and signals.tests_passed is False:
+        conf = Tier.LOW
+    elif signals.tests_relevant_exist is False:
+        conf = Tier.LOW
+
+    if signals.live_api_verified is False or signals.mcp_unverifiable:
+        conf = _min_conf(conf, Tier.LOW)
+
+    if signals.pattern_match_found is False or signals.conflicting_patterns:
+        conf = _min_conf(conf, Tier.LOW)
+
+    if signals.unverifiable_config_refs:
+        conf = _min_conf(conf, Tier.LOW)
+
+    if signals.todo_markers_near_change:
+        conf = _min_conf(conf, Tier.MEDIUM)
+
+    if signals.closely_matches_tested_pattern and signals.tests_passed is True:
+        conf = Tier.HIGH
+
+    if node_type == NodeType.EDGE_CASE:
+        conf = _min_conf(conf, Tier.MEDIUM)
+
+    if node_type == NodeType.REQUIREMENT_GAP:
+        conf = _min_conf(conf, Tier.LOW)
+
+    return conf
+
+
+def scan_high_stakes(files: Sequence[str], symbols: Sequence[str] = ()) -> bool:
+    for f in files:
+        if path_looks_high_stakes(f) or path_looks_migration(f):
+            return True
+        if text_looks_high_stakes(f):
+            return True
+    for s in symbols:
+        if text_looks_high_stakes(s):
+            return True
+    return False
+
+
+def collect_base_signals(
+    files_changed: Sequence[str],
+    symbols_changed: Sequence[str] = (),
+    *,
+    blast_radius_threshold: int = 5,
+) -> DetectionSignals:
+    files = list(files_changed)
+    symbols = list(symbols_changed)
+    return DetectionSignals(
+        files_changed=files,
+        symbols_changed=symbols,
+        high_stakes_hit=scan_high_stakes(files, symbols),
+        migration_hit=any(path_looks_migration(f) for f in files),
+        blast_radius_threshold=blast_radius_threshold,
+    )

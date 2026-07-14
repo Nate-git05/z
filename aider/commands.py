@@ -214,7 +214,9 @@ class Commands:
         if args:
             models.print_matching_models(self.io, args)
         else:
-            self.io.tool_output("Please provide a partial model name to search for.")
+            from aider.z.models_catalog import print_curated_models
+
+            print_curated_models(self.io)
 
     def cmd_web(self, args, return_content=False):
         "Scrape a webpage, convert to markdown and send in a message"
@@ -1678,6 +1680,122 @@ Just show me the edits I need to make.
             )
         except Exception as e:
             self.io.tool_error(f"An unexpected error occurred while copying to clipboard: {str(e)}")
+
+    def cmd_login(self, args):
+        "Sign in to your Z account (email, phone, or Google)"
+        args = (args or "").strip().lower()
+        if args in ("email", "phone", "google"):
+            from aider.z.cli import cmd_login as cli_login
+
+            return cli_login(self.io, provider=args)
+
+        from aider.z.auth import run_login_flow
+
+        run_login_flow(self.io, analytics=getattr(self.coder, "analytics", None))
+
+    def cmd_auth(self, args):
+        "Alias for /login"
+        return self.cmd_login(args)
+
+    def cmd_logout(self, args):
+        "Sign out of Z and clear ~/.z/credentials"
+        from aider.z.auth import logout
+
+        logout(self.io)
+
+    def cmd_whoami(self, args):
+        "Show the current Z account and workspace"
+        from aider.z.auth import whoami_text
+
+        self.io.tool_output(whoami_text())
+
+    def cmd_mcp(self, args):
+        "List MCP tools connected via the Z web app (read-only)"
+        from aider.z.mcp_client import print_mcp_list
+
+        print_mcp_list(self.io)
+
+    def cmd_skills(self, args):
+        "List reusable skills, or create one: /skills create <topic>"
+        args = (args or "").strip()
+        if not args or args.lower() in ("list", "ls"):
+            from aider.z.skills.session import print_skills_list
+
+            print_skills_list(self.io)
+            return
+        lower = args.lower()
+        if lower.startswith("create"):
+            topic = args[6:].strip()
+            from aider.z.skills.cli import cmd_skill_create
+
+            model_name = None
+            if getattr(self.coder, "main_model", None):
+                model_name = getattr(self.coder.main_model, "name", None)
+            return cmd_skill_create(self.io, topic, model_name=model_name)
+
+        # Treat bare text as create topic
+        from aider.z.skills.cli import cmd_skill_create
+
+        model_name = None
+        if getattr(self.coder, "main_model", None):
+            model_name = getattr(self.coder.main_model, "name", None)
+        return cmd_skill_create(self.io, args, model_name=model_name)
+
+    def cmd_skill(self, args):
+        "Alias for /skills"
+        return self.cmd_skills(args)
+
+    def cmd_uncertainties(self, args):
+        """Browse the uncertainty tree (risk-first). Select a node to fix, test, explain, or ignore."""
+        store = getattr(self.coder, "uncertainty_store", None)
+        if store is None:
+            try:
+                from aider.z.uncertainty.engine import attach_engine_to_coder
+
+                attach_engine_to_coder(self.coder)
+                store = self.coder.uncertainty_store
+            except Exception as err:
+                self.io.tool_error(f"Uncertainty tree unavailable: {err}")
+                return
+
+        args = (args or "").strip().lower()
+        mode = "risk"
+        if args in ("file", "files", "f"):
+            mode = "file"
+        elif args in ("session", "task", "s"):
+            mode = "session"
+        elif args in ("risk", "r"):
+            mode = "risk"
+        elif args.isdigit():
+            # Direct open by index
+            from aider.z.uncertainty.tree import build_tree, flatten_for_display
+            from aider.z.uncertainty.ui import format_detail
+            from aider.z.uncertainty.actions import apply_action
+
+            nodes = store.list(include_resolved=False)
+            rows = flatten_for_display(build_tree(nodes, mode="risk"), mode="risk")
+            idx = int(args)
+            if idx < 1 or idx > len(rows):
+                self.io.tool_warning("Node number out of range. Use /uncertainties to list.")
+                return
+            node = rows[idx - 1][1]
+            self.io.tool_output(format_detail(node))
+            act = self.io.prompt_ask(
+                "Action [F]ix / [T]est / [E]xplain / [I]gnore / [C]ustom / Enter skip",
+                default="",
+            ).strip().lower()
+            if not act:
+                return
+            custom = ""
+            if act in ("c", "custom"):
+                custom = self.io.prompt_ask("Custom follow-up").strip()
+            result = apply_action(store, node, act, custom_text=custom)
+            self.io.tool_output(result.message)
+            return result.prompt
+
+        from aider.z.uncertainty.ui import browse_interactive
+
+        return browse_interactive(self.io, store, mode=mode)
 
 
 def expand_subdir(file_path):

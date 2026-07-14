@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Skills — Z{% endblock %}
+{% block body %}
+  <h1>Skills</h1>
+  <p class="muted">
+    Reusable instructions your agent auto-discovers.
+    Create with <span class="meta">z skill create</span> — manage and share here.
+    {% if workspace %} Workspace: <strong>{{ workspace.name }}</strong>.{% endif %}
+  </p>
+
+  {% if flash == "shared" %}<div class="flash">Skill shared to workspace.</div>{% endif %}
+  {% if flash == "unshared" %}<div class="flash">Skill is personal again.</div>{% endif %}
+  {% if flash == "deleted" %}<div class="flash">Skill deleted.</div>{% endif %}
+
+  <h2>Personal</h2>
+  {% if personal %}
+    {% for s in personal %}
+    <div class="row">
+      <div>
+        <div class="tool-name"><a href="/app/skills/{{ s.id }}">{{ s.title }}</a></div>
+        <p class="desc">{{ s.description or "—" }}</p>
+        <p class="meta">{% if s.created_by %}{{ s.created_by }} · {% endif %}personal</p>
+      </div>
+      <div class="actions">
+        <a class="btn btn-ghost" href="/app/skills/{{ s.id }}">View</a>
+        {% if workspace %}
+        <form method="post" action="/app/skills/{{ s.id }}/share">
+          <button class="btn" type="submit">Share to workspace</button>
+        </form>
+        {% endif %}
+        <form method="post" action="/app/skills/{{ s.id }}/delete"
+              onsubmit="return confirm('Delete this skill?');">
+          <button class="btn btn-danger" type="submit">Delete</button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="muted">No personal skills yet. Run <span class="meta">z skill create "…"</span> in the CLI.</p>
+  {% endif %}
+
+  <h2>Workspace shared</h2>
+  {% if shared %}
+    {% for s in shared %}
+    <div class="row">
+      <div>
+        <div class="tool-name"><a href="/app/skills/{{ s.id }}">{{ s.title }}</a></div>
+        <p class="desc">{{ s.description or "—" }}</p>
+        <p class="meta">{% if s.created_by %}{{ s.created_by }} · {% endif %}workspace</p>
+      </div>
+      <div class="actions">
+        <span class="badge">shared</span>
+        <a class="btn btn-ghost" href="/app/skills/{{ s.id }}">View</a>
+        {% if s.user_id == user.id %}
+        <form method="post" action="/app/skills/{{ s.id }}/unshare">
+          <button class="btn btn-ghost" type="submit">Unshare</button>
+        </form>
+        <form method="post" action="/app/skills/{{ s.id }}/delete"
+              onsubmit="return confirm('Delete this skill?');">
+          <button class="btn btn-danger" type="submit">Delete</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="muted">No workspace-shared skills yet.</p>
+  {% endif %}
+{% endblock %}

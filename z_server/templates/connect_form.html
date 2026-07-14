@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Connect {{ tool.display_name }} — Z{% endblock %}
+{% block body %}
+  <p class="meta"><a href="/app/integrations">← Integrations</a></p>
+  <h1>Connect {{ tool.display_name }}</h1>
+  <p class="muted">{{ tool.description }}</p>
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  <form method="post" action="/app/integrations/connect/{{ tool.server_name }}" style="margin-top:1.5rem">
+    <label for="scope">Scope</label>
+    <select id="scope" name="scope">
+      <option value="personal">Personal account</option>
+      {% if workspace %}
+      <option value="workspace">Workspace — {{ workspace.name }}</option>
+      {% endif %}
+    </select>
+
+    {% for field in tool.fields %}
+      <label for="{{ field.key }}">{{ field.label }}{% if field.required %} *{% endif %}</label>
+      <input
+        id="{{ field.key }}"
+        name="{{ field.key }}"
+        type="{% if field.secret %}password{% else %}text{% endif %}"
+        placeholder="{{ field.placeholder or '' }}"
+        {% if field.required %}required{% endif %}
+        autocomplete="off"
+      />
+    {% endfor %}
+
+    <p style="margin-top:1.75rem">
+      <button class="btn" type="submit">Connect</button>
+      <a class="btn btn-ghost" href="/app/integrations" style="margin-left:0.5rem">Cancel</a>
+    </p>
+  </form>
+{% endblock %}

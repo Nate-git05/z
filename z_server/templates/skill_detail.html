@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}{{ skill.title }} — Skills — Z{% endblock %}
+{% block body %}
+  <p class="meta"><a href="/app/skills">← Skills</a></p>
+  <h1>{{ skill.title }}</h1>
+  <p class="muted">{{ skill.description }}</p>
+  <p class="meta">
+    {{ skill.scope }}
+    {% if skill.created_by %} · {{ skill.created_by }}{% endif %}
+  </p>
+
+  {% if saved %}<div class="flash">Saved.</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  {% if can_edit %}
+  <form method="post" action="/app/skills/{{ skill.id }}" style="margin-top:1.5rem; max-width:720px">
+    <label for="title">Title</label>
+    <input id="title" name="title" type="text" required value="{{ skill.title }}" />
+    <label for="description">Description</label>
+    <input id="description" name="description" type="text" value="{{ skill.description }}" />
+    <label for="content">Content</label>
+    <textarea id="content" name="content" required rows="18"
+      style="width:100%; max-width:720px; background:#111; border:1px solid var(--border); color:var(--text);
+             padding:0.75rem; border-radius:2px; font-family:'IBM Plex Mono',monospace; font-size:0.85rem; line-height:1.45;">{{ skill.content }}</textarea>
+    <p style="margin-top:1.25rem" class="actions">
+      <button class="btn" type="submit">Save</button>
+      {% if not skill.workspace_id and workspace %}
+      <button class="btn btn-ghost" type="submit" formaction="/app/skills/{{ skill.id }}/share" formmethod="post">Share to workspace</button>
+      {% endif %}
+      <button class="btn btn-danger" type="submit" formaction="/app/skills/{{ skill.id }}/delete" formmethod="post"
+              onclick="return confirm('Delete this skill?');">Delete</button>
+    </p>
+  </form>
+  {% else %}
+  <pre style="white-space:pre-wrap; background:#111; border:1px solid var(--border); padding:1rem;
+              font-family:'IBM Plex Mono',monospace; font-size:0.85rem; color:var(--text);">{{ skill.content }}</pre>
+  {% endif %}
+{% endblock %}

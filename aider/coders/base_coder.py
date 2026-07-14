@@ -541,6 +541,25 @@ class Coder:
                 self.io.tool_output("JSON Schema:")
                 self.io.tool_output(json.dumps(self.functions, indent=4))
 
+        # Z uncertainty tree — structured risk/confidence nodes for this session
+        self.uncertainty_engine = None
+        self.uncertainty_store = None
+        try:
+            from aider.z.uncertainty.engine import attach_engine_to_coder
+
+            user_label = None
+            try:
+                from aider.z.auth import current_session
+
+                creds = current_session()
+                if creds:
+                    user_label = creds.display_name()
+            except Exception:
+                pass
+            attach_engine_to_coder(self, user_label=user_label)
+        except Exception:
+            pass
+
     def setup_lint_cmds(self, lint_cmds):
         if not lint_cmds:
             return
@@ -929,6 +948,12 @@ class Coder:
         else:
             message = user_message
 
+        # Start-of-task requirement checklist (surfaced before implementation when feasible)
+        if message and not (isinstance(message, str) and message.startswith("/")):
+            user_text = user_message if isinstance(user_message, str) else message
+            self._maybe_pull_skills(user_text)
+            self._maybe_begin_uncertainty_task(user_text)
+
         while message:
             self.reflected_message = None
             list(self.send_message(message))
@@ -942,6 +967,108 @@ class Coder:
 
             self.num_reflections += 1
             message = self.reflected_message
+
+        # After a non-trivial completed edit turn, offer to save a reusable skill
+        if (
+            isinstance(user_message, str)
+            and not user_message.startswith("/")
+            and self.aider_edited_files
+            and not self.reflected_message
+        ):
+            self._maybe_suggest_skill(user_message)
+
+    def _maybe_pull_skills(self, user_message: str):
+        """Auto-pull full skill content when the task matches the session index."""
+        if not user_message or len(user_message.strip()) < 12:
+            return
+        try:
+            from aider.z.skills.session import (
+                format_skills_for_context,
+                get_session_skill_index,
+                load_skills_for_session,
+                select_relevant_skills,
+            )
+
+            if not get_session_skill_index():
+                load_skills_for_session(io=None)
+
+            skills = select_relevant_skills(user_message)
+            if not skills:
+                return
+            block = format_skills_for_context(skills)
+            if not block:
+                return
+            names = ", ".join(s.title for s in skills)
+            self.io.tool_output(f"Applying skill(s): {names}")
+            # Inject as a user/assistant exchange so the model sees it this turn
+            self.cur_messages += [
+                {"role": "user", "content": block},
+                {"role": "assistant", "content": "I'll follow those skills where they apply."},
+            ]
+        except Exception:
+            if getattr(self, "verbose", False):
+                pass
+
+    def _maybe_suggest_skill(self, user_message: str):
+        """Offer to save a skill after completing a non-trivial coding task."""
+        edited = self.aider_edited_files or set()
+        if len(edited) < 1:
+            return
+        # Skip tiny one-liners / pure renames
+        if len(user_message.strip()) < 24 and len(edited) < 2:
+            return
+        try:
+            if not self.io.confirm_ask(
+                "Want me to save this as a reusable skill for next time?",
+                default="n",
+            ):
+                return
+            from aider.z.skills.cli import save_skill_from_task
+
+            rels = []
+            for path in edited:
+                try:
+                    rels.append(self.get_rel_fname(path))
+                except Exception:
+                    rels.append(str(path))
+            context = (
+                f"User request: {user_message}\n"
+                f"Files changed: {', '.join(rels[:20])}\n"
+            )
+            topic = user_message.strip()
+            if len(topic) > 200:
+                topic = topic[:200] + "…"
+            model_name = None
+            if getattr(self, "main_model", None):
+                model_name = getattr(self.main_model, "name", None)
+            save_skill_from_task(self.io, topic, context=context, model_name=model_name)
+            # Refresh session index
+            try:
+                from aider.z.skills.session import load_skills_for_session
+
+                self.skill_index = load_skills_for_session(io=None)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _maybe_begin_uncertainty_task(self, user_message: str):
+        engine = getattr(self, "uncertainty_engine", None)
+        if not engine or not user_message or not isinstance(user_message, str):
+            return
+        # Avoid re-decomposing tiny follow-ups if a checklist is already active this session
+        if engine.ctx.checklist and len(user_message) < 40:
+            return
+        try:
+            from aider.z.uncertainty.checklist import format_checklist_for_user
+
+            checklist = engine.begin_task(user_message)
+            if checklist.items:
+                self.io.tool_output("")
+                self.io.tool_output(format_checklist_for_user(checklist))
+                self.io.tool_output("")
+        except Exception:
+            pass
 
     def check_and_open_urls(self, exc, friendly_msg=None):
         """Check exception for URLs, offer to open in a browser, with user-friendly error msgs."""
@@ -1621,6 +1748,78 @@ class Coder:
                 if ok:
                     self.reflected_message = test_errors
                     return
+
+        # Uncertainty tree: run concrete detectors after edits settle (no reflection pending)
+        if edited and not self.reflected_message:
+            self._run_uncertainty_analysis(edited)
+
+    def _run_uncertainty_analysis(self, edited):
+        engine = getattr(self, "uncertainty_engine", None)
+        if not engine or not edited:
+            return
+        try:
+            # Capture model-listed edge cases / migration impact from the reply if present
+            content = self.partial_response_content or ""
+            self._ingest_uncertainty_self_reports(content)
+
+            rels = []
+            for path in edited:
+                try:
+                    rels.append(self.get_rel_fname(path))
+                except Exception:
+                    rels.append(str(path))
+
+            new_nodes = engine.analyze_edits(
+                rels,
+                tests_passed=self.test_outcome,
+            )
+            if new_nodes:
+                from aider.z.uncertainty.ui import print_summary_line
+
+                print_summary_line(self.io, new_nodes)
+                # Failing tests escalate — surface prominently
+                failing = [
+                    n
+                    for n in new_nodes
+                    if n.signals.get("tests_passed") is False
+                    or n.status.value == "Needs Human Review"
+                ]
+                if failing and self.test_outcome is False:
+                    self.io.tool_warning(
+                        "Relevant tests failed — uncertainty tree escalated. "
+                        "Use /uncertainties before proceeding silently."
+                    )
+        except Exception as err:
+            if self.verbose:
+                self.io.tool_warning(f"Uncertainty analysis skipped: {err}")
+
+    def _ingest_uncertainty_self_reports(self, content: str):
+        """Parse structured edge-case / migration-impact listings from the model reply."""
+        engine = getattr(self, "uncertainty_engine", None)
+        if not engine or not content:
+            return
+        import re
+
+        # Edge cases block: lines after a heading the prompts may request
+        edge_match = re.search(
+            r"(?i)edge cases?\s+(?:considered\s+)?(?:but\s+)?(?:not\s+fully\s+handled)?\s*:?\s*\n((?:[-*].+\n?)+)",
+            content,
+        )
+        if edge_match:
+            cases = []
+            for line in edge_match.group(1).splitlines():
+                line = re.sub(r"^\s*[-*]\s*", "", line).strip()
+                if line:
+                    cases.append(line)
+            if cases:
+                engine.record_edge_cases(cases)
+
+        mig = re.search(
+            r"(?i)(?:migration\s+data\s+impact|existing\s+data\s+under\s+the\s+new\s+schema)\s*:?\s*(.+)",
+            content,
+        )
+        if mig:
+            engine.record_migration_impact(mig.group(1).strip()[:1000])
 
     def reply_completed(self):
         pass

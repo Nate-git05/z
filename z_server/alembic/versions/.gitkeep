@@ -1,0 +1,3 @@
+# Initial schema is created via Base.metadata.create_all / alembic revision --autogenerate.
+# Placeholder so alembic versions/ exists.
+pass

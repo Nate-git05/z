@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Integrations — Z{% endblock %}
+{% block body %}
+  <h1>Integrations</h1>
+  <p class="muted">
+    Connect MCP tools for your
+    {% if workspace %}<strong>{{ workspace.name }}</strong> workspace{% else %}account{% endif %}.
+    The Z CLI picks these up automatically — no local MCP config file.
+  </p>
+
+  {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+
+  <h2>Connected</h2>
+  {% if connections %}
+    {% for c in connections %}
+    <div class="row">
+      <div>
+        <div class="tool-name">{{ c.display_name or c.server_name }}</div>
+        <p class="desc">
+          <span class="meta">{{ c.server_name }}</span>
+          · {{ c.scope }} · {{ c.connection_type }}
+        </p>
+      </div>
+      <div class="actions">
+        {% if c.enabled %}
+          <span class="badge">connected</span>
+        {% else %}
+          <span class="badge off">disconnected</span>
+        {% endif %}
+        <form method="post" action="/app/integrations/{{ c.id }}/toggle">
+          <button class="btn btn-ghost" type="submit">{% if c.enabled %}Disable{% else %}Enable{% endif %}</button>
+        </form>
+        <form method="post" action="/app/integrations/{{ c.id }}/disconnect">
+          <button class="btn btn-danger" type="submit">Disconnect</button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="muted">No MCP tools connected yet.</p>
+  {% endif %}
+
+  <h2>Available</h2>
+  {% for tool in catalog %}
+  <div class="row">
+    <div>
+      <div class="tool-name">{{ tool.display_name }}</div>
+      <p class="desc">{{ tool.description }}</p>
+      <p class="meta">{{ tool.connection_type }}{% if tool.docs_url %} · <a href="{{ tool.docs_url }}" target="_blank" rel="noopener">docs</a>{% endif %}</p>
+    </div>
+    <div class="actions">
+      {% if tool.server_name in connected_names and tool.server_name != 'custom' %}
+        <span class="badge">connected</span>
+      {% else %}
+        <a class="btn" href="/app/integrations/connect/{{ tool.server_name }}">Connect</a>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+{% endblock %}

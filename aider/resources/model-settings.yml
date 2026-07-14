@@ -3126,3 +3126,107 @@
   use_repo_map: true
   use_temperature: false
   accepts_settings: ["reasoning_effort"]
+
+# ---------------------------------------------------------------------------
+# Z curated updates (provider docs 2026-07-14)
+# Anthropic: https://platform.claude.com/docs/en/about-claude/models/overview
+# OpenAI:    https://developers.openai.com/api/docs/models
+# ---------------------------------------------------------------------------
+
+# Anthropic current
+- name: claude-fable-5
+  edit_format: diff
+  weak_model_name: claude-haiku-4-5
+  use_repo_map: true
+  examples_as_sys_msg: false
+  extra_params:
+    max_tokens: 128000
+  cache_control: true
+  editor_model_name: claude-sonnet-5
+  editor_edit_format: editor-diff
+  use_temperature: false
+  overeager: true
+
+- name: claude-opus-4-8
+  edit_format: diff
+  weak_model_name: claude-haiku-4-5
+  use_repo_map: true
+  examples_as_sys_msg: false
+  extra_params:
+    max_tokens: 128000
+  cache_control: true
+  editor_model_name: claude-sonnet-5
+  editor_edit_format: editor-diff
+  use_temperature: false
+  overeager: true
+
+- name: claude-sonnet-5
+  edit_format: diff
+  weak_model_name: claude-haiku-4-5
+  use_repo_map: true
+  examples_as_sys_msg: false
+  extra_params:
+    max_tokens: 128000
+  cache_control: true
+  editor_model_name: claude-sonnet-5
+  editor_edit_format: editor-diff
+  accepts_settings: ["thinking_tokens"]
+
+# OpenAI GPT-5.6 family
+- name: gpt-5.6-sol
+  edit_format: diff
+  weak_model_name: gpt-5.6-luna
+  use_repo_map: true
+  use_temperature: false
+  editor_model_name: gpt-5.6-terra
+  editor_edit_format: editor-diff
+  system_prompt_prefix: "Formatting re-enabled. "
+  accepts_settings: ["reasoning_effort"]
+  examples_as_sys_msg: true
+  overeager: true
+
+- name: gpt-5.6
+  edit_format: diff
+  weak_model_name: gpt-5.6-luna
+  use_repo_map: true
+  use_temperature: false
+  editor_model_name: gpt-5.6-terra
+  editor_edit_format: editor-diff
+  system_prompt_prefix: "Formatting re-enabled. "
+  accepts_settings: ["reasoning_effort"]
+  examples_as_sys_msg: true
+  overeager: true
+
+- name: gpt-5.6-terra
+  edit_format: diff
+  weak_model_name: gpt-5.6-luna
+  use_repo_map: true
+  use_temperature: false
+  editor_model_name: gpt-5.6-terra
+  editor_edit_format: editor-diff
+  system_prompt_prefix: "Formatting re-enabled. "
+  accepts_settings: ["reasoning_effort"]
+  examples_as_sys_msg: true
+
+- name: gpt-5.6-luna
+  edit_format: diff
+  weak_model_name: gpt-5.6-luna
+  use_repo_map: true
+  use_temperature: false
+  accepts_settings: ["reasoning_effort"]
+  examples_as_sys_msg: true
+
+- name: gpt-5.4-mini
+  edit_format: diff
+  weak_model_name: gpt-5.4-nano
+  use_repo_map: true
+  use_temperature: false
+  accepts_settings: ["reasoning_effort"]
+  examples_as_sys_msg: true
+
+- name: gpt-5.4-nano
+  edit_format: whole
+  weak_model_name: gpt-5.4-nano
+  use_repo_map: false
+  use_temperature: false
+  accepts_settings: ["reasoning_effort"]

@@ -374,6 +374,12 @@ def load_dotenv_files(git_root, dotenv_fname, encoding="utf-8"):
         # Remove duplicates if it somehow got included by generate_search_path_list
         dotenv_files = list(dict.fromkeys(dotenv_files))
 
+    # Z account credentials (workspace/team auth — separate from model API keys)
+    z_creds_env = Path.home() / ".z" / "credentials.env"
+    if z_creds_env.exists():
+        dotenv_files.insert(0, str(z_creds_env.resolve()))
+        dotenv_files = list(dict.fromkeys(dotenv_files))
+
     loaded = []
     for fname in dotenv_files:
         try:
@@ -1040,6 +1046,44 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
         ClipboardWatcher(coder.io, verbose=args.verbose)
 
     coder.show_announcements()
+
+    # Offer Z account sign-in on first run (optional — model API keys are separate)
+    try:
+        from aider.z.auth import current_session, run_login_flow
+
+        if is_first_run and not current_session():
+            io.tool_output("")
+            io.tool_output(
+                "Z account unlocks workspace features (shared uncertainty notes,"
+                " escalation routing). Model API keys stay bring-your-own."
+            )
+            if io.confirm_ask("Sign in to Z now?", default="n"):
+                run_login_flow(io, analytics=analytics)
+    except Exception:
+        pass
+
+    # Load MCP tools connected via the web dashboard for this account/workspace
+    try:
+        from aider.z.mcp_client import load_mcp_tools_for_session
+
+        mcp_tools = load_mcp_tools_for_session(io=None)
+        coder.mcp_tools = mcp_tools
+        if mcp_tools:
+            names = ", ".join(t.display_name or t.server_name for t in mcp_tools)
+            io.tool_output(f"MCP tools: {names}")
+    except Exception:
+        coder.mcp_tools = []
+
+    # Load skill index (local ~/.z/skills + workspace) — titles/descriptions only
+    try:
+        from aider.z.skills.session import load_skills_for_session
+
+        skills = load_skills_for_session(io=None)
+        coder.skill_index = skills
+        if skills:
+            io.tool_output(f"Skills: {len(skills)} available")
+    except Exception:
+        coder.skill_index = []
 
     if args.show_prompts:
         coder.cur_messages += [

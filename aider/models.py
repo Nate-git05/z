@@ -27,14 +27,59 @@ RETRY_TIMEOUT = 60
 
 request_timeout = 600
 
-DEFAULT_MODEL_NAME = "gpt-4o"
+DEFAULT_MODEL_NAME = "gpt-5.6-sol"
 ANTHROPIC_BETA_HEADER = "prompt-caching-2024-07-31,pdfs-2024-09-25"
 
+# OpenAI model IDs used for fast API-key validation.
+# Current frontier IDs from https://developers.openai.com/api/docs/models (2026-07-14).
 OPENAI_MODELS = """
+gpt-5.6-sol
+gpt-5.6
+gpt-5.6-terra
+gpt-5.6-luna
+gpt-5.5
+gpt-5.5-pro
+gpt-5.5-chat-latest
+gpt-5.4
+gpt-5.4-pro
+gpt-5.4-mini
+gpt-5.4-nano
+gpt-5.4-chat-latest
+gpt-5.3
+gpt-5.3-pro
+gpt-5.3-codex
+gpt-5.3-chat-latest
+gpt-5.2
+gpt-5.2-pro
+gpt-5.2-codex
+gpt-5.2-2025-12-11
+gpt-5.2-chat-latest
+gpt-5.1
+gpt-5.1-2025-11-13
+gpt-5.1-codex
+gpt-5.1-codex-mini
+gpt-5.1-codex-max
+gpt-5.1-chat
+gpt-5.1-chat-latest
+gpt-5
+gpt-5-pro
+gpt-5-2025-08-07
+gpt-5-mini
+gpt-5-mini-2025-08-07
+gpt-5-nano
+gpt-5-nano-2025-08-07
+gpt-5-codex
+gpt-5-chat
+gpt-5-chat-latest
+gpt-4.1
+gpt-4.1-mini
+gpt-4.1-nano
+o3
+o3-pro
+o3-mini
 o1
 o1-preview
 o1-mini
-o3-mini
 gpt-4
 gpt-4o
 gpt-4o-2024-05-13
@@ -52,9 +97,6 @@ gpt-4-vision-preview
 gpt-4-1106-vision-preview
 gpt-4o-mini
 gpt-4o-mini-2024-07-18
-gpt-5.5
-gpt-5.5-pro
-gpt-5.5-chat-latest
 gpt-3.5-turbo
 gpt-3.5-turbo-0301
 gpt-3.5-turbo-0613
@@ -66,42 +108,57 @@ gpt-3.5-turbo-16k-0613
 
 OPENAI_MODELS = [ln.strip() for ln in OPENAI_MODELS.splitlines() if ln.strip()]
 
+# Anthropic Claude API IDs from https://platform.claude.com/docs/en/about-claude/models/overview
+# (fetched 2026-07-14). Includes current table + still-listed legacy IDs.
 ANTHROPIC_MODELS = """
-claude-2
-claude-2.1
-claude-3-haiku-20240307
+claude-fable-5
+claude-opus-4-8
+claude-sonnet-5
+claude-haiku-4-5
+claude-haiku-4-5-20251001
+claude-opus-4-7
+claude-opus-4-7-20260416
+claude-opus-4-6
+claude-opus-4-6-20260205
+claude-sonnet-4-6
+claude-sonnet-4-5
+claude-sonnet-4-5-20250929
+claude-opus-4-5
+claude-opus-4-5-20251101
+claude-opus-4-1
+claude-opus-4-1-20250805
+claude-sonnet-4-20250514
+claude-opus-4-20250514
+claude-3-7-sonnet-20250219
+claude-3-5-sonnet-20241022
+claude-3-5-sonnet-20240620
 claude-3-5-haiku-20241022
 claude-3-opus-20240229
 claude-3-sonnet-20240229
-claude-3-5-sonnet-20240620
-claude-3-5-sonnet-20241022
-claude-3-7-sonnet-20250219
-claude-sonnet-4-20250514
-claude-opus-4-20250514
-claude-opus-4-1
-claude-opus-4-1-20250805
-claude-opus-4-5
-claude-opus-4-5-20251101
-claude-opus-4-6
-claude-opus-4-6-20260205
-claude-opus-4-7
-claude-opus-4-7-20260416
-claude-sonnet-4-5
-claude-sonnet-4-5-20250929
-claude-sonnet-4-6
-claude-haiku-4-5
-claude-haiku-4-5-20251001
+claude-3-haiku-20240307
+claude-2.1
+claude-2
 """
 
 ANTHROPIC_MODELS = [ln.strip() for ln in ANTHROPIC_MODELS.splitlines() if ln.strip()]
 
 # Mapping of model aliases to their canonical names
 MODEL_ALIASES = {
-    # Claude models
-    "sonnet": "claude-sonnet-4-6",
+    # Claude — aliases point at current Anthropic docs IDs
+    "fable": "claude-fable-5",
+    "sonnet": "claude-sonnet-5",
+    "sonnet-5": "claude-sonnet-5",
+    "sonnet-4.6": "claude-sonnet-4-6",
     "haiku": "claude-haiku-4-5",
-    "opus": "claude-opus-4-7",
-    # GPT models
+    "opus": "claude-opus-4-8",
+    "opus-4.8": "claude-opus-4-8",
+    "opus-4.7": "claude-opus-4-7",
+    # GPT — aliases from OpenAI docs
+    "gpt-5.6": "gpt-5.6-sol",
+    "sol": "gpt-5.6-sol",
+    "terra": "gpt-5.6-terra",
+    "luna": "gpt-5.6-luna",
+    "codex": "gpt-5.3-codex",
     "4": "gpt-4-0613",
     "4o": "gpt-4o",
     "4-turbo": "gpt-4-1106-preview",
