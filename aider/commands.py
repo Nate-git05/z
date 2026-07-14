@@ -214,7 +214,9 @@ class Commands:
         if args:
             models.print_matching_models(self.io, args)
         else:
-            self.io.tool_output("Please provide a partial model name to search for.")
+            from aider.z.models_catalog import print_curated_models
+
+            print_curated_models(self.io)
 
     def cmd_web(self, args, return_content=False):
         "Scrape a webpage, convert to markdown and send in a message"
@@ -1678,6 +1680,34 @@ Just show me the edits I need to make.
             )
         except Exception as e:
             self.io.tool_error(f"An unexpected error occurred while copying to clipboard: {str(e)}")
+
+    def cmd_login(self, args):
+        "Sign in to your Z account (email, phone, or Google)"
+        args = (args or "").strip().lower()
+        if args in ("email", "phone", "google"):
+            from aider.z.cli import cmd_login as cli_login
+
+            return cli_login(self.io, provider=args)
+
+        from aider.z.auth import run_login_flow
+
+        run_login_flow(self.io, analytics=getattr(self.coder, "analytics", None))
+
+    def cmd_auth(self, args):
+        "Alias for /login"
+        return self.cmd_login(args)
+
+    def cmd_logout(self, args):
+        "Sign out of Z and clear ~/.z/credentials"
+        from aider.z.auth import logout
+
+        logout(self.io)
+
+    def cmd_whoami(self, args):
+        "Show the current Z account and workspace"
+        from aider.z.auth import whoami_text
+
+        self.io.tool_output(whoami_text())
 
 
 def expand_subdir(file_path):

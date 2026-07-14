@@ -374,6 +374,12 @@ def load_dotenv_files(git_root, dotenv_fname, encoding="utf-8"):
         # Remove duplicates if it somehow got included by generate_search_path_list
         dotenv_files = list(dict.fromkeys(dotenv_files))
 
+    # Z account credentials (workspace/team auth — separate from model API keys)
+    z_creds_env = Path.home() / ".z" / "credentials.env"
+    if z_creds_env.exists():
+        dotenv_files.insert(0, str(z_creds_env.resolve()))
+        dotenv_files = list(dict.fromkeys(dotenv_files))
+
     loaded = []
     for fname in dotenv_files:
         try:
@@ -1040,6 +1046,21 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
         ClipboardWatcher(coder.io, verbose=args.verbose)
 
     coder.show_announcements()
+
+    # Offer Z account sign-in on first run (optional — model API keys are separate)
+    try:
+        from aider.z.auth import current_session, run_login_flow
+
+        if is_first_run and not current_session():
+            io.tool_output("")
+            io.tool_output(
+                "Z account unlocks workspace features (shared uncertainty notes,"
+                " escalation routing). Model API keys stay bring-your-own."
+            )
+            if io.confirm_ask("Sign in to Z now?", default="n"):
+                run_login_flow(io, analytics=analytics)
+    except Exception:
+        pass
 
     if args.show_prompts:
         coder.cur_messages += [
