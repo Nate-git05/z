@@ -1074,6 +1074,17 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
     except Exception:
         coder.mcp_tools = []
 
+    # Load skill index (local ~/.z/skills + workspace) — titles/descriptions only
+    try:
+        from aider.z.skills.session import load_skills_for_session
+
+        skills = load_skills_for_session(io=None)
+        coder.skill_index = skills
+        if skills:
+            io.tool_output(f"Skills: {len(skills)} available")
+    except Exception:
+        coder.skill_index = []
+
     if args.show_prompts:
         coder.cur_messages += [
             dict(role="user", content="Hello!"),

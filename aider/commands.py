@@ -1715,6 +1715,36 @@ Just show me the edits I need to make.
 
         print_mcp_list(self.io)
 
+    def cmd_skills(self, args):
+        "List reusable skills, or create one: /skills create <topic>"
+        args = (args or "").strip()
+        if not args or args.lower() in ("list", "ls"):
+            from aider.z.skills.session import print_skills_list
+
+            print_skills_list(self.io)
+            return
+        lower = args.lower()
+        if lower.startswith("create"):
+            topic = args[6:].strip()
+            from aider.z.skills.cli import cmd_skill_create
+
+            model_name = None
+            if getattr(self.coder, "main_model", None):
+                model_name = getattr(self.coder.main_model, "name", None)
+            return cmd_skill_create(self.io, topic, model_name=model_name)
+
+        # Treat bare text as create topic
+        from aider.z.skills.cli import cmd_skill_create
+
+        model_name = None
+        if getattr(self.coder, "main_model", None):
+            model_name = getattr(self.coder.main_model, "name", None)
+        return cmd_skill_create(self.io, args, model_name=model_name)
+
+    def cmd_skill(self, args):
+        "Alias for /skills"
+        return self.cmd_skills(args)
+
     def cmd_uncertainties(self, args):
         """Browse the uncertainty tree (risk-first). Select a node to fix, test, explain, or ignore."""
         store = getattr(self.coder, "uncertainty_store", None)

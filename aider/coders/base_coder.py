@@ -950,7 +950,9 @@ class Coder:
 
         # Start-of-task requirement checklist (surfaced before implementation when feasible)
         if message and not (isinstance(message, str) and message.startswith("/")):
-            self._maybe_begin_uncertainty_task(user_message if isinstance(user_message, str) else message)
+            user_text = user_message if isinstance(user_message, str) else message
+            self._maybe_pull_skills(user_text)
+            self._maybe_begin_uncertainty_task(user_text)
 
         while message:
             self.reflected_message = None
@@ -965,6 +967,90 @@ class Coder:
 
             self.num_reflections += 1
             message = self.reflected_message
+
+        # After a non-trivial completed edit turn, offer to save a reusable skill
+        if (
+            isinstance(user_message, str)
+            and not user_message.startswith("/")
+            and self.aider_edited_files
+            and not self.reflected_message
+        ):
+            self._maybe_suggest_skill(user_message)
+
+    def _maybe_pull_skills(self, user_message: str):
+        """Auto-pull full skill content when the task matches the session index."""
+        if not user_message or len(user_message.strip()) < 12:
+            return
+        try:
+            from aider.z.skills.session import (
+                format_skills_for_context,
+                get_session_skill_index,
+                load_skills_for_session,
+                select_relevant_skills,
+            )
+
+            if not get_session_skill_index():
+                load_skills_for_session(io=None)
+
+            skills = select_relevant_skills(user_message)
+            if not skills:
+                return
+            block = format_skills_for_context(skills)
+            if not block:
+                return
+            names = ", ".join(s.title for s in skills)
+            self.io.tool_output(f"Applying skill(s): {names}")
+            # Inject as a user/assistant exchange so the model sees it this turn
+            self.cur_messages += [
+                {"role": "user", "content": block},
+                {"role": "assistant", "content": "I'll follow those skills where they apply."},
+            ]
+        except Exception:
+            if getattr(self, "verbose", False):
+                pass
+
+    def _maybe_suggest_skill(self, user_message: str):
+        """Offer to save a skill after completing a non-trivial coding task."""
+        edited = self.aider_edited_files or set()
+        if len(edited) < 1:
+            return
+        # Skip tiny one-liners / pure renames
+        if len(user_message.strip()) < 24 and len(edited) < 2:
+            return
+        try:
+            if not self.io.confirm_ask(
+                "Want me to save this as a reusable skill for next time?",
+                default="n",
+            ):
+                return
+            from aider.z.skills.cli import save_skill_from_task
+
+            rels = []
+            for path in edited:
+                try:
+                    rels.append(self.get_rel_fname(path))
+                except Exception:
+                    rels.append(str(path))
+            context = (
+                f"User request: {user_message}\n"
+                f"Files changed: {', '.join(rels[:20])}\n"
+            )
+            topic = user_message.strip()
+            if len(topic) > 200:
+                topic = topic[:200] + "…"
+            model_name = None
+            if getattr(self, "main_model", None):
+                model_name = getattr(self.main_model, "name", None)
+            save_skill_from_task(self.io, topic, context=context, model_name=model_name)
+            # Refresh session index
+            try:
+                from aider.z.skills.session import load_skills_for_session
+
+                self.skill_index = load_skills_for_session(io=None)
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     def _maybe_begin_uncertainty_task(self, user_message: str):
         engine = getattr(self, "uncertainty_engine", None)

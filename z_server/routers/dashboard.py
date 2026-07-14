@@ -227,3 +227,167 @@ def web_toggle(
 ):
     mcp_api.toggle(UUID(connection_id), user, db)
     return RedirectResponse("/app/integrations", status_code=303)
+
+
+# ----- Skills management (CLI-create / web-manage) -----
+
+
+@router.get("/app/skills", response_class=HTMLResponse)
+def skills_page(
+    request: Request,
+    flash: str | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from z_server.routers import skills as skills_api
+
+    rows = db.execute(skills_api._skills_query(db, user)).scalars().all()
+    personal = [s for s in rows if not s.workspace_id]
+    shared = [s for s in rows if s.workspace_id]
+    workspace = get_primary_workspace(db, user)
+    return templates.TemplateResponse(
+        "skills.html",
+        _ctx(
+            request,
+            user,
+            workspace=workspace,
+            personal=personal,
+            shared=shared,
+            flash=flash,
+        ),
+    )
+
+
+@router.get("/app/skills/{skill_id}", response_class=HTMLResponse)
+def skill_detail(
+    skill_id: str,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from z_server.routers import skills as skills_api
+
+    try:
+        skill = skills_api._get_owned(db, user, UUID(skill_id))
+    except HTTPException:
+        return RedirectResponse("/app/skills", status_code=303)
+    workspace = get_primary_workspace(db, user)
+    can_edit = skill.user_id == user.id
+    return templates.TemplateResponse(
+        "skill_detail.html",
+        _ctx(
+            request,
+            user,
+            workspace=workspace,
+            skill=skill,
+            can_edit=can_edit,
+            error=None,
+            saved=False,
+        ),
+    )
+
+
+@router.post("/app/skills/{skill_id}", response_class=HTMLResponse)
+async def skill_update(
+    skill_id: str,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from z_server.routers import skills as skills_api
+    from z_server.routers.skills import SkillUpdate
+
+    try:
+        skill = skills_api._get_owned(db, user, UUID(skill_id))
+    except HTTPException:
+        return RedirectResponse("/app/skills", status_code=303)
+
+    form = await request.form()
+    title = str(form.get("title") or "").strip()
+    description = str(form.get("description") or "").strip()
+    content = str(form.get("content") or "").strip()
+    workspace = get_primary_workspace(db, user)
+
+    try:
+        skills_api.update_skill(
+            UUID(skill_id),
+            SkillUpdate(title=title, description=description, content=content),
+            user,
+            db,
+        )
+        skill = skills_api._get_owned(db, user, UUID(skill_id))
+    except HTTPException as err:
+        return templates.TemplateResponse(
+            "skill_detail.html",
+            _ctx(
+                request,
+                user,
+                workspace=workspace,
+                skill=skill,
+                can_edit=skill.user_id == user.id,
+                error=str(err.detail),
+                saved=False,
+            ),
+            status_code=400,
+        )
+
+    return templates.TemplateResponse(
+        "skill_detail.html",
+        _ctx(
+            request,
+            user,
+            workspace=workspace,
+            skill=skill,
+            can_edit=skill.user_id == user.id,
+            error=None,
+            saved=True,
+        ),
+    )
+
+
+@router.post("/app/skills/{skill_id}/share")
+def skill_share(
+    skill_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from z_server.routers import skills as skills_api
+
+    try:
+        skills_api.share_skill(UUID(skill_id), user, db)
+    except HTTPException:
+        pass
+    return RedirectResponse("/app/skills?flash=shared", status_code=303)
+
+
+@router.post("/app/skills/{skill_id}/unshare")
+def skill_unshare(
+    skill_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from z_server.routers import skills as skills_api
+    from z_server.routers.skills import SkillUpdate
+
+    try:
+        skills_api.update_skill(
+            UUID(skill_id), SkillUpdate(scope="personal"), user, db
+        )
+    except HTTPException:
+        pass
+    return RedirectResponse("/app/skills?flash=unshared", status_code=303)
+
+
+@router.post("/app/skills/{skill_id}/delete")
+def skill_delete(
+    skill_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from z_server.routers import skills as skills_api
+
+    try:
+        skills_api.delete_skill(UUID(skill_id), user, db)
+    except HTTPException:
+        pass
+    return RedirectResponse("/app/skills?flash=deleted", status_code=303)

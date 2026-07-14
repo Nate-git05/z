@@ -98,6 +98,8 @@
       <a class="brand" href="/">Z</a>
       <div class="actions">
         {% if user %}
+          <a class="btn btn-ghost" href="/app/integrations">Integrations</a>
+          <a class="btn btn-ghost" href="/app/skills">Skills</a>
           <span class="muted">{{ user.display_name() }}</span>
           <form method="post" action="/logout" style="display:inline">
             <button class="btn btn-ghost" type="submit">Sign out</button>

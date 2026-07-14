@@ -18,6 +18,7 @@ The CLI (`z login`) talks to this API. Model API keys stay bring-your-own and ar
 | `uncertainty_tasks` | Task checklists for requirement-gap analysis |
 | `uncertainty_nodes` | Persisted uncertainty tree (workspace memory layer) |
 | `waitlist_signups` | Public landing-page waitlist (idempotent on email) |
+| `skills` | Reusable skills (personal or workspace-scoped) |
 
 ## Uncertainty tree
 
@@ -33,6 +34,13 @@ Public marketing page at `/` (`templates/landing.html` + `/static/css|js/landing
 `POST /v1/waitlist` accepts `{first_name, last_name, email}` with no auth,
 server-side email validation, IP rate limiting (10 / 15 min), and idempotent
 duplicate emails. `notified_at` is reserved for a future invite-email flow.
+
+## Skills
+
+Reusable instruction files created CLI-first (`z skill create`), stored in
+`~/.z/skills/*.md`, optionally synced to `skills` table. Session start loads a
+lightweight index (like MCP runtime); matching skills are auto-pulled by task.
+Manage/share at `/app/skills` (no create form on web for V1).
 
 Connect MCP servers in the web UI at `/app/integrations` (not via local CLI config).
 

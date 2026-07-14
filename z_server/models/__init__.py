@@ -9,6 +9,7 @@ from z_server.models.auth_session import (
 )
 from z_server.models.base import Base
 from z_server.models.mcp import McpConnection, McpConnectionType
+from z_server.models.skill import Skill
 from z_server.models.uncertainty import UncertaintyNodeRow, UncertaintyTask
 from z_server.models.user import (
     AuthProvider,
@@ -36,4 +37,5 @@ __all__ = [
     "UncertaintyTask",
     "UncertaintyNodeRow",
     "WaitlistSignup",
+    "Skill",
 ]

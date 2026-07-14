@@ -2,19 +2,32 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
-Z_HOME = Path.home() / ".z"
+
+def _z_home() -> Path:
+    override = os.environ.get("Z_HOME")
+    if override:
+        return Path(override)
+    return Path.home() / ".z"
+
+
+# Resolved at import; tests that set Z_HOME before importing are fine.
+# Callers that need a live override should use ensure_z_home() / skills_dir().
+Z_HOME = _z_home()
 CREDENTIALS_PATH = Z_HOME / "credentials"
 CREDENTIALS_ENV_PATH = Z_HOME / "credentials.env"
 CACHE_DIR = Z_HOME / "caches"
+SKILLS_DIR = Z_HOME / "skills"
 
 
 def ensure_z_home() -> Path:
-    """Create ~/.z (mode 0700) if missing and return it."""
-    Z_HOME.mkdir(mode=0o700, parents=True, exist_ok=True)
+    """Create ~/.z (mode 0700) if missing and return it (honors Z_HOME)."""
+    home = _z_home()
+    home.mkdir(mode=0o700, parents=True, exist_ok=True)
     try:
-        Z_HOME.chmod(0o700)
+        home.chmod(0o700)
     except OSError:
         pass
-    return Z_HOME
+    return home

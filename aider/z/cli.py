@@ -45,6 +45,26 @@ def build_parser() -> argparse.ArgumentParser:
     mcp_sub = mcp.add_subparsers(dest="mcp_command")
     mcp_sub.add_parser("list", help="List MCP tools connected to your Z account/workspace")
 
+    skill = sub.add_parser("skill", help="Reusable skills (CLI-created, auto-discovered)")
+    skill_sub = skill.add_subparsers(dest="skill_command")
+    create = skill_sub.add_parser("create", help="Generate and save a skill with your connected model")
+    create.add_argument(
+        "topic",
+        nargs="*",
+        help="What the skill should cover (prompted if omitted)",
+    )
+    create.add_argument(
+        "--model",
+        default=None,
+        help="Override model (otherwise uses AIDER_MODEL / default BYOK model)",
+    )
+    create.add_argument(
+        "--no-sync",
+        action="store_true",
+        help="Do not sync to the Z backend even if signed in",
+    )
+    skill_sub.add_parser("list", help="List local and workspace skills")
+
     # Anything else falls through to the main agent CLI
     return parser
 
@@ -63,11 +83,13 @@ def main(argv: list[str] | None = None) -> int | None:
             "  z login\n"
             "  z models\n"
             "  z mcp list\n"
+            "  z skill create \"how this repo validates Stripe webhooks\"\n"
+            "  z skill list\n"
             "  z --model sonnet\n"
         )
         return 0
 
-    top_commands = {"login", "auth", "logout", "whoami", "models", "mcp"}
+    top_commands = {"login", "auth", "logout", "whoami", "models", "mcp", "skill"}
     if argv[0] not in top_commands:
         from aider.main import main as agent_main
 
@@ -99,6 +121,27 @@ def dispatch(args) -> int:
         return cmd_models(io, search=args.search or "", show_all=args.all)
     if args.command == "mcp":
         return cmd_mcp(io, args)
+    if args.command == "skill":
+        return cmd_skill(io, args)
+    return 1
+
+
+def cmd_skill(io, args) -> int:
+    from aider.z.skills.cli import cmd_skill_create, cmd_skill_list
+
+    sub = getattr(args, "skill_command", None) or "list"
+    if sub == "list":
+        return cmd_skill_list(io)
+    if sub == "create":
+        topic = " ".join(getattr(args, "topic", None) or []).strip()
+        return cmd_skill_create(
+            io,
+            topic,
+            model_name=getattr(args, "model", None),
+            sync=not getattr(args, "no_sync", False),
+        )
+    io.tool_error(f"Unknown skill subcommand: {sub}")
+    io.tool_output("Usage: z skill create [topic…]  |  z skill list")
     return 1
 
 
