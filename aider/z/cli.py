@@ -41,6 +41,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Search the full litellm model catalog instead of the curated list",
     )
 
+    mcp = sub.add_parser("mcp", help="MCP tool connections (managed in the web app)")
+    mcp_sub = mcp.add_subparsers(dest="mcp_command")
+    mcp_sub.add_parser("list", help="List MCP tools connected to your Z account/workspace")
+
     # Anything else falls through to the main agent CLI
     return parser
 
@@ -58,11 +62,12 @@ def main(argv: list[str] | None = None) -> int | None:
             "Examples:\n"
             "  z login\n"
             "  z models\n"
+            "  z mcp list\n"
             "  z --model sonnet\n"
         )
         return 0
 
-    top_commands = {"login", "auth", "logout", "whoami", "models"}
+    top_commands = {"login", "auth", "logout", "whoami", "models", "mcp"}
     if argv[0] not in top_commands:
         from aider.main import main as agent_main
 
@@ -92,6 +97,20 @@ def dispatch(args) -> int:
         return 0
     if args.command == "models":
         return cmd_models(io, search=args.search or "", show_all=args.all)
+    if args.command == "mcp":
+        return cmd_mcp(io, args)
+    return 1
+
+
+def cmd_mcp(io, args) -> int:
+    from aider.z.mcp_client import print_mcp_list
+
+    sub = getattr(args, "mcp_command", None) or "list"
+    if sub == "list":
+        print_mcp_list(io)
+        return 0
+    io.tool_error(f"Unknown mcp subcommand: {sub}")
+    io.tool_output("Usage: z mcp list")
     return 1
 
 

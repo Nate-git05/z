@@ -52,6 +52,11 @@ class Settings:
             "Z_GOOGLE_CLIENT_SECRET"
         ) or os.environ.get("GOOGLE_CLIENT_SECRET")
 
+        self.mcp_github_client_id: str | None = os.environ.get("Z_MCP_GITHUB_CLIENT_ID")
+        self.mcp_github_client_secret: str | None = os.environ.get(
+            "Z_MCP_GITHUB_CLIENT_SECRET"
+        )
+
         self.dev_mode: bool = os.environ.get("Z_SERVER_DEV", "1").strip().lower() in (
             "1",
             "true",

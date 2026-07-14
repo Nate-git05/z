@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}Z{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0A0A0A;
+      --text: #F5F5F5;
+      --text-dim: #A0A0A0;
+      --text-muted: #6B6B6B;
+      --accent: #C96A2B;
+      --accent-bright: #E07830;
+      --border: #2A2A2A;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(201,106,43,0.12), transparent),
+        var(--bg);
+      color: var(--text);
+      font-family: "IBM Plex Sans", system-ui, sans-serif;
+      font-size: 15px;
+      line-height: 1.5;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: var(--accent-bright); }
+    .wrap { max-width: 920px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+    header.appbar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding-bottom: 1.5rem; border-bottom: 1px solid var(--border); margin-bottom: 2rem;
+    }
+    .brand {
+      font-family: "IBM Plex Mono", monospace;
+      font-weight: 600; font-size: 1.5rem; color: var(--accent);
+      letter-spacing: 0.04em;
+    }
+    .muted { color: var(--text-dim); }
+    .btn {
+      display: inline-block;
+      background: var(--accent); color: #0A0A0A;
+      border: none; border-radius: 2px;
+      padding: 0.55rem 1rem; font-weight: 600;
+      font-family: inherit; cursor: pointer; font-size: 0.9rem;
+    }
+    .btn:hover { background: var(--accent-bright); }
+    .btn-ghost {
+      background: transparent; color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-ghost:hover { border-color: var(--accent); color: var(--accent); background: transparent; }
+    .btn-danger { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
+    .btn-danger:hover { border-color: var(--accent); color: var(--accent); }
+    h1 { font-size: 1.6rem; font-weight: 600; margin: 0 0 0.4rem; }
+    h2 { font-size: 1.05rem; font-weight: 600; color: var(--text-dim);
+         text-transform: uppercase; letter-spacing: 0.06em; margin: 2rem 0 1rem; }
+    .flash {
+      border-left: 3px solid var(--accent); padding: 0.75rem 1rem;
+      background: rgba(201,106,43,0.08); margin-bottom: 1.5rem; color: var(--text);
+    }
+    .error {
+      border-left: 3px solid var(--accent); padding: 0.75rem 1rem;
+      background: rgba(201,106,43,0.12); margin-bottom: 1rem; color: var(--text);
+    }
+    .row {
+      display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+      padding: 1rem 0; border-bottom: 1px solid var(--border);
+    }
+    .row:last-child { border-bottom: none; }
+    .tool-name { font-family: "IBM Plex Mono", monospace; font-weight: 500; }
+    .badge {
+      font-size: 0.75rem; font-family: "IBM Plex Mono", monospace;
+      padding: 0.15rem 0.45rem; border: 1px solid var(--accent); color: var(--accent);
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .badge.off { border-color: var(--text-muted); color: var(--text-muted); }
+    label { display: block; color: var(--text-dim); margin: 1rem 0 0.35rem; font-size: 0.85rem; }
+    input, select {
+      width: 100%; max-width: 420px;
+      background: #111; border: 1px solid var(--border); color: var(--text);
+      padding: 0.6rem 0.75rem; border-radius: 2px; font: inherit;
+    }
+    input:focus, select:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+    .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+    .desc { color: var(--text-dim); font-size: 0.9rem; margin: 0.2rem 0 0; max-width: 36rem; }
+    .meta { color: var(--text-muted); font-size: 0.8rem; font-family: "IBM Plex Mono", monospace; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="appbar">
+      <a class="brand" href="/">Z</a>
+      <div class="actions">
+        {% if user %}
+          <span class="muted">{{ user.display_name() }}</span>
+          <form method="post" action="/logout" style="display:inline">
+            <button class="btn btn-ghost" type="submit">Sign out</button>
+          </form>
+        {% else %}
+          <a class="btn" href="/login">Sign in</a>
+        {% endif %}
+      </div>
+    </header>
+    {% block body %}{% endblock %}
+  </div>
+</body>
+</html>

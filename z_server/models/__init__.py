@@ -8,6 +8,7 @@ from z_server.models.auth_session import (
     new_opaque_token,
 )
 from z_server.models.base import Base
+from z_server.models.mcp import McpConnection, McpConnectionType
 from z_server.models.user import (
     AuthProvider,
     MembershipRole,
@@ -28,4 +29,6 @@ __all__ = [
     "ChallengePurpose",
     "OAuthState",
     "new_opaque_token",
+    "McpConnection",
+    "McpConnectionType",
 ]

@@ -14,8 +14,22 @@ The CLI (`z login`) talks to this API. Model API keys stay bring-your-own and ar
 | `auth_sessions` | Issued CLI/web access tokens (hashed) |
 | `verification_challenges` | Email OTP / magic link / phone Verify |
 | `oauth_states` | Google PKCE state for CLI browser flow |
+| `mcp_connections` | MCP tool connections (encrypted credentials) |
 
-## Configure Postgres
+## MCP integrations
+
+Connect MCP servers in the web UI at `/app/integrations` (not via local CLI config).
+
+Credentials are encrypted at rest with Fernet (derived from `Z_SECRET_KEY`) in
+`mcp_connections.encrypted_credentials`. Non-secret config is stored as JSON/JSONB.
+
+CLI:
+```bash
+z mcp list                 # read-only list from the backend
+# On `z` / `aider` startup, connected tools are loaded into the session
+```
+
+## API (CLI contract)
 
 ```bash
 export DATABASE_URL="postgresql+psycopg://z:z@localhost:5432/z"
@@ -55,7 +69,18 @@ export Z_AUTH_DEV=0
 z login
 ```
 
-## API (CLI contract)
+## MCP integrations
+
+Connect MCP servers in the web UI at `/app/integrations` (not via local CLI config).
+
+Credentials are encrypted at rest with Fernet (derived from `Z_SECRET_KEY`) in
+`mcp_connections.encrypted_credentials`. Non-secret config is stored as JSON/JSONB.
+
+CLI:
+```bash
+z mcp list                 # read-only list from the backend
+# On `z` / `aider` startup, connected tools are loaded into the session
+```
 
 - `POST /v1/auth/email/start` `{email, name}`
 - `POST /v1/auth/email/verify` `{email, code, name}`

@@ -1062,6 +1062,18 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
     except Exception:
         pass
 
+    # Load MCP tools connected via the web dashboard for this account/workspace
+    try:
+        from aider.z.mcp_client import load_mcp_tools_for_session
+
+        mcp_tools = load_mcp_tools_for_session(io=None)
+        coder.mcp_tools = mcp_tools
+        if mcp_tools:
+            names = ", ".join(t.display_name or t.server_name for t in mcp_tools)
+            io.tool_output(f"MCP tools: {names}")
+    except Exception:
+        coder.mcp_tools = []
+
     if args.show_prompts:
         coder.cur_messages += [
             dict(role="user", content="Hello!"),

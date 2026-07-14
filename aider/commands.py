@@ -1709,6 +1709,12 @@ Just show me the edits I need to make.
 
         self.io.tool_output(whoami_text())
 
+    def cmd_mcp(self, args):
+        "List MCP tools connected via the Z web app (read-only)"
+        from aider.z.mcp_client import print_mcp_list
+
+        print_mcp_list(self.io)
+
 
 def expand_subdir(file_path):
     if file_path.is_file():
