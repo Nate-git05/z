@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 
@@ -69,31 +70,70 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _skip_account_gate() -> bool:
+    return os.environ.get("Z_SKIP_ACCOUNT", "").strip().lower() in ("1", "true", "yes")
+
+
+def ensure_agent_session(io) -> bool:
+    """Require a Z account before starting the coding agent.
+
+    Shows the branded login flow when the user is not signed in.
+    Set Z_SKIP_ACCOUNT=1 to bypass (automation / tests).
+    """
+    if _skip_account_gate():
+        return True
+
+    from aider.z.auth import current_session, run_login_flow
+
+    creds = current_session()
+    if creds and creds.is_authenticated():
+        return True
+
+    creds = run_login_flow(io)
+    return bool(creds)
+
+
+def _print_help() -> None:
+    build_parser().print_help()
+    print(
+        "\nRun `z` with no arguments to sign in (if needed) and start the coding agent.\n"
+        "Any other arguments are passed through to the agent (same as `aider …`).\n"
+        "Examples:\n"
+        "  z\n"
+        "  z login\n"
+        "  z models\n"
+        "  z mcp list\n"
+        "  z skill create \"how this repo validates Stripe webhooks\"\n"
+        "  z skill list\n"
+        "  z --model sonnet\n"
+    )
+
+
+def _start_agent(argv: list[str]) -> int | None:
+    from aider.io import InputOutput
+
+    # yes=None → actually prompt; yes=False would auto-answer "no" to every ask
+    io = InputOutput(pretty=True, fancy_input=True, yes=None)
+    if not ensure_agent_session(io):
+        return 1
+
+    from aider.main import main as agent_main
+
+    return agent_main(argv=argv)
+
+
 def main(argv: list[str] | None = None) -> int | None:
     argv = list(sys.argv[1:] if argv is None else argv)
 
-    # No subcommand / unknown → hand off to the full agent CLI (aider.main)
-    if not argv or argv[0] in ("-h", "--help"):
-        # Show z help plus note about agent passthrough
-        build_parser().print_help()
-        print(
-            "\nAny other arguments are passed through to the Z coding agent"
-            " (same as `aider …`).\n"
-            "Examples:\n"
-            "  z login\n"
-            "  z models\n"
-            "  z mcp list\n"
-            "  z skill create \"how this repo validates Stripe webhooks\"\n"
-            "  z skill list\n"
-            "  z --model sonnet\n"
-        )
+    if argv and argv[0] in ("-h", "--help"):
+        _print_help()
         return 0
 
     top_commands = {"login", "auth", "logout", "whoami", "models", "mcp", "skill"}
-    if argv[0] not in top_commands:
-        from aider.main import main as agent_main
 
-        return agent_main(argv=argv)
+    # Bare `z` (or agent flags) → login if needed, then start the coding agent
+    if not argv or argv[0] not in top_commands:
+        return _start_agent(argv)
 
     parser = build_parser()
     args = parser.parse_args(argv)

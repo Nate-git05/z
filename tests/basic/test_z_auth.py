@@ -155,6 +155,80 @@ class TestZCli(unittest.TestCase):
         self.assertEqual(args.command, "login")
         self.assertEqual(args.provider, "email")
 
+    def test_bare_z_starts_agent_after_session_gate(self):
+        from aider.z import cli as z_cli
+
+        with patch.object(z_cli, "ensure_agent_session", return_value=True) as gate:
+            with patch("aider.main.main", return_value=0) as agent_main:
+                code = z_cli.main([])
+        self.assertEqual(code, 0)
+        gate.assert_called_once()
+        agent_main.assert_called_once_with(argv=[])
+
+    def test_agent_flags_also_go_through_session_gate(self):
+        from aider.z import cli as z_cli
+
+        with patch.object(z_cli, "ensure_agent_session", return_value=True):
+            with patch("aider.main.main", return_value=0) as agent_main:
+                code = z_cli.main(["--model", "sonnet"])
+        self.assertEqual(code, 0)
+        agent_main.assert_called_once_with(argv=["--model", "sonnet"])
+
+    def test_cancelled_login_does_not_start_agent(self):
+        from aider.z import cli as z_cli
+
+        with patch.object(z_cli, "ensure_agent_session", return_value=False):
+            with patch("aider.main.main") as agent_main:
+                code = z_cli.main([])
+        self.assertEqual(code, 1)
+        agent_main.assert_not_called()
+
+    def test_ensure_agent_session_skips_when_already_authenticated(self):
+        from aider.z.cli import ensure_agent_session
+        from aider.z.credentials import Credentials, UserProfile
+
+        creds = Credentials(
+            access_token="tok",
+            user=UserProfile(email="a@b.com", provider="email"),
+            expires_at=9_999_999_999,
+        )
+        io = MagicMock()
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("Z_SKIP_ACCOUNT", None)
+            with patch("aider.z.auth.current_session", return_value=creds):
+                with patch("aider.z.auth.run_login_flow") as login:
+                    ok = ensure_agent_session(io)
+        self.assertTrue(ok)
+        login.assert_not_called()
+
+    def test_ensure_agent_session_runs_login_when_signed_out(self):
+        from aider.z.cli import ensure_agent_session
+        from aider.z.credentials import Credentials, UserProfile
+
+        creds = Credentials(
+            access_token="tok",
+            user=UserProfile(email="a@b.com", provider="email"),
+            expires_at=9_999_999_999,
+        )
+        io = MagicMock()
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("Z_SKIP_ACCOUNT", None)
+            with patch("aider.z.auth.current_session", return_value=None):
+                with patch("aider.z.auth.run_login_flow", return_value=creds) as login:
+                    ok = ensure_agent_session(io)
+        self.assertTrue(ok)
+        login.assert_called_once()
+
+    def test_help_does_not_start_agent(self):
+        from aider.z import cli as z_cli
+
+        with patch.object(z_cli, "_print_help") as help_fn:
+            with patch("aider.main.main") as agent_main:
+                code = z_cli.main(["--help"])
+        self.assertEqual(code, 0)
+        help_fn.assert_called_once()
+        agent_main.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

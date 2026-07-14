@@ -1055,20 +1055,8 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
 
     coder.show_announcements()
 
-    # Offer Z account sign-in on first run (optional — model API keys are separate)
-    try:
-        from aider.z.auth import current_session, run_login_flow
-
-        if is_first_run and not current_session():
-            io.tool_output("")
-            io.tool_output(
-                "Z account unlocks workspace features (shared uncertainty notes,"
-                " escalation routing). Model API keys stay bring-your-own."
-            )
-            if io.confirm_ask("Sign in to Z now?", default="n"):
-                run_login_flow(io, analytics=analytics)
-    except Exception:
-        pass
+    # Z account gate lives in `z` CLI (`aider.z.cli`): bare `z` logs in then starts the agent.
+    # Model API keys remain bring-your-own and are separate from account auth.
 
     # Load MCP tools connected via the web dashboard for this account/workspace
     try:

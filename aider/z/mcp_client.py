@@ -114,7 +114,7 @@ def print_mcp_list(io) -> None:
     """Read-only listing for `z mcp list`."""
     tools = fetch_mcp_runtime()
     if not current_session() and not os.environ.get("Z_ACCESS_TOKEN"):
-        io.tool_output("Not signed in. Run `z login` first.")
+        io.tool_output("Not signed in. Run `z` (or `z login`) first.")
         io.tool_output("Connect/disconnect MCP tools in the web app Integrations page.")
         return
     if not tools:

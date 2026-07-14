@@ -2,7 +2,7 @@
 
 FastAPI + **SQLAlchemy** + **PostgreSQL** backend for Z user accounts and workspaces.
 
-The CLI (`z login`) talks to this API. Model API keys stay bring-your-own and are **not** stored here.
+The CLI (`z` / `z login`) talks to this API. Model API keys stay bring-your-own and are **not** stored here.
 
 ## Models (SQLAlchemy)
 

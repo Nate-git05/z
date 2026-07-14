@@ -581,7 +581,7 @@ def _find_available_port(start: int, end: int) -> int | None:
 def whoami_text(creds: Credentials | None = None) -> str:
     creds = creds or current_session()
     if not creds or not creds.is_authenticated():
-        return "Not signed in. Run `z login` or `/login`."
+        return "Not signed in. Run `z` (or `z login`) to sign in."
     lines = [f"Signed in as {creds.display_name()}"]
     if creds.user:
         if creds.user.email:

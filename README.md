@@ -81,19 +81,21 @@ Then:
 
 ```bash
 export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY — bring your own
-z login                        # optional — unlocks workspace / MCP / shared skills
 cd /path/to/your/project
-z
+z                              # signs in if needed, then starts the coding agent
 ```
 
-You'll need a model API key from your provider. `z login` is for Z account /
-workspace features; it does **not** replace your model key.
+Running `z` is enough: if you aren't signed in, you get the login screen first,
+then the agent chat. You'll still need a model API key from your provider —
+Z account login does **not** replace your model key. Use `z login` only when
+you want to sign in (or switch accounts) without starting a session.
 
 ## Core commands
 
 | Command | What it does |
 |---------|----------------|
-| `z login` / `z logout` / `z whoami` | Sign in to your Z account, sign out, show current user/workspace |
+| `z` | Sign in if needed, then start the coding agent |
+| `z login` / `z logout` / `z whoami` | Sign in only, sign out, show current user/workspace |
 | `z models` | List curated available models |
 | `z mcp list` | View MCP tools connected via the web dashboard |
 | `z skill create "..."` / `z skill list` | Create a reusable skill with your model, or list skills |
