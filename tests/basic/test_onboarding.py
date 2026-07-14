@@ -121,7 +121,7 @@ class TestOnboarding(unittest.TestCase):
     @patch.dict(os.environ, {"OPENAI_API_KEY": "oa_key"}, clear=True)
     def test_try_select_default_model_openai(self, mock_check_tier):
         """Test OpenAI model selection."""
-        self.assertEqual(try_to_select_default_model(), "gpt-4o")
+        self.assertEqual(try_to_select_default_model(), "gpt-5.6-sol")
         mock_check_tier.assert_not_called()
 
     @patch("aider.onboarding.check_openrouter_tier")

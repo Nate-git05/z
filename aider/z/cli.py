@@ -103,7 +103,8 @@ def main(argv: list[str] | None = None) -> int | None:
 def dispatch(args) -> int:
     from aider.io import InputOutput
 
-    io = InputOutput(pretty=True, fancy_input=True, yes=False)
+    # yes=None → actually prompt; yes=False would auto-answer "no" to every ask
+    io = InputOutput(pretty=True, fancy_input=True, yes=None)
 
     if args.command in ("login", "auth"):
         return cmd_login(io, provider=getattr(args, "provider", None))

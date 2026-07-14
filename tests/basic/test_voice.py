@@ -7,6 +7,19 @@ import pytest
 
 from aider.voice import SoundDeviceError, Voice
 
+# Skip when the PortAudio C library is unavailable (headless CI/VMs);
+# these tests exercise wiring around sounddevice, not audio itself.
+try:
+    import sounddevice  # noqa: F401
+
+    _HAS_SOUNDDEVICE = True
+except (ImportError, OSError):
+    _HAS_SOUNDDEVICE = False
+
+pytestmark = pytest.mark.skipif(
+    not _HAS_SOUNDDEVICE, reason="sounddevice/PortAudio not available"
+)
+
 
 # Mock the entire sounddevice module
 @pytest.fixture

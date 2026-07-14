@@ -1102,7 +1102,7 @@ class TestMain(TestCase):
             coder = main(
                 ["--exit", "--yes"], input=DummyInput(), output=DummyOutput(), return_coder=True
             )
-            self.assertIn("gpt-4", coder.main_model.name.lower())
+            self.assertIn("gpt-5", coder.main_model.name.lower())
             del os.environ["OPENAI_API_KEY"]
 
             # Test Gemini API key
