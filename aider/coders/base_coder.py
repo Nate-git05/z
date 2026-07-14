@@ -48,6 +48,7 @@ from aider.repomap import RepoMap
 from aider.run_cmd import run_cmd
 from aider.utils import format_content, format_messages, format_tokens, is_image_file
 from aider.waiting import WaitingSpinner
+from aider.z.mascot import MascotSpinner
 
 from ..dump import dump  # noqa: F401
 from .chat_chunks import ChatChunks
@@ -206,7 +207,11 @@ class Coder:
 
     def get_announcements(self):
         lines = []
-        lines.append(f"Aider v{__version__}")
+        use_z = getattr(self.io, "z_theme", True)
+        if use_z:
+            lines.append(f"Z v{__version__}")
+        else:
+            lines.append(f"Aider v{__version__}")
 
         # Model
         main_model = self.main_model
@@ -567,8 +572,35 @@ class Coder:
             self.linter.set_linter(lang, cmd)
 
     def show_announcements(self):
+        use_z = getattr(self.io, "z_theme", True)
+        lines = self.get_announcements()
+        if use_z and self.io.pretty:
+            from aider.z.banner import render_startup_banner
+
+            version = ""
+            model_line = ""
+            status_lines = []
+            if lines:
+                # First line is "Z v..."; rest are status
+                first = lines[0]
+                if first.startswith("Z "):
+                    version = first[2:].strip()
+                else:
+                    status_lines.append(first)
+                if len(lines) > 1:
+                    model_line = lines[1]
+                    status_lines.extend(lines[2:])
+            render_startup_banner(
+                self.io.console,
+                version=version,
+                model_line=model_line,
+                status_lines=status_lines,
+                pretty=True,
+            )
+            return
+
         bold = True
-        for line in self.get_announcements():
+        for line in lines:
             self.io.tool_output(line, bold=bold)
             bold = False
 
@@ -1564,7 +1596,11 @@ class Coder:
 
         self.multi_response_content = ""
         if self.show_pretty():
-            self.waiting_spinner = WaitingSpinner("Waiting for " + self.main_model.name)
+            spinner_text = "Waiting for " + self.main_model.name
+            if getattr(self.io, "z_theme", True):
+                self.waiting_spinner = MascotSpinner(spinner_text)
+            else:
+                self.waiting_spinner = WaitingSpinner(spinner_text)
             self.waiting_spinner.start()
             if self.stream:
                 self.mdstream = self.io.get_assistant_mdstream()

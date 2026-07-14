@@ -263,6 +263,7 @@ class InputOutput:
         root=".",
         notifications=False,
         notifications_command=None,
+        z_theme=True,
     ):
         self.placeholder = None
         self.interrupted = False
@@ -271,6 +272,7 @@ class InputOutput:
         self.multiline_mode = multiline_mode
         self.bell_on_next_input = False
         self.notifications = notifications
+        self.z_theme = z_theme
         if notifications and notifications_command is None:
             self.notifications_command = self.get_default_notification_command()
         else:
@@ -508,7 +510,10 @@ class InputOutput:
 
     def rule(self):
         if self.pretty:
-            style = dict(style=self.user_input_color) if self.user_input_color else dict()
+            from aider.z.theme import TEXT_MUTED
+
+            color = TEXT_MUTED if getattr(self, "z_theme", False) else self.user_input_color
+            style = dict(style=color) if color else dict()
             self.console.rule(**style)
         else:
             print()
@@ -847,7 +852,16 @@ class InputOutput:
 
         if subject:
             self.tool_output()
-            if "\n" in subject:
+            if getattr(self, "z_theme", False) and self.pretty:
+                from aider.z.escalation import render_escalation
+
+                render_escalation(
+                    question.split(" (Y)es")[0].strip() if " (Y)es" in question else question,
+                    console=self.console,
+                    context=subject if isinstance(subject, str) else None,
+                    pretty=True,
+                )
+            elif "\n" in subject:
                 lines = subject.splitlines()
                 max_length = max(len(line) for line in lines)
                 padded_lines = [line.ljust(max_length) for line in lines]
@@ -855,6 +869,12 @@ class InputOutput:
                 self.tool_output(padded_subject, bold=True)
             else:
                 self.tool_output(subject, bold=True)
+        elif getattr(self, "z_theme", False) and self.pretty and explicit_yes_required:
+            # Agent escalation without a subject still gets a distinct frame
+            from aider.z.escalation import render_escalation
+
+            q_display = question.split(" (Y)es")[0].strip() if " (Y)es" in question else question
+            render_escalation(q_display, console=self.console, pretty=True)
 
         style = self._get_style()
 
@@ -962,6 +982,21 @@ class InputOutput:
             self.tool_output(hist)
 
         return res
+
+    def escalate_ask(self, question, default="", context=None, options=None):
+        """Ask the user a question framed as a Z escalation (orange-bordered)."""
+        from aider.z.escalation import render_escalation
+
+        self.num_user_asks += 1
+        self.ring_bell()
+        render_escalation(
+            question,
+            console=self.console,
+            context=context,
+            options=options,
+            pretty=self.pretty,
+        )
+        return self.prompt_ask("Your reply", default=default)
 
     def _tool_message(self, message="", strip=True, color=None):
         if message.strip():

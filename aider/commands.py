@@ -1797,7 +1797,6 @@ Just show me the edits I need to make.
 
         return browse_interactive(self.io, store, mode=mode)
 
-
 def expand_subdir(file_path):
     if file_path.is_file():
         yield file_path
