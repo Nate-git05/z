@@ -6,6 +6,7 @@ import enum
 import secrets
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, Enum, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -13,6 +14,9 @@ from sqlalchemy.types import Uuid
 
 from z_server.models.base import Base
 from z_server.models.user import AuthProvider
+
+if TYPE_CHECKING:
+    from z_server.models.user import User
 
 
 class ChallengePurpose(str, enum.Enum):
@@ -44,7 +48,7 @@ class AuthSession(Base):
     user_agent: Mapped[str | None] = mapped_column(String(500), nullable=True)
     ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
-    user: Mapped["User"] = relationship(back_populates="sessions")
+    user: Mapped[User] = relationship(back_populates="sessions")
 
 
 class VerificationChallenge(Base):
@@ -61,7 +65,6 @@ class VerificationChallenge(Base):
     phone: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
     name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     code_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    # Twilio Verify sid or opaque session id for magic links
     external_id: Mapped[str | None] = mapped_column(String(255), index=True, nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -69,7 +72,6 @@ class VerificationChallenge(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-    # Set when magic-link confirms so CLI polling can pick up the issued session
     issued_access_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     issued_refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     issued_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
@@ -92,10 +94,3 @@ class OAuthState(Base):
 
 def new_opaque_token(prefix: str = "z_") -> str:
     return prefix + secrets.token_urlsafe(32)
-
-
-# Avoid circular import at type-check time
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from z_server.models.user import User

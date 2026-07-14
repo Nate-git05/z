@@ -13,15 +13,15 @@ os.environ["Z_SECRET_KEY"] = "test-secret"
 os.environ["Z_SERVER_DEV"] = "1"
 os.environ["Z_PUBLIC_BASE_URL"] = "http://testserver"
 
-from z_server.config import get_settings
+from z_server.config import get_settings  # noqa: E402
 
 get_settings.cache_clear()
 
-from fastapi.testclient import TestClient
+from fastapi.testclient import TestClient  # noqa: E402
 
-from z_server.app import create_app
-from z_server.db import init_db, reset_engine
-from z_server.models import User, Workspace, WorkspaceMembership
+from z_server.app import create_app  # noqa: E402
+from z_server.db import init_db, reset_engine  # noqa: E402
+from z_server.models import User, Workspace, WorkspaceMembership  # noqa: E402
 
 
 class ZServerTestCase(unittest.TestCase):
