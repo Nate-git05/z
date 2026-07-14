@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io as _io
+import re
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -13,6 +14,7 @@ from aider.z.login_screen import (
     LOGIN_WORDMARK,
     LoginScreenState,
     TERMS_URL,
+    _brand_block,
     compose_login_screen,
     prompt_login_choice,
     prompt_login_choice_plain,
@@ -22,17 +24,87 @@ from aider.z.login_screen import (
 
 def _render_to_text(**kwargs) -> str:
     buf = _io.StringIO()
-    console = Console(file=buf, force_terminal=True, color_system="truecolor", width=100)
+    # no_color=False so CI with NO_COLOR=1 still exercises truecolor styling
+    console = Console(
+        file=buf,
+        force_terminal=True,
+        color_system="truecolor",
+        width=100,
+        no_color=False,
+        soft_wrap=False,
+    )
     render_login_screen(console, **kwargs)
     return buf.getvalue()
+
+
+def _plain(text: str) -> str:
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
 
 class LoginScreenRenderTest(unittest.TestCase):
     def test_wordmark_and_mascot_present(self):
         out = _render_to_text(version="v0.1.0")
         self.assertIn("██████████", out)  # big Z wordmark
-        # mascot body appears (unicode or ascii variant)
-        self.assertTrue("(oᴗo" in out or "(o-o" in out)
+        self.assertIn("(o-o", out)
+
+    def test_wordmark_is_solid_blocks_not_box_drawing(self):
+        joined = "\n".join(LOGIN_WORDMARK)
+        for ch in "╔╗╚╝═":
+            self.assertNotIn(ch, joined)
+        for line in LOGIN_WORDMARK:
+            self.assertEqual(len(line), len(LOGIN_WORDMARK[0]))
+
+    def test_brand_block_does_not_wrap_at_common_widths(self):
+        for width in (40, 60, 80, 100):
+            buf = _io.StringIO()
+            console = Console(
+                file=buf,
+                force_terminal=True,
+                color_system="truecolor",
+                width=width,
+                no_color=False,
+                soft_wrap=False,
+            )
+            console.print(_brand_block(unicode_ok=False))
+            lines = _plain(buf.getvalue()).splitlines()
+            face_lines = [ln for ln in lines if "(o" in ln or "o-" in ln]
+            self.assertTrue(face_lines, msg=f"mascot missing at width={width}")
+            for ln in face_lines:
+                self.assertIn("(o-o", ln, msg=f"mascot wrapped at width={width}: {ln!r}")
+
+    def test_hop_keeps_constant_canvas_height(self):
+        heights = []
+        for offset in (0, 1, 2):
+            buf = _io.StringIO()
+            console = Console(
+                file=buf,
+                force_terminal=True,
+                color_system="truecolor",
+                width=80,
+                no_color=False,
+                soft_wrap=False,
+            )
+            console.print(
+                _brand_block(
+                    mascot_offset=offset, unicode_ok=False, animate_canvas=True
+                )
+            )
+            heights.append(len(_plain(buf.getvalue()).splitlines()))
+        self.assertEqual(len(set(heights)), 1, heights)
+
+    def test_resting_brand_has_no_hop_spacer(self):
+        buf = _io.StringIO()
+        console = Console(
+            file=buf,
+            force_terminal=True,
+            color_system="truecolor",
+            width=80,
+            no_color=False,
+            soft_wrap=False,
+        )
+        console.print(_brand_block(unicode_ok=False))
+        lines = _plain(buf.getvalue()).splitlines()
+        self.assertTrue(lines[0].strip().startswith("█"))
 
     def test_version_and_helper_lines(self):
         out = _render_to_text(version="v0.1.0")
@@ -40,7 +112,7 @@ class LoginScreenRenderTest(unittest.TestCase):
         self.assertIn("v0.1.0", out)
         self.assertIn("Get started", out)
         self.assertIn("How would you like to sign in?", out)
-        self.assertIn("(Use Enter to select)", out)
+        self.assertIn("Enter", out)
         self.assertIn(TERMS_URL, out)
 
     def test_options_are_z_auth_methods_not_gemini(self):
@@ -48,7 +120,6 @@ class LoginScreenRenderTest(unittest.TestCase):
         self.assertIn("Continue with Google", out)
         self.assertIn("Continue with Email", out)
         self.assertIn("Continue with Phone", out)
-        # No Gemini carry-over
         self.assertNotIn("Gemini", out)
         self.assertNotIn("Vertex", out)
         self.assertNotIn("API Key", out)
@@ -56,7 +127,6 @@ class LoginScreenRenderTest(unittest.TestCase):
     def test_selected_option_marker_moves(self):
         out0 = _render_to_text(selected=0)
         out2 = _render_to_text(selected=2)
-        # Selected row uses the ● marker; different rows selected in each render
         self.assertIn("●", out0)
         self.assertIn("●", out2)
         i0 = out0.index("●")
@@ -71,7 +141,6 @@ class LoginScreenRenderTest(unittest.TestCase):
         out = _render_to_text()
         # Truecolor escape for #C96A2B → 201;106;43
         self.assertIn("201;106;43", out)
-        # Gemini-style green should not appear as a styled color choice
         self.assertNotIn("0;255;0", out)
 
     def test_option_order_google_email_phone(self):

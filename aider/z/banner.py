@@ -9,28 +9,21 @@ from rich.text import Text
 from .mascot import idle_mascot_lines
 from .theme import ACCENT, TEXT, TEXT_DIM, TEXT_MUTED
 
-# Minimal Z wordmark — orange accent only
+# Solid-block Z only — mixed █ + box-drawing glyphs misalign in many fonts.
 WORDMARK = [
-    r"███████╗",
-    r"╚══███╔╝",
-    r"  ███╔╝ ",
-    r" ███╔╝  ",
-    r"███████╗",
-    r"╚══════╝",
+    "████████",
+    "     ██ ",
+    "    ██  ",
+    "   ██   ",
+    "  ██    ",
+    "████████",
 ]
 
-WORDMARK_SIMPLE = [
-    "███████",
-    "     █ ",
-    "    █  ",
-    "   █   ",
-    "  █    ",
-    "███████",
-]
+WORDMARK_SIMPLE = list(WORDMARK)
 
 
 def _wordmark_lines(simple: bool = False) -> list[str]:
-    return list(WORDMARK_SIMPLE if simple else WORDMARK)
+    return list(WORDMARK)
 
 
 def render_startup_banner(

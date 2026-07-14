@@ -10,38 +10,28 @@ from rich.console import Console
 
 from .theme import ACCENT
 
-# Multi-line idle pose for the startup banner (orange accent applied at render time).
-# Original ASCII creature — not a copyrighted mascot.
+# Multi-line idle pose for the startup banner / login screen.
+# Keep to plain ASCII so terminal fonts never mis-measure rare glyphs (e.g. ᴗ)
+# and shatter the side-by-side logo layout.
 IDLE_MASCOT = [
-    r"   __n_  ",
-    r"  (oᴗo ) ",
-    r"  /| |\  ",
-    r" (_/ \_) ",
-]
-
-# ASCII-only idle fallback for limited terminals
-IDLE_MASCOT_ASCII = [
     r"   __n_  ",
     r"  (o-o ) ",
     r"  /| |\  ",
     r" (_/ \_) ",
 ]
 
-# Compact single-line working frames (bounce / jump cycle), Claude-Code style.
-# Each frame is the same width so the status line does not jitter.
+IDLE_MASCOT_ASCII = list(IDLE_MASCOT)
+
+# Compact single-line working frames (bounce / jump cycle).
+# Same width every frame so the status line does not jitter.
 WORKING_FRAMES = [
-    r"(oᴗo)  ",  # idle stance
-    r"(oᴗo)/ ",  # crouch / wind-up
-    r"(oᴗo)^ ",  # jump
-    r"(oᴗo)\ ",  # land
+    r"(o-o)  ",  # idle stance
+    r"(o-o)/ ",  # crouch / wind-up
+    r"(o-o)^ ",  # jump
+    r"(o-o)\ ",  # land
 ]
 
-WORKING_FRAMES_ASCII = [
-    r"(o-o)  ",
-    r"(o-o)/ ",
-    r"(o-o)^ ",
-    r"(o-o)\ ",
-]
+WORKING_FRAMES_ASCII = list(WORKING_FRAMES)
 
 
 def _supports_unicode() -> bool:
