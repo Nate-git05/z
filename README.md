@@ -62,15 +62,24 @@ multi-language editing — rather than reinventing it.
 
 ## Getting Started
 
-A one-line `curl | sh` installer is **coming soon**. Until then, install from this repository:
+```bash
+# One-line install (macOS / Linux)
+curl -fsSL https://raw.githubusercontent.com/Nate-git05/z/main/install.sh | sh
+```
+
+That script detects your OS, installs Z via pip from this repo, and puts `z` on your PATH.
+A shorter `https://z.dev/install.sh` URL is planned once that domain is live.
+
+Alternatively:
 
 ```bash
-# Early access — install from the repo (package name on PyPI TBA)
 pip install "git+https://github.com/Nate-git05/z.git"
+# or from a local checkout: pip install -e .
+```
 
-# Or, from a local checkout:
-# pip install -e .
+Then:
 
+```bash
 export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY — bring your own
 z login                        # optional — unlocks workspace / MCP / shared skills
 cd /path/to/your/project
