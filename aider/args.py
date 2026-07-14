@@ -302,6 +302,15 @@ def get_parser(default_config_files, git_root):
     ##########
     group = parser.add_argument_group("Output settings")
     group.add_argument(
+        "--z-theme",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Use the Z terminal theme: black/white/gray + burnt-orange accent,"
+            " Z banner, and animated mascot (default: True)"
+        ),
+    )
+    group.add_argument(
         "--dark-mode",
         action="store_true",
         help="Use colors suitable for a dark terminal background (default: False)",
@@ -327,67 +336,61 @@ def get_parser(default_config_files, git_root):
     )
     group.add_argument(
         "--user-input-color",
-        default="#00cc00",
-        help="Set the color for user input (default: #00cc00)",
+        default="#F5F5F5",
+        help="Set the color for user input (default: #F5F5F5)",
     )
     group.add_argument(
         "--tool-output-color",
-        default=None,
-        help="Set the color for tool output (default: None)",
+        default="#A0A0A0",
+        help="Set the color for tool output (default: #A0A0A0)",
     )
     group.add_argument(
         "--tool-error-color",
-        default="#FF2222",
-        help="Set the color for tool error messages (default: #FF2222)",
+        default="#F5F5F5",
+        help="Set the color for tool error messages (default: #F5F5F5)",
     )
     group.add_argument(
         "--tool-warning-color",
-        default="#FFA500",
-        help="Set the color for tool warning messages (default: #FFA500)",
+        default="#C96A2B",
+        help="Set the color for tool warning messages (default: #C96A2B)",
     )
     group.add_argument(
         "--assistant-output-color",
-        default="#0088ff",
-        help="Set the color for assistant output (default: #0088ff)",
+        default="#F5F5F5",
+        help="Set the color for assistant output (default: #F5F5F5)",
     )
     group.add_argument(
         "--completion-menu-color",
         metavar="COLOR",
-        default=None,
-        help="Set the color for the completion menu (default: terminal's default text color)",
+        default="#F5F5F5",
+        help="Set the color for the completion menu (default: #F5F5F5)",
     )
     group.add_argument(
         "--completion-menu-bg-color",
         metavar="COLOR",
-        default=None,
-        help=(
-            "Set the background color for the completion menu (default: terminal's default"
-            " background color)"
-        ),
+        default="#0A0A0A",
+        help="Set the background color for the completion menu (default: #0A0A0A)",
     )
     group.add_argument(
         "--completion-menu-current-color",
         metavar="COLOR",
-        default=None,
-        help=(
-            "Set the color for the current item in the completion menu (default: terminal's default"
-            " background color)"
-        ),
+        default="#0A0A0A",
+        help="Set the color for the current item in the completion menu (default: #0A0A0A)",
     )
     group.add_argument(
         "--completion-menu-current-bg-color",
         metavar="COLOR",
-        default=None,
+        default="#C96A2B",
         help=(
-            "Set the background color for the current item in the completion menu (default:"
-            " terminal's default text color)"
+            "Set the background color for the current item in the completion menu"
+            " (default: #C96A2B)"
         ),
     )
     group.add_argument(
         "--code-theme",
-        default="default",
+        default="monokai",
         help=(
-            "Set the markdown code theme (default: default, other options include monokai,"
+            "Set the markdown code theme (default: monokai, other options include default,"
             " solarized-dark, solarized-light, or a Pygments builtin style,"
             " see https://pygments.org/styles for available themes)"
         ),

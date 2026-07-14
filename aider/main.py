@@ -529,6 +529,13 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
     if args.timeout:
         models.request_timeout = args.timeout
 
+    # Z theme is the default palette for this fork. Explicit --dark-mode / --light-mode
+    # still override colors for users who want the legacy Aider presets.
+    if getattr(args, "z_theme", True) and not args.dark_mode and not args.light_mode:
+        from aider.z.theme import apply_z_palette
+
+        apply_z_palette(args)
+
     if args.dark_mode:
         args.user_input_color = "#32FF32"
         args.tool_error_color = "#FF3333"
@@ -575,6 +582,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
             multiline_mode=args.multiline,
             notifications=args.notifications,
             notifications_command=args.notifications_command,
+            z_theme=getattr(args, "z_theme", True),
         )
 
     io = get_io(args.pretty)

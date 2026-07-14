@@ -1679,6 +1679,135 @@ Just show me the edits I need to make.
         except Exception as e:
             self.io.tool_error(f"An unexpected error occurred while copying to clipboard: {str(e)}")
 
+    def cmd_uncertainties(self, args):
+        "Browse uncertainty notes (tree, detail, and actions)"
+        from aider.z.uncertainty import (
+            UncertaintyNote,
+            UncertaintyTier,
+            render_note_detail,
+            render_uncertainty_tree,
+        )
+
+        store = getattr(self.coder, "uncertainty_store", None)
+        if store is None:
+            from aider.z.uncertainty import UncertaintyStore
+
+            store = UncertaintyStore()
+            self.coder.uncertainty_store = store
+
+        args = (args or "").strip()
+        console = self.io.console
+        pretty = self.io.pretty
+
+        if not args:
+            render_uncertainty_tree(store, console=console, pretty=pretty)
+            if not store.active_notes():
+                self.io.tool_output(
+                    "Tip: Z will flag notes here when it is unsure about a change."
+                )
+            return
+
+        parts = args.split(None, 1)
+        selector = parts[0]
+        action = parts[1].strip().lower() if len(parts) > 1 else ""
+
+        # Demo seed: `/uncertainties demo` adds sample notes for UI preview
+        if selector == "demo":
+            if not store.active_notes():
+                store.add(
+                    UncertaintyNote(
+                        id="u1",
+                        title="Auth token refresh edge case",
+                        tier=UncertaintyTier.HIGH_RISK,
+                        summary=(
+                            "Unclear whether expired tokens are rotated"
+                            " before or after the 401 retry."
+                        ),
+                        files=["aider/io.py"],
+                        functions=["confirm_ask"],
+                        suggested_fix=(
+                            "Add an explicit refresh-before-retry path"
+                            " and a regression test."
+                        ),
+                    )
+                )
+                store.add(
+                    UncertaintyNote(
+                        id="u2",
+                        title="Banner layout on narrow terminals",
+                        tier=UncertaintyTier.NEEDS_REVIEW,
+                        summary="Wordmark + mascot may wrap awkwardly below 60 columns.",
+                        files=["aider/z/banner.py"],
+                        suggested_fix=(
+                            "Fall back to a single-line wordmark under a width threshold."
+                        ),
+                    )
+                )
+                store.add(
+                    UncertaintyNote(
+                        id="u3",
+                        title="Default code theme choice",
+                        tier=UncertaintyTier.CONFIDENT,
+                        summary="Monokai fits the dark Z palette; low risk of confusion.",
+                        files=["aider/args.py"],
+                    )
+                )
+                self.io.tool_output("Added demo uncertainty notes.")
+            render_uncertainty_tree(store, console=console, pretty=pretty)
+            return
+
+        note = store.get(selector)
+        if not note:
+            self.io.tool_error(f"No uncertainty note matching '{selector}'.")
+            render_uncertainty_tree(store, console=console, pretty=pretty)
+            return
+
+        if not action:
+            render_note_detail(note, console=console, pretty=pretty)
+            return
+
+        if action in ("resolve", "resolved", "r"):
+            store.mark_resolved(note.id)
+            self.io.tool_output(f"Marked note [{note.id}] resolved.")
+            return
+
+        if action in ("fix", "f"):
+            prompt = (
+                f"Please fix the uncertainty note '{note.title}': {note.summary}"
+            )
+            if note.suggested_fix:
+                prompt += f" Suggested fix: {note.suggested_fix}"
+            self.io.set_placeholder(prompt)
+            self.io.tool_output("Queued fix prompt — press Enter to send, or edit first.")
+            return
+
+        if action in ("test", "t"):
+            prompt = (
+                f"Please add a test covering the uncertainty note '{note.title}': {note.summary}"
+            )
+            self.io.set_placeholder(prompt)
+            self.io.tool_output("Queued test prompt — press Enter to send, or edit first.")
+            return
+
+        if action in ("explain", "e"):
+            prompt = (
+                f"Please explain the uncertainty note '{note.title}' in more detail: {note.summary}"
+            )
+            self.io.set_placeholder(prompt)
+            self.io.tool_output("Queued explain prompt — press Enter to send, or edit first.")
+            return
+
+        self.io.tool_error(f"Unknown action '{action}'. Use: fix, test, explain, resolve.")
+        render_note_detail(note, console=console, pretty=pretty)
+
+    def completions_uncertainties(self):
+        store = getattr(self.coder, "uncertainty_store", None)
+        if not store:
+            return ["demo"]
+        items = ["demo"] + [n.id for n in store.active_notes()]
+        items += [str(i) for i in range(1, len(store.active_notes()) + 1)]
+        return items
+
 
 def expand_subdir(file_path):
     if file_path.is_file():
