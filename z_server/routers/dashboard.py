@@ -36,9 +36,8 @@ def _ctx(request: Request, user: User | None = None, **extra):
 
 @router.get("/", response_class=HTMLResponse)
 def home(request: Request, user: User | None = Depends(get_optional_user)):
-    if user:
-        return RedirectResponse("/app/integrations")
-    return templates.TemplateResponse("home.html", _ctx(request, user))
+    """Public landing page with waitlist — always at /."""
+    return templates.TemplateResponse("landing.html", _ctx(request, user))
 
 
 @router.get("/login", response_class=HTMLResponse)

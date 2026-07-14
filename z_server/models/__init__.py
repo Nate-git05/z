@@ -17,6 +17,7 @@ from z_server.models.user import (
     Workspace,
     WorkspaceMembership,
 )
+from z_server.models.waitlist import WaitlistSignup
 
 __all__ = [
     "Base",
@@ -34,4 +35,5 @@ __all__ = [
     "McpConnectionType",
     "UncertaintyTask",
     "UncertaintyNodeRow",
+    "WaitlistSignup",
 ]

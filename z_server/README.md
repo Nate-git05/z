@@ -17,6 +17,7 @@ The CLI (`z login`) talks to this API. Model API keys stay bring-your-own and ar
 | `mcp_connections` | MCP tool connections (encrypted credentials) |
 | `uncertainty_tasks` | Task checklists for requirement-gap analysis |
 | `uncertainty_nodes` | Persisted uncertainty tree (workspace memory layer) |
+| `waitlist_signups` | Public landing-page waitlist (idempotent on email) |
 
 ## Uncertainty tree
 
@@ -25,6 +26,13 @@ blast-radius reference counts, live API verification, TODOs, config access, etc.
 They sync to Postgres via `/v1/uncertainty/nodes` so future sessions can load known
 risks for a repo/workspace. Risk tier and confidence tier are stored separately;
 list endpoints sort High risk first.
+
+## Landing page & waitlist
+
+Public marketing page at `/` (`templates/landing.html` + `/static/css|js/landing.*`).
+`POST /v1/waitlist` accepts `{first_name, last_name, email}` with no auth,
+server-side email validation, IP rate limiting (10 / 15 min), and idempotent
+duplicate emails. `notified_at` is reserved for a future invite-email flow.
 
 Connect MCP servers in the web UI at `/app/integrations` (not via local CLI config).
 

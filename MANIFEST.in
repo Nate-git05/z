@@ -2,6 +2,9 @@
 
 global-exclude .DS_Store
 
+recursive-include z_server/templates *
+recursive-include z_server/static *
+
 recursive-exclude aider/website/examples *
 recursive-exclude aider/website/_posts *
 
