@@ -35,12 +35,13 @@ dev = { file = "requirements/requirements-dev.txt" }
 help = { file = "requirements/requirements-help.txt" }
 browser = { file = "requirements/requirements-browser.txt" }
 playwright = { file = "requirements/requirements-playwright.txt" }
+web = { file = "requirements/requirements-web.txt" }
 
 [tool.setuptools]
 include-package-data = true
 
 [tool.setuptools.packages.find]
-include = ["aider*"]
+include = ["aider*", "z_server*"]
 
 [build-system]
 requires = ["setuptools>=68", "setuptools_scm[toml]>=8"]
