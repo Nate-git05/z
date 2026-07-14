@@ -81,29 +81,33 @@ def require_account(io, *, feature: str = "this feature") -> Credentials | None:
 
 
 def run_login_flow(io, analytics=None) -> Credentials | None:
-    """Interactive sign-in: Email / Phone / Google."""
-    io.tool_output("")
-    io.tool_output("Sign in to Z")
-    io.tool_output("  [1] Continue with Email")
-    io.tool_output("  [2] Continue with Phone (Twilio Verify)")
-    io.tool_output("  [3] Continue with Google")
-    io.tool_output("  [q] Cancel")
-    io.tool_output("")
+    """Interactive sign-in: branded login screen → Google / Email / Phone."""
+    from .login_screen import prompt_login_choice
 
-    choice = (io.prompt_ask("Choose an option", default="1") or "").strip().lower()
-    if choice in ("q", "quit", "cancel", "n", "no"):
+    version = ""
+    try:
+        from aider import __version__
+
+        version = f"v{__version__}"
+    except Exception:
+        pass
+
+    status_message = "Z auth dev mode — codes are accepted locally." if auth_dev_mode() else ""
+
+    provider = prompt_login_choice(io, version=version, status_message=status_message)
+    if provider is None:
         io.tool_output("Login cancelled.")
         return None
 
     try:
-        if choice in ("1", "e", "email"):
+        if provider == "email":
             result = login_with_email(io)
-        elif choice in ("2", "p", "phone"):
+        elif provider == "phone":
             result = login_with_phone(io)
-        elif choice in ("3", "g", "google"):
+        elif provider == "google":
             result = login_with_google(io, analytics=analytics)
         else:
-            io.tool_error(f"Unknown option: {choice}")
+            io.tool_error(f"Unknown option: {provider}")
             return None
     except AuthError as err:
         io.tool_error(str(err))
