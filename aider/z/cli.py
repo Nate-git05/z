@@ -112,6 +112,10 @@ def _print_help() -> None:
 def _start_agent(argv: list[str]) -> int | None:
     from aider.io import InputOutput
 
+    # Mark this process as the Z CLI so Aider onboarding (OpenRouter "login",
+    # "improve aider?" analytics copy) does not replace Z's account login.
+    os.environ["Z_CLI"] = "1"
+
     # yes=None → actually prompt; yes=False would auto-answer "no" to every ask
     io = InputOutput(pretty=True, fancy_input=True, yes=None)
     if not ensure_agent_session(io):

@@ -655,13 +655,16 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
     )
     if args.analytics is not False:
         if analytics.need_to_ask(args.analytics):
+            z_cli = os.environ.get("Z_CLI", "").strip().lower() in ("1", "true", "yes")
+            product = "Z" if z_cli else "Aider"
             io.tool_output(
-                "Aider respects your privacy and never collects your code, chat messages, keys or"
-                " personal info."
+                f"{product} respects your privacy and never collects your code, chat messages,"
+                " keys or personal info."
             )
-            io.tool_output(f"For more info: {urls.analytics}")
+            if not z_cli:
+                io.tool_output(f"For more info: {urls.analytics}")
             disable = not io.confirm_ask(
-                "Allow collection of anonymous analytics to help improve aider?"
+                f"Allow collection of anonymous analytics to help improve {product}?"
             )
 
             analytics.asked_opt_in = True
@@ -802,7 +805,17 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
             f"The specified model '{args.model}' requires an OpenRouter API key, which was not"
             " found."
         )
-        # Attempt OAuth flow because the specific model needs it
+        z_cli = os.environ.get("Z_CLI", "").strip().lower() in ("1", "true", "yes")
+        if z_cli:
+            io.tool_error(
+                "Set OPENROUTER_API_KEY in your environment, or choose a different --model."
+            )
+            analytics.event(
+                "exit",
+                reason="OpenRouter key missing for specified model under Z CLI",
+            )
+            return 1
+        # Attempt OAuth flow because the specific model needs it (`aider` entry only)
         if offer_openrouter_oauth(io, analytics):
             # OAuth succeeded, the key should now be in os.environ.
             # Check if the key is now present after the flow.

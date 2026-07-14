@@ -9,14 +9,14 @@ from rich.text import Text
 from .mascot import idle_mascot_lines
 from .theme import ACCENT, TEXT, TEXT_DIM, TEXT_MUTED
 
-# Solid-block Z only — mixed █ + box-drawing glyphs misalign in many fonts.
+# Pure ASCII Z — macOS Terminal often renders █ as double-width and shreds layout.
 WORDMARK = [
-    "████████",
-    "     ██ ",
-    "    ██  ",
-    "   ██   ",
-    "  ██    ",
-    "████████",
+    "########",
+    "     ## ",
+    "    ##  ",
+    "   ##   ",
+    "  ##    ",
+    "########",
 ]
 
 WORDMARK_SIMPLE = list(WORDMARK)

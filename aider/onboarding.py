@@ -138,7 +138,18 @@ def select_default_model(args, io, analytics):
     no_model_msg = "No LLM model was specified and no API keys were provided."
     io.tool_warning(no_model_msg)
 
-    # Try OAuth if no model was detected
+    # Running as `z`: account login is Z's screen. Do not pivot into Aider's
+    # OpenRouter "Login to OpenRouter…" flow — that reads as the wrong login.
+    if os.environ.get("Z_CLI", "").strip().lower() in ("1", "true", "yes"):
+        io.tool_output(
+            "Z account sign-in is separate from model keys. Set a provider key"
+            " (e.g. ANTHROPIC_API_KEY / OPENAI_API_KEY) or pass --model, then"
+            " run `z` again."
+        )
+        analytics.event("exit", reason="No model/keys for Z CLI")
+        return None
+
+    # Try OAuth if no model was detected (legacy `aider` entrypoint only)
     offer_openrouter_oauth(io, analytics)
 
     # Check again after potential OAuth success

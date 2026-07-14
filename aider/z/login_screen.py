@@ -1,44 +1,39 @@
 """Z login screen — branded onboarding UI around the existing auth flows.
 
-Structure: large wordmark + mascot, version/status, bordered "Get started"
-box with selectable auth options. Skinned in Z's palette (black / white /
-gray + burnt orange).
+Uses plain ASCII for the wordmark/box so macOS Terminal (and other fonts that
+render █ / box-drawing as double-width) cannot shred the layout. Selection is
+redrawn with a full-screen clear — not Rich Live — for the same reason.
 
 Presentation only — selection hands off to aider.z.auth.
 """
 
 from __future__ import annotations
 
+import shutil
 import sys
 import time
 from dataclasses import dataclass
 
-from rich.console import Console, Group
-from rich.panel import Panel
+from rich.console import Console
 from rich.style import Style
 from rich.text import Text
 
 from .mascot import idle_mascot_lines
 from .theme import ACCENT, ACCENT_DIM, TEXT, TEXT_DIM, TEXT_MUTED
 
-# Solid-block Z only (no box-drawing mix). Mixed █ + ╔╗╚╝ glyphs misalign in
-# many terminal fonts and read as a "broken" logo.
+# Pure ASCII Z — single cell width everywhere (avoids Mac █ double-width wrap).
 LOGIN_WORDMARK = [
-    "██████████",
-    "       ██ ",
-    "      ██  ",
-    "     ██   ",
-    "    ██    ",
-    "   ██     ",
-    "  ██      ",
-    "██████████",
+    "##########",
+    "       ## ",
+    "      ##  ",
+    "     ##   ",
+    "    ##    ",
+    "   ##     ",
+    "  ##      ",
+    "##########",
 ]
 
-# Extra rows above the brand block reserved for the hop-in animation so Live
-# height stays constant (avoids ghost lines / torn frames).
-_HOP_MAX = 2
-
-TERMS_URL = "https://github.com/Nate-git05/z"  # placeholder until z.dev terms exist
+TERMS_URL = "https://github.com/Nate-git05/z"
 
 LOGIN_OPTIONS = [
     ("google", "Continue with Google"),
@@ -60,123 +55,141 @@ def _pad_line(line: str, width: int) -> str:
     return line + (" " * (width - len(line)))
 
 
-def _brand_block(
-    *,
-    mascot_offset: int = 0,
-    unicode_ok: bool | None = None,
-    animate_canvas: bool = False,
-) -> Text:
-    """Wordmark + idle mascot side by side.
-
-    When animate_canvas=True, reserve a fixed hop region above the wordmark so
-    Live refresh height does not jump mid-animation. Resting renders omit that
-    spacer so the settled screen is flush.
-    """
+def _brand_lines(*, unicode_ok: bool | None = None) -> list[str]:
+    del unicode_ok  # login always uses ASCII mascot for layout stability
     mark = list(LOGIN_WORDMARK)
-    mascot = idle_mascot_lines(unicode_ok)
+    mascot = idle_mascot_lines(False)
 
     mark_w = max(len(line) for line in mark)
     mascot_w = max((len(line) for line in mascot), default=0)
     mark_h = len(mark)
     mascot_h = len(mascot)
+    top = max(0, (mark_h - mascot_h) // 2)
 
-    offset = max(0, min(_HOP_MAX, int(mascot_offset)))
-    hop_pad = _HOP_MAX if animate_canvas else 0
+    lines: list[str] = []
+    for i in range(mark_h):
+        left = _pad_line(mark[i], mark_w)
+        mi = i - top
+        right = _pad_line(mascot[mi], mascot_w) if 0 <= mi < mascot_h else ""
+        if right.strip():
+            lines.append(f"{left}   {right.rstrip()}")
+        else:
+            lines.append(left.rstrip())
+    return lines
 
-    total_h = hop_pad + mark_h
-    mark_start = hop_pad
-    # Resting position: vertically centered on the wordmark; hop lifts it.
-    rest = mark_start + max(0, (mark_h - mascot_h) // 2)
-    mascot_start = max(0, rest - offset)
 
-    gap = "   "
-    accent = Style(color=ACCENT, bold=True)
+def _menu_inner_lines(state: LoginScreenState) -> list[tuple[str, str]]:
+    """Return (plain_line, style_role) rows for the get-started box body."""
+    rows: list[tuple[str, str]] = [
+        ("? Get started", "title"),
+        ("", "blank"),
+        ("How would you like to sign in?", "text"),
+        ("", "blank"),
+    ]
+    for i, (_key, label) in enumerate(LOGIN_OPTIONS):
+        if i == state.selected:
+            rows.append((f" > {i + 1}. {label}", "selected"))
+        else:
+            rows.append((f"   {i + 1}. {label}", "option"))
+    rows.extend(
+        [
+            ("", "blank"),
+            ("(Use up/down arrows, numbers, or Enter)", "muted"),
+            ("", "blank"),
+            ("Terms of Service and Privacy Notice for Z CLI", "dim"),
+            (TERMS_URL, "link"),
+        ]
+    )
+    return rows
+
+
+def _ascii_box(inner: list[tuple[str, str]], *, inner_width: int) -> Text:
+    """Draw a simple ASCII box — no unicode rounded borders."""
     out = Text()
-    for row in range(total_h):
-        if mark_start <= row < mark_start + mark_h:
-            left = _pad_line(mark[row - mark_start], mark_w)
-        else:
-            left = " " * mark_w
+    top = "+" + ("-" * (inner_width + 2)) + "+"
+    out.append(top + "\n", style=Style(color=ACCENT_DIM))
 
-        if mascot_start <= row < mascot_start + mascot_h:
-            right = _pad_line(mascot[row - mascot_start], mascot_w)
-        else:
-            right = ""
+    role_styles = {
+        "title": Style(color=TEXT, bold=True),
+        "text": Style(color=TEXT),
+        "selected": Style(color=ACCENT, bold=True),
+        "option": Style(color=TEXT_DIM),
+        "muted": Style(color=TEXT_MUTED),
+        "dim": Style(color=TEXT_DIM),
+        "link": Style(color=ACCENT, underline=True),
+        "blank": Style(color=TEXT_MUTED),
+    }
 
-        out.append(left, style=accent)
-        if right:
-            out.append(gap, style=accent)
-            out.append(right, style=accent)
-        out.append("\n")
+    for plain, role in inner:
+        # Highlight selected row marker in accent; keep '?' accent on title.
+        content = Text()
+        if role == "title" and plain.startswith("? "):
+            content.append("? ", style=Style(color=ACCENT, bold=True))
+            content.append(plain[2:], style=role_styles["title"])
+        else:
+            content.append(plain, style=role_styles.get(role, Style(color=TEXT)))
+
+        # Pad plain width for the border; Rich Text display width ~= len(plain) for ASCII.
+        pad = max(0, inner_width - len(plain))
+        out.append("| ", style=Style(color=ACCENT_DIM))
+        out.append(content)
+        if pad:
+            out.append(" " * pad)
+        out.append(" |\n", style=Style(color=ACCENT_DIM))
+
+    out.append("+" + ("-" * (inner_width + 2)) + "+", style=Style(color=ACCENT_DIM))
     return out
 
 
-def _header_lines(state: LoginScreenState) -> Text:
+def compose_login_text(state: LoginScreenState, *, terminal_width: int = 80) -> Text:
+    """Build the full login screen as a single Text (no Live/Panel)."""
     out = Text()
-    version = state.version or ""
+    accent = Style(color=ACCENT, bold=True)
+
+    for line in _brand_lines():
+        out.append(line + "\n", style=accent)
+
+    out.append("\n")
     out.append("Z CLI", style=Style(color=TEXT, bold=True))
-    if version:
-        out.append(f" {version}", style=Style(color=TEXT_MUTED))
+    if state.version:
+        out.append(f" {state.version}", style=Style(color=TEXT_MUTED))
     out.append("\n")
     if state.status_message:
         out.append(state.status_message + "\n", style=Style(color=ACCENT_DIM))
+    out.append("\n")
+
+    inner = _menu_inner_lines(state)
+    content_w = max((len(p) for p, _ in inner), default=40)
+    # Fit terminal: borders take 4 cols ("| " + " |")
+    max_inner = max(32, min(52, terminal_width - 4))
+    inner_width = max(content_w, min(max_inner, max(content_w, 40)))
+    # If terminal is very narrow, shrink and let long lines truncate in pad math
+    if terminal_width < inner_width + 4:
+        inner_width = max(28, terminal_width - 4)
+
+    # Truncate overlong plain lines so the box never wraps.
+    trimmed: list[tuple[str, str]] = []
+    for plain, role in inner:
+        if len(plain) > inner_width:
+            trimmed.append((plain[: max(0, inner_width - 3)] + "...", role))
+        else:
+            trimmed.append((plain, role))
+
+    out.append(_ascii_box(trimmed, inner_width=inner_width))
+    out.append("\n")
     return out
 
 
-def _get_started_panel(state: LoginScreenState, *, max_width: int | None = None) -> Panel:
-    body = Text()
-
-    body.append("? ", style=Style(color=ACCENT, bold=True))
-    body.append("Get started\n\n", style=Style(color=TEXT, bold=True))
-    body.append("How would you like to sign in?\n\n", style=Style(color=TEXT))
-
-    for i, (_key, label) in enumerate(LOGIN_OPTIONS):
-        row = f" {i + 1}. {label} "
-        if i == state.selected:
-            # Orange marker + bold orange label — no dark-on-orange bgcolor
-            # (bgcolor often fails and leaves near-black text invisible).
-            body.append(" ● ", style=Style(color=ACCENT, bold=True))
-            body.append(row + "\n", style=Style(color=ACCENT, bold=True))
-        else:
-            body.append("   ", style=Style(color=TEXT_MUTED))
-            body.append(row + "\n", style=Style(color=TEXT_DIM))
-
-    body.append("\n(Use ↑↓ arrows, numbers, or Enter)\n\n", style=Style(color=TEXT_MUTED))
-    body.append("Terms of Service and Privacy Notice for Z CLI\n", style=Style(color=TEXT_DIM))
-    body.append(TERMS_URL, style=Style(color=ACCENT, underline=True))
-
-    kwargs: dict = {
-        "border_style": Style(color=ACCENT_DIM),
-        "padding": (0, 2),
-        "expand": False,
-    }
-    if max_width is not None:
-        # Keep the box readable without wrapping itself into garbage.
-        kwargs["width"] = max(36, min(56, max_width))
-
-    return Panel(body, **kwargs)
-
-
-def compose_login_screen(
-    state: LoginScreenState,
-    *,
-    mascot_offset: int = 0,
-    terminal_width: int | None = None,
-    animate_canvas: bool = False,
-) -> Group:
-    """Full screen renderable: brand block, version/status, get-started box."""
-    return Group(
-        _brand_block(mascot_offset=mascot_offset, animate_canvas=animate_canvas),
-        _header_lines(state),
-        _get_started_panel(state, max_width=terminal_width),
-    )
+# Back-compat name used by tests
+def compose_login_screen(state: LoginScreenState, **kwargs):
+    width = kwargs.get("terminal_width") or shutil.get_terminal_size((80, 24)).columns
+    return compose_login_text(state, terminal_width=width)
 
 
 def _login_console(console: Console | None = None) -> Console:
-    """Console for the login UI — prefer truecolor, never inherit NO_COLOR mute."""
     if console is not None:
         return console
-    return Console(force_terminal=True, color_system="auto", soft_wrap=False)
+    return Console(force_terminal=True, color_system="auto", soft_wrap=False, width=None)
 
 
 def render_login_screen(
@@ -185,22 +198,18 @@ def render_login_screen(
     selected: int = 0,
     version: str = "",
     status_message: str = "",
-    mascot_offset: int = 0,
+    mascot_offset: int = 0,  # kept for API compat; unused (no hop)
 ) -> None:
-    """One-shot render (used by tests and non-interactive paths)."""
+    del mascot_offset  # hop animation removed — it tore layouts on macOS
     console = _login_console(console)
     state = LoginScreenState(
         selected=selected, version=version, status_message=status_message
     )
-    console.print(
-        compose_login_screen(
-            state, mascot_offset=mascot_offset, terminal_width=console.width
-        )
-    )
+    console.print(compose_login_text(state, terminal_width=console.width or 80))
 
 
 def _read_key() -> str:
-    """Read one keypress (POSIX raw mode). Returns '', 'up', 'down', 'enter', 'esc', or the char."""
+    """Read one keypress (POSIX raw mode)."""
     import termios
     import tty
 
@@ -209,7 +218,7 @@ def _read_key() -> str:
     try:
         tty.setraw(fd)
         ch = sys.stdin.read(1)
-        if ch == "\x1b":  # escape sequence
+        if ch == "\x1b":
             seq = sys.stdin.read(1)
             if seq == "[":
                 arrow = sys.stdin.read(1)
@@ -221,30 +230,17 @@ def _read_key() -> str:
             return "esc"
         if ch in ("\r", "\n"):
             return "enter"
-        if ch == "\x03":  # Ctrl-C
+        if ch == "\x03":
             raise KeyboardInterrupt
         return ch
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
-def _hop_in(console: Console, state: LoginScreenState) -> None:
-    """One-time entrance: the mascot hops down into place beside the wordmark."""
-    from rich.live import Live
-
-    # Drop from raised → settle on a fixed-height canvas, then hand off to Live.
-    frames = [_HOP_MAX, 1, 0, 1, 0]
-    with Live(console=console, refresh_per_second=30, transient=True) as live:
-        for offset in frames:
-            live.update(
-                compose_login_screen(
-                    state,
-                    mascot_offset=offset,
-                    terminal_width=console.width,
-                    animate_canvas=True,
-                )
-            )
-            time.sleep(0.08)
+def _clear_screen() -> None:
+    # Clear + home. Avoid Rich Live, which compounds width mis-measure into debris.
+    sys.stdout.write("\033[2J\033[H")
+    sys.stdout.flush()
 
 
 def interactive_login_select(
@@ -258,46 +254,34 @@ def interactive_login_select(
     Render the login screen with arrow-key / number selection.
 
     Returns the chosen provider key ("google" | "email" | "phone") or None.
-    Requires a TTY; callers should fall back to prompt_login_choice_plain otherwise.
     """
-    from rich.live import Live
-
+    del animate  # no hop — static redraw only
     console = _login_console(console)
     state = LoginScreenState(version=version, status_message=status_message)
 
-    if animate:
-        try:
-            _hop_in(console, state)
-        except Exception:
-            pass
-
     try:
-        with Live(
-            compose_login_screen(state, terminal_width=console.width),
-            console=console,
-            refresh_per_second=20,
-            transient=False,
-            vertical_overflow="crop",
-        ) as live:
-            while True:
-                key = _read_key()
-                if key == "up":
-                    state.selected = (state.selected - 1) % len(LOGIN_OPTIONS)
-                elif key == "down":
-                    state.selected = (state.selected + 1) % len(LOGIN_OPTIONS)
-                elif key in ("1", "2", "3"):
-                    state.selected = int(key) - 1
-                    live.update(
-                        compose_login_screen(state, terminal_width=console.width)
-                    )
-                    live.refresh()
-                    time.sleep(0.08)
-                    return LOGIN_OPTIONS[state.selected][0]
-                elif key == "enter":
-                    return LOGIN_OPTIONS[state.selected][0]
-                elif key in ("q", "esc"):
-                    return None
-                live.update(compose_login_screen(state, terminal_width=console.width))
+        while True:
+            _clear_screen()
+            console.print(
+                compose_login_text(state, terminal_width=console.width or 80)
+            )
+            key = _read_key()
+            if key == "up":
+                state.selected = (state.selected - 1) % len(LOGIN_OPTIONS)
+            elif key == "down":
+                state.selected = (state.selected + 1) % len(LOGIN_OPTIONS)
+            elif key in ("1", "2", "3"):
+                state.selected = int(key) - 1
+                _clear_screen()
+                console.print(
+                    compose_login_text(state, terminal_width=console.width or 80)
+                )
+                time.sleep(0.05)
+                return LOGIN_OPTIONS[state.selected][0]
+            elif key == "enter":
+                return LOGIN_OPTIONS[state.selected][0]
+            elif key in ("q", "esc"):
+                return None
     except KeyboardInterrupt:
         return None
 
@@ -329,18 +313,11 @@ def prompt_login_choice_plain(io) -> str | None:
 
 
 def prompt_login_choice(io, *, version: str = "", status_message: str = "") -> str | None:
-    """
-    Show the branded login screen and return the chosen provider key.
-
-    Uses the interactive arrow-key screen on a real terminal; otherwise a
-    plain numbered menu through the standard IO prompt.
-    """
+    """Show the branded login screen and return the chosen provider key."""
     pretty = bool(getattr(io, "pretty", False))
     is_tty = sys.stdin.isatty() and sys.stdout.isatty()
 
     if pretty and is_tty:
-        # Prefer a dedicated console so login colors are not muted by a
-        # no_color console left over from earlier init edge cases.
         console = Console(force_terminal=True, color_system="auto", soft_wrap=False)
         try:
             return interactive_login_select(

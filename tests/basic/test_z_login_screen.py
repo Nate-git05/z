@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io as _io
+import os
 import re
 import unittest
 from unittest.mock import MagicMock, patch
@@ -14,7 +15,6 @@ from aider.z.login_screen import (
     LOGIN_WORDMARK,
     LoginScreenState,
     TERMS_URL,
-    _brand_block,
     compose_login_screen,
     prompt_login_choice,
     prompt_login_choice_plain,
@@ -24,7 +24,6 @@ from aider.z.login_screen import (
 
 def _render_to_text(**kwargs) -> str:
     buf = _io.StringIO()
-    # no_color=False so CI with NO_COLOR=1 still exercises truecolor styling
     console = Console(
         file=buf,
         force_terminal=True,
@@ -43,13 +42,14 @@ def _plain(text: str) -> str:
 
 class LoginScreenRenderTest(unittest.TestCase):
     def test_wordmark_and_mascot_present(self):
-        out = _render_to_text(version="v0.1.0")
-        self.assertIn("██████████", out)  # big Z wordmark
+        out = _plain(_render_to_text(version="v0.1.0"))
+        self.assertIn("##########", out)
         self.assertIn("(o-o", out)
 
-    def test_wordmark_is_solid_blocks_not_box_drawing(self):
+    def test_wordmark_is_pure_ascii(self):
         joined = "\n".join(LOGIN_WORDMARK)
-        for ch in "╔╗╚╝═":
+        self.assertTrue(all(ord(ch) < 128 for ch in joined))
+        for ch in "█╔╗╚╝═░▒":
             self.assertNotIn(ch, joined)
         for line in LOGIN_WORDMARK:
             self.assertEqual(len(line), len(LOGIN_WORDMARK[0]))
@@ -65,46 +65,21 @@ class LoginScreenRenderTest(unittest.TestCase):
                 no_color=False,
                 soft_wrap=False,
             )
-            console.print(_brand_block(unicode_ok=False))
+            render_login_screen(console, version="v1")
             lines = _plain(buf.getvalue()).splitlines()
             face_lines = [ln for ln in lines if "(o" in ln or "o-" in ln]
             self.assertTrue(face_lines, msg=f"mascot missing at width={width}")
             for ln in face_lines:
                 self.assertIn("(o-o", ln, msg=f"mascot wrapped at width={width}: {ln!r}")
+                # Line must fit terminal width (no wrap debris)
+                self.assertLessEqual(len(ln), width, msg=f"line too long at {width}: {ln!r}")
 
-    def test_hop_keeps_constant_canvas_height(self):
-        heights = []
-        for offset in (0, 1, 2):
-            buf = _io.StringIO()
-            console = Console(
-                file=buf,
-                force_terminal=True,
-                color_system="truecolor",
-                width=80,
-                no_color=False,
-                soft_wrap=False,
-            )
-            console.print(
-                _brand_block(
-                    mascot_offset=offset, unicode_ok=False, animate_canvas=True
-                )
-            )
-            heights.append(len(_plain(buf.getvalue()).splitlines()))
-        self.assertEqual(len(set(heights)), 1, heights)
-
-    def test_resting_brand_has_no_hop_spacer(self):
-        buf = _io.StringIO()
-        console = Console(
-            file=buf,
-            force_terminal=True,
-            color_system="truecolor",
-            width=80,
-            no_color=False,
-            soft_wrap=False,
-        )
-        console.print(_brand_block(unicode_ok=False))
-        lines = _plain(buf.getvalue()).splitlines()
-        self.assertTrue(lines[0].strip().startswith("█"))
+    def test_no_unicode_box_drawing_in_menu(self):
+        out = _plain(_render_to_text())
+        for ch in "╭╮╰╯│─╔╗╚╝═":
+            self.assertNotIn(ch, out)
+        self.assertIn("+", out)
+        self.assertIn("|", out)
 
     def test_version_and_helper_lines(self):
         out = _render_to_text(version="v0.1.0")
@@ -121,17 +96,15 @@ class LoginScreenRenderTest(unittest.TestCase):
         self.assertIn("Continue with Email", out)
         self.assertIn("Continue with Phone", out)
         self.assertNotIn("Gemini", out)
-        self.assertNotIn("Vertex", out)
+        self.assertNotIn("OpenRouter", out)
         self.assertNotIn("API Key", out)
 
     def test_selected_option_marker_moves(self):
-        out0 = _render_to_text(selected=0)
-        out2 = _render_to_text(selected=2)
-        self.assertIn("●", out0)
-        self.assertIn("●", out2)
-        i0 = out0.index("●")
-        i2 = out2.index("●")
-        self.assertNotEqual(i0, i2)
+        out0 = _plain(_render_to_text(selected=0))
+        out2 = _plain(_render_to_text(selected=2))
+        self.assertIn("> 1.", out0)
+        self.assertIn("> 3.", out2)
+        self.assertNotIn("> 1.", out2)
 
     def test_status_message_rendered(self):
         out = _render_to_text(status_message="Update available")
@@ -139,7 +112,6 @@ class LoginScreenRenderTest(unittest.TestCase):
 
     def test_orange_accent_used_not_green(self):
         out = _render_to_text()
-        # Truecolor escape for #C96A2B → 201;106;43
         self.assertIn("201;106;43", out)
         self.assertNotIn("0;255;0", out)
 
@@ -147,9 +119,9 @@ class LoginScreenRenderTest(unittest.TestCase):
         keys = [k for k, _ in LOGIN_OPTIONS]
         self.assertEqual(keys, ["google", "email", "phone"])
 
-    def test_compose_group_contains_panel(self):
-        group = compose_login_screen(LoginScreenState(selected=1, version="v1"))
-        self.assertTrue(len(group.renderables) >= 3)
+    def test_compose_returns_text(self):
+        text = compose_login_screen(LoginScreenState(selected=1, version="v1"))
+        self.assertTrue(hasattr(text, "plain") or str(text))
 
 
 class PlainFallbackTest(unittest.TestCase):
@@ -205,6 +177,26 @@ class RunLoginFlowIntegrationTest(unittest.TestCase):
         io_mock.prompt_ask.return_value = "q"
         creds = auth.run_login_flow(io_mock)
         self.assertIsNone(creds)
+
+
+class ZCliOnboardingGateTest(unittest.TestCase):
+    def test_z_cli_skips_openrouter_login_offer(self):
+        from aider.onboarding import select_default_model
+
+        args = MagicMock()
+        args.model = None
+        io = MagicMock()
+        analytics = MagicMock()
+
+        with patch.dict(os.environ, {"Z_CLI": "1"}, clear=False):
+            with patch("aider.onboarding.try_to_select_default_model", return_value=None):
+                with patch("aider.onboarding.offer_openrouter_oauth") as oauth:
+                    result = select_default_model(args, io, analytics)
+        self.assertIsNone(result)
+        oauth.assert_not_called()
+        joined = " ".join(str(c.args[0]) for c in io.tool_output.call_args_list if c.args)
+        self.assertIn("model", joined.lower())
+        self.assertNotIn("OpenRouter", joined)
 
 
 if __name__ == "__main__":
