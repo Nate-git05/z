@@ -1715,6 +1715,58 @@ Just show me the edits I need to make.
 
         print_mcp_list(self.io)
 
+    def cmd_uncertainties(self, args):
+        """Browse the uncertainty tree (risk-first). Select a node to fix, test, explain, or ignore."""
+        store = getattr(self.coder, "uncertainty_store", None)
+        if store is None:
+            try:
+                from aider.z.uncertainty.engine import attach_engine_to_coder
+
+                attach_engine_to_coder(self.coder)
+                store = self.coder.uncertainty_store
+            except Exception as err:
+                self.io.tool_error(f"Uncertainty tree unavailable: {err}")
+                return
+
+        args = (args or "").strip().lower()
+        mode = "risk"
+        if args in ("file", "files", "f"):
+            mode = "file"
+        elif args in ("session", "task", "s"):
+            mode = "session"
+        elif args in ("risk", "r"):
+            mode = "risk"
+        elif args.isdigit():
+            # Direct open by index
+            from aider.z.uncertainty.tree import build_tree, flatten_for_display
+            from aider.z.uncertainty.ui import format_detail
+            from aider.z.uncertainty.actions import apply_action
+
+            nodes = store.list(include_resolved=False)
+            rows = flatten_for_display(build_tree(nodes, mode="risk"), mode="risk")
+            idx = int(args)
+            if idx < 1 or idx > len(rows):
+                self.io.tool_warning("Node number out of range. Use /uncertainties to list.")
+                return
+            node = rows[idx - 1][1]
+            self.io.tool_output(format_detail(node))
+            act = self.io.prompt_ask(
+                "Action [F]ix / [T]est / [E]xplain / [I]gnore / [C]ustom / Enter skip",
+                default="",
+            ).strip().lower()
+            if not act:
+                return
+            custom = ""
+            if act in ("c", "custom"):
+                custom = self.io.prompt_ask("Custom follow-up").strip()
+            result = apply_action(store, node, act, custom_text=custom)
+            self.io.tool_output(result.message)
+            return result.prompt
+
+        from aider.z.uncertainty.ui import browse_interactive
+
+        return browse_interactive(self.io, store, mode=mode)
+
 
 def expand_subdir(file_path):
     if file_path.is_file():

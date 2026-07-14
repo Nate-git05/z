@@ -14,6 +14,7 @@ from z_server.db import init_db
 from z_server.routers import auth as auth_router
 from z_server.routers import dashboard as dashboard_router
 from z_server.routers import mcp as mcp_router
+from z_server.routers import uncertainty as uncertainty_router
 
 
 @asynccontextmanager
@@ -43,6 +44,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(auth_router.router)
     app.include_router(mcp_router.router)
+    app.include_router(uncertainty_router.router)
     app.include_router(dashboard_router.router)
 
     static_dir = Path(__file__).resolve().parent / "static"

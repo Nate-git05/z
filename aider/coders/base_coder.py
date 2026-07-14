@@ -541,6 +541,25 @@ class Coder:
                 self.io.tool_output("JSON Schema:")
                 self.io.tool_output(json.dumps(self.functions, indent=4))
 
+        # Z uncertainty tree — structured risk/confidence nodes for this session
+        self.uncertainty_engine = None
+        self.uncertainty_store = None
+        try:
+            from aider.z.uncertainty.engine import attach_engine_to_coder
+
+            user_label = None
+            try:
+                from aider.z.auth import current_session
+
+                creds = current_session()
+                if creds:
+                    user_label = creds.display_name()
+            except Exception:
+                pass
+            attach_engine_to_coder(self, user_label=user_label)
+        except Exception:
+            pass
+
     def setup_lint_cmds(self, lint_cmds):
         if not lint_cmds:
             return
@@ -929,6 +948,10 @@ class Coder:
         else:
             message = user_message
 
+        # Start-of-task requirement checklist (surfaced before implementation when feasible)
+        if message and not (isinstance(message, str) and message.startswith("/")):
+            self._maybe_begin_uncertainty_task(user_message if isinstance(user_message, str) else message)
+
         while message:
             self.reflected_message = None
             list(self.send_message(message))
@@ -942,6 +965,24 @@ class Coder:
 
             self.num_reflections += 1
             message = self.reflected_message
+
+    def _maybe_begin_uncertainty_task(self, user_message: str):
+        engine = getattr(self, "uncertainty_engine", None)
+        if not engine or not user_message or not isinstance(user_message, str):
+            return
+        # Avoid re-decomposing tiny follow-ups if a checklist is already active this session
+        if engine.ctx.checklist and len(user_message) < 40:
+            return
+        try:
+            from aider.z.uncertainty.checklist import format_checklist_for_user
+
+            checklist = engine.begin_task(user_message)
+            if checklist.items:
+                self.io.tool_output("")
+                self.io.tool_output(format_checklist_for_user(checklist))
+                self.io.tool_output("")
+        except Exception:
+            pass
 
     def check_and_open_urls(self, exc, friendly_msg=None):
         """Check exception for URLs, offer to open in a browser, with user-friendly error msgs."""
@@ -1621,6 +1662,78 @@ class Coder:
                 if ok:
                     self.reflected_message = test_errors
                     return
+
+        # Uncertainty tree: run concrete detectors after edits settle (no reflection pending)
+        if edited and not self.reflected_message:
+            self._run_uncertainty_analysis(edited)
+
+    def _run_uncertainty_analysis(self, edited):
+        engine = getattr(self, "uncertainty_engine", None)
+        if not engine or not edited:
+            return
+        try:
+            # Capture model-listed edge cases / migration impact from the reply if present
+            content = self.partial_response_content or ""
+            self._ingest_uncertainty_self_reports(content)
+
+            rels = []
+            for path in edited:
+                try:
+                    rels.append(self.get_rel_fname(path))
+                except Exception:
+                    rels.append(str(path))
+
+            new_nodes = engine.analyze_edits(
+                rels,
+                tests_passed=self.test_outcome,
+            )
+            if new_nodes:
+                from aider.z.uncertainty.ui import print_summary_line
+
+                print_summary_line(self.io, new_nodes)
+                # Failing tests escalate — surface prominently
+                failing = [
+                    n
+                    for n in new_nodes
+                    if n.signals.get("tests_passed") is False
+                    or n.status.value == "Needs Human Review"
+                ]
+                if failing and self.test_outcome is False:
+                    self.io.tool_warning(
+                        "Relevant tests failed — uncertainty tree escalated. "
+                        "Use /uncertainties before proceeding silently."
+                    )
+        except Exception as err:
+            if self.verbose:
+                self.io.tool_warning(f"Uncertainty analysis skipped: {err}")
+
+    def _ingest_uncertainty_self_reports(self, content: str):
+        """Parse structured edge-case / migration-impact listings from the model reply."""
+        engine = getattr(self, "uncertainty_engine", None)
+        if not engine or not content:
+            return
+        import re
+
+        # Edge cases block: lines after a heading the prompts may request
+        edge_match = re.search(
+            r"(?i)edge cases?\s+(?:considered\s+)?(?:but\s+)?(?:not\s+fully\s+handled)?\s*:?\s*\n((?:[-*].+\n?)+)",
+            content,
+        )
+        if edge_match:
+            cases = []
+            for line in edge_match.group(1).splitlines():
+                line = re.sub(r"^\s*[-*]\s*", "", line).strip()
+                if line:
+                    cases.append(line)
+            if cases:
+                engine.record_edge_cases(cases)
+
+        mig = re.search(
+            r"(?i)(?:migration\s+data\s+impact|existing\s+data\s+under\s+the\s+new\s+schema)\s*:?\s*(.+)",
+            content,
+        )
+        if mig:
+            engine.record_migration_impact(mig.group(1).strip()[:1000])
 
     def reply_completed(self):
         pass

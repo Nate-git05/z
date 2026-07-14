@@ -129,3 +129,14 @@ def print_mcp_list(io) -> None:
         )
     io.tool_output("")
     io.tool_output("Connect or disconnect tools in the web dashboard (not the CLI).")
+
+
+def note_unverifiable_mcp_result(tool_name: str, coder=None) -> None:
+    """
+    When an MCP tool result cannot be verified, record an API Assumption signal
+    on the active uncertainty engine (same mechanism as assumed external APIs).
+    """
+    engine = getattr(coder, "uncertainty_engine", None) if coder else None
+    if engine is None:
+        return
+    engine.record_mcp_unverifiable(tool_name)
