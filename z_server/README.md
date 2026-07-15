@@ -37,10 +37,11 @@ duplicate emails. `notified_at` is reserved for a future invite-email flow.
 
 ## Skills
 
-Reusable instruction files created CLI-first (`z skill create`), stored in
-`~/.z/skills/*.md`, optionally synced to `skills` table. Session start loads a
-lightweight index (like MCP runtime); matching skills are auto-pulled by task.
-Manage/share at `/app/skills` (no create form on web for V1).
+Reusable instruction files created CLI-first (`z skill add` / `z skill create`),
+stored in `~/.z/skills/*.md` with metadata (including `path`). Metadata is
+indexed in local ChromaDB for retrieval; matching skills are loaded by path.
+Optionally synced to the `skills` table. Manage/share at `/app/skills`
+(no create form on web for V1).
 
 Connect MCP servers in the web UI at `/app/integrations` (not via local CLI config).
 

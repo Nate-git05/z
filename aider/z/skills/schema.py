@@ -1,4 +1,4 @@
-"""Skill schema — reusable, model-generated instruction files."""
+"""Skill schema — reusable instruction files with retrieval metadata."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import re
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 
 def _utcnow() -> str:
@@ -20,6 +20,25 @@ def slugify(title: str) -> str:
     return s[:60]
 
 
+def _as_str_list(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        # Support YAML-ish "[a, b]" or comma-separated
+        if text.startswith("[") and text.endswith("]"):
+            inner = text[1:-1].strip()
+            if not inner:
+                return []
+            return [p.strip().strip("\"'") for p in inner.split(",") if p.strip()]
+        return [p.strip() for p in text.split(",") if p.strip()]
+    return [str(value).strip()]
+
+
 @dataclass
 class Skill:
     title: str
@@ -30,15 +49,46 @@ class Skill:
     updated_at: str = field(default_factory=_utcnow)
     created_by: Optional[str] = None
     scope: str = "personal"  # personal | workspace
-    remote_id: Optional[str] = None  # id on z_server when synced
+    remote_id: Optional[str] = None
     workspace_id: Optional[str] = None
     filename: Optional[str] = None  # local basename
+    path: Optional[str] = None  # absolute path to the skill file
+    tags: List[str] = field(default_factory=list)
+    project_types: List[str] = field(default_factory=list)
+    triggers: List[str] = field(default_factory=list)
+    source: str = "generate"  # paste | generate | capture
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+    def embed_text(self) -> str:
+        """Text embedded into ChromaDB for retrieval."""
+        parts = [
+            self.title or "",
+            self.description or "",
+            " ".join(self.tags or []),
+            " ".join(self.triggers or []),
+            " ".join(self.project_types or []),
+        ]
+        return "\n".join(p for p in parts if p).strip()
+
+    def metadata_public(self) -> dict[str, Any]:
+        """Fields shown when the user asks to see a new skill."""
+        return {
+            "id": self.id,
+            "title": self.title,
+            "description": self.description,
+            "tags": list(self.tags or []),
+            "project_types": list(self.project_types or []),
+            "triggers": list(self.triggers or []),
+            "path": self.path,
+            "scope": self.scope,
+            "source": self.source,
+            "created_at": self.created_at,
+        }
+
     def index_entry(self) -> dict[str, Any]:
-        """Lightweight index row — title/description only (no full content)."""
+        """Lightweight index row — no full content."""
         return {
             "id": self.id,
             "remote_id": self.remote_id,
@@ -47,6 +97,11 @@ class Skill:
             "scope": self.scope,
             "created_at": self.created_at,
             "filename": self.filename,
+            "path": self.path,
+            "tags": list(self.tags or []),
+            "project_types": list(self.project_types or []),
+            "triggers": list(self.triggers or []),
+            "source": self.source,
         }
 
     @classmethod
@@ -63,6 +118,11 @@ class Skill:
             remote_id=data.get("remote_id") or data.get("id"),
             workspace_id=data.get("workspace_id"),
             filename=data.get("filename"),
+            path=data.get("path"),
+            tags=_as_str_list(data.get("tags")),
+            project_types=_as_str_list(data.get("project_types")),
+            triggers=_as_str_list(data.get("triggers")),
+            source=data.get("source") or "generate",
         )
 
 
@@ -74,9 +134,20 @@ class SkillIndexEntry:
     title: str
     description: str
     scope: str = "personal"
-    source: str = "local"  # local | remote
+    source: str = "local"  # local | remote | paste | generate | capture
     remote_id: Optional[str] = None
     filename: Optional[str] = None
+    path: Optional[str] = None
+    tags: List[str] = field(default_factory=list)
+    project_types: List[str] = field(default_factory=list)
+    triggers: List[str] = field(default_factory=list)
 
     def match_text(self) -> str:
-        return f"{self.title} {self.description}".lower()
+        bits = [
+            self.title,
+            self.description,
+            " ".join(self.tags or []),
+            " ".join(self.triggers or []),
+            " ".join(self.project_types or []),
+        ]
+        return " ".join(b for b in bits if b).lower()

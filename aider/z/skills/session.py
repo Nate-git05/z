@@ -1,7 +1,8 @@
-"""Session skill registry — auto-discover at startup like MCP tools."""
+"""Session skill registry — discover at startup, retrieve via ChromaDB + path."""
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import List, Optional, Sequence
 
 from .index import (
@@ -13,8 +14,8 @@ from .index import (
 from .remote import fetch_skill, fetch_skill_index
 from .schema import Skill, SkillIndexEntry
 from .store import LocalSkillStore
+from .vector import get_skill_vector_index, upsert_skill_vector
 
-# Process-wide session registry (mirrors mcp_client._SESSION_TOOLS)
 _SESSION_INDEX: list[SkillIndexEntry] = []
 _PULLED_IDS: set[str] = set()
 
@@ -28,12 +29,31 @@ def clear_session_skills() -> None:
     _PULLED_IDS.clear()
 
 
+def _sync_local_to_chroma(store: LocalSkillStore) -> None:
+    try:
+        index = get_skill_vector_index()
+        if not index.available:
+            return
+        skills = store.list_skills()
+        if not skills:
+            return
+        # Rebuild if empty or clearly stale
+        if index.count() == 0 or index.count() != len(skills):
+            index.reindex(skills)
+        else:
+            for skill in skills:
+                upsert_skill_vector(skill)
+    except Exception:
+        pass
+
+
 def load_skills_for_session(io=None) -> list[SkillIndexEntry]:
     """
     Build a lightweight skill index at session start:
-      - scan ~/.z/skills/ (title/description only)
+      - scan ~/.z/skills/ (metadata only)
+      - upsert into ChromaDB
       - fetch workspace/personal index from z_server when signed in
-    Full content is NOT loaded until a task matches.
+    Full content is loaded later via metadata.path after a match.
     """
     global _SESSION_INDEX
     store = LocalSkillStore()
@@ -42,15 +62,31 @@ def load_skills_for_session(io=None) -> list[SkillIndexEntry]:
     merged = merge_index(local, remote)
     _SESSION_INDEX = merged
     _PULLED_IDS.clear()
+    _sync_local_to_chroma(store)
 
     if io and merged:
-        io.tool_output(f"Skills: {len(merged)} available (auto-matched by task)")
+        io.tool_output(f"Skills: {len(merged)} available")
+    elif io:
+        io.tool_output("Skills: none yet — paste with /skills add or z skill add")
     return merged
 
 
 def resolve_full_skill(entry: SkillIndexEntry) -> Optional[Skill]:
-    """Load full skill content from local disk or remote API."""
+    """Load full skill content via path, then local id, then remote API."""
     store = LocalSkillStore()
+
+    if entry.path:
+        skill = store.get_by_path(entry.path)
+        if skill and skill.content:
+            return skill
+        # Path may be stale across machines — try filename under local skills dir
+        name = Path(entry.path).name
+        candidate = store.root / name
+        if candidate.is_file():
+            skill = store.read_file(candidate)
+            if skill and skill.content:
+                return skill
+
     local = store.get(entry.id)
     if local and local.content:
         return local
@@ -58,15 +94,17 @@ def resolve_full_skill(entry: SkillIndexEntry) -> Optional[Skill]:
         local = store.get(entry.filename.replace(".md", ""))
         if local and local.content:
             return local
+
     rid = entry.remote_id or (entry.id if entry.source == "remote" else None)
     if rid:
         raw = fetch_skill(rid)
         if raw:
             skill = Skill.from_dict(raw)
-            # Cache locally for offline reuse
             try:
                 if not store.get(skill.id):
-                    store.save(skill)
+                    path = store.save(skill)
+                    skill.path = str(path)
+                    upsert_skill_vector(skill)
             except OSError:
                 pass
             return skill
@@ -79,20 +117,30 @@ def select_relevant_skills(
     threshold: float = 0.35,
     limit: int = 3,
 ) -> List[Skill]:
-    """Match task text against the session index and return full skill bodies."""
-    matches = match_skills(task, _SESSION_INDEX, threshold=threshold, limit=limit)
+    """Match task via ChromaDB (preferred) or keyword fallback; load bodies by path."""
+    matches: list[tuple[SkillIndexEntry, float]] = []
+
+    try:
+        vindex = get_skill_vector_index()
+        if vindex.available and vindex.count() > 0:
+            # Convert threshold (~0.35 keyword) to distance gate; keep generous
+            max_distance = 0.85
+            matches = vindex.query(task, k=limit, max_distance=max_distance)
+    except Exception:
+        matches = []
+
+    if not matches:
+        matches = match_skills(task, _SESSION_INDEX, threshold=threshold, limit=limit)
+
     skills: List[Skill] = []
     for entry, _score in matches:
-        if entry.id in _PULLED_IDS:
-            # Still include content if already pulled this session
-            skill = resolve_full_skill(entry)
-            if skill:
-                skills.append(skill)
-            continue
         skill = resolve_full_skill(entry)
-        if skill:
-            _PULLED_IDS.add(entry.id)
-            skills.append(skill)
+        if not skill:
+            continue
+        _PULLED_IDS.add(entry.id or skill.id)
+        skills.append(skill)
+        if len(skills) >= limit:
+            break
     return skills
 
 
@@ -113,6 +161,21 @@ def format_skills_for_context(skills: Sequence[Skill]) -> str:
     return "\n".join(parts).strip()
 
 
+def format_skill_metadata(skill: Skill) -> str:
+    meta = skill.metadata_public()
+    lines = [
+        f"Skill: {meta['title']}",
+        f"  description: {meta['description']}",
+        f"  tags: {', '.join(meta['tags']) or '(none)'}",
+        f"  triggers: {', '.join(meta['triggers']) or '(none)'}",
+        f"  project_types: {', '.join(meta['project_types']) or '(none)'}",
+        f"  path: {meta['path'] or '(unknown)'}",
+        f"  source: {meta['source']}",
+        f"  scope: {meta['scope']}",
+    ]
+    return "\n".join(lines)
+
+
 def print_skills_list(io) -> None:
     store = LocalSkillStore()
     local = store.list_skills()
@@ -120,7 +183,8 @@ def print_skills_list(io) -> None:
 
     if not local and not remote_rows:
         io.tool_output("No skills yet.")
-        io.tool_output("Create one with: z skill create \"how this repo handles …\"")
+        io.tool_output('Paste one with: /skills add')
+        io.tool_output('Or generate: z skill create "how this repo handles …"')
         return
 
     if local:
@@ -129,6 +193,8 @@ def print_skills_list(io) -> None:
             io.tool_output(f"  • {s.title}")
             if s.description:
                 io.tool_output(f"      {s.description}")
+            if s.path:
+                io.tool_output(f"      {s.path}")
     if remote_rows:
         io.tool_output("")
         io.tool_output(f"Workspace / account skills — {len(remote_rows)}:")

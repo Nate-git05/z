@@ -1,13 +1,12 @@
-"""Skill index + keyword relevance matching for auto-pull."""
+"""Skill index helpers — keyword fallback when ChromaDB is unavailable."""
 
 from __future__ import annotations
 
 import re
 from typing import Iterable, List, Optional, Sequence, Set
 
-from .schema import SkillIndexEntry
+from .schema import SkillIndexEntry, _as_str_list
 
-# Common stopwords for keyword overlap
 _STOP = {
     "a",
     "an",
@@ -53,31 +52,40 @@ def tokenize(text: str) -> Set[str]:
 
 
 def relevance_score(task: str, entry: SkillIndexEntry) -> float:
-    """
-    Simple keyword overlap score in [0, 1].
-    Title hits weighted higher than description hits.
-    """
+    """Keyword overlap score in [0, 1] — fallback when vector search is down."""
     task_tokens = tokenize(task)
     if not task_tokens:
         return 0.0
     title_tokens = tokenize(entry.title)
     desc_tokens = tokenize(entry.description)
-    if not title_tokens and not desc_tokens:
+    extra_tokens = tokenize(
+        " ".join(
+            [
+                " ".join(entry.tags or []),
+                " ".join(entry.triggers or []),
+                " ".join(entry.project_types or []),
+            ]
+        )
+    )
+    if not title_tokens and not desc_tokens and not extra_tokens:
         return 0.0
 
     title_hits = len(task_tokens & title_tokens)
     desc_hits = len(task_tokens & desc_tokens)
+    extra_hits = len(task_tokens & extra_tokens)
     title_den = max(len(title_tokens), 1)
     desc_den = max(len(desc_tokens), 1)
+    extra_den = max(len(extra_tokens), 1)
 
     score = 0.0
     if title_tokens:
-        score += 0.7 * (title_hits / title_den)
+        score += 0.55 * (title_hits / title_den)
     if desc_tokens:
-        score += 0.3 * (desc_hits / desc_den)
+        score += 0.25 * (desc_hits / desc_den)
+    if extra_tokens:
+        score += 0.20 * (extra_hits / extra_den)
 
-    # Bonus if any strong title token appears in the task
-    if title_hits:
+    if title_hits or extra_hits:
         score = min(1.0, score + 0.15)
     return score
 
@@ -98,38 +106,28 @@ def match_skills(
     return scored[:limit]
 
 
+def _entry_from_row(r: dict, *, source: str) -> SkillIndexEntry:
+    return SkillIndexEntry(
+        id=str(r.get("id") or ""),
+        title=r.get("title") or "",
+        description=r.get("description") or "",
+        scope=r.get("scope") or "personal",
+        source=source,
+        remote_id=r.get("remote_id") or (str(r.get("id")) if source == "remote" else None),
+        filename=r.get("filename"),
+        path=r.get("path"),
+        tags=_as_str_list(r.get("tags")),
+        project_types=_as_str_list(r.get("project_types")),
+        triggers=_as_str_list(r.get("triggers")),
+    )
+
+
 def entries_from_local_index(rows: Iterable[dict]) -> List[SkillIndexEntry]:
-    out: List[SkillIndexEntry] = []
-    for r in rows:
-        out.append(
-            SkillIndexEntry(
-                id=str(r.get("id") or ""),
-                title=r.get("title") or "",
-                description=r.get("description") or "",
-                scope=r.get("scope") or "personal",
-                source="local",
-                remote_id=r.get("remote_id"),
-                filename=r.get("filename"),
-            )
-        )
-    return out
+    return [_entry_from_row(r, source="local") for r in rows]
 
 
 def entries_from_remote_index(rows: Iterable[dict]) -> List[SkillIndexEntry]:
-    out: List[SkillIndexEntry] = []
-    for r in rows:
-        out.append(
-            SkillIndexEntry(
-                id=str(r.get("id") or ""),
-                title=r.get("title") or "",
-                description=r.get("description") or "",
-                scope=r.get("scope") or "personal",
-                source="remote",
-                remote_id=str(r.get("id") or ""),
-                filename=None,
-            )
-        )
-    return out
+    return [_entry_from_row(r, source="remote") for r in rows]
 
 
 def merge_index(
@@ -143,5 +141,5 @@ def merge_index(
         by_key[key] = e
     for e in local:
         key = e.remote_id or e.id or e.title.lower()
-        by_key[key] = e  # local wins
+        by_key[key] = e
     return list(by_key.values())

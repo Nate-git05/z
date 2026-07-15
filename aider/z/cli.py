@@ -46,8 +46,21 @@ def build_parser() -> argparse.ArgumentParser:
     mcp_sub = mcp.add_subparsers(dest="mcp_command")
     mcp_sub.add_parser("list", help="List MCP tools connected to your Z account/workspace")
 
-    skill = sub.add_parser("skill", help="Reusable skills (CLI-created, auto-discovered)")
+    skill = sub.add_parser("skill", help="Reusable skills (paste, generate, auto-retrieve)")
     skill_sub = skill.add_subparsers(dest="skill_command")
+
+    add = skill_sub.add_parser("add", help="Paste/import a skill (Z infers metadata)")
+    add.add_argument(
+        "content",
+        nargs="*",
+        help="Optional skill markdown (prompted / multi-line if omitted)",
+    )
+    add.add_argument(
+        "--no-sync",
+        action="store_true",
+        help="Do not sync to the Z backend even if signed in",
+    )
+
     create = skill_sub.add_parser("create", help="Generate and save a skill with your connected model")
     create.add_argument(
         "topic",
@@ -65,6 +78,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Do not sync to the Z backend even if signed in",
     )
     skill_sub.add_parser("list", help="List local and workspace skills")
+    show = skill_sub.add_parser("show", help="Show skill metadata (and optional body)")
+    show.add_argument("name", nargs="*", help="Skill title or id")
+    skill_sub.add_parser("reindex", help="Rebuild the ChromaDB skill vector index")
 
     # Anything else falls through to the main agent CLI
     return parser
@@ -103,8 +119,10 @@ def _print_help() -> None:
         "  z login\n"
         "  z models\n"
         "  z mcp list\n"
+        "  z skill add\n"
         "  z skill create \"how this repo validates Stripe webhooks\"\n"
         "  z skill list\n"
+        "  z skill show stripe\n"
         "  z --model sonnet\n"
     )
 
@@ -172,11 +190,20 @@ def dispatch(args) -> int:
 
 
 def cmd_skill(io, args) -> int:
-    from aider.z.skills.cli import cmd_skill_create, cmd_skill_list
+    from aider.z.skills.cli import (
+        cmd_skill_add,
+        cmd_skill_create,
+        cmd_skill_list,
+        cmd_skill_reindex,
+        cmd_skill_show,
+    )
 
     sub = getattr(args, "skill_command", None) or "list"
     if sub == "list":
         return cmd_skill_list(io)
+    if sub == "add":
+        content = " ".join(getattr(args, "content", None) or []).strip()
+        return cmd_skill_add(io, content, sync=not getattr(args, "no_sync", False))
     if sub == "create":
         topic = " ".join(getattr(args, "topic", None) or []).strip()
         return cmd_skill_create(
@@ -185,8 +212,13 @@ def cmd_skill(io, args) -> int:
             model_name=getattr(args, "model", None),
             sync=not getattr(args, "no_sync", False),
         )
+    if sub == "show":
+        name = " ".join(getattr(args, "name", None) or []).strip()
+        return cmd_skill_show(io, name)
+    if sub == "reindex":
+        return cmd_skill_reindex(io)
     io.tool_error(f"Unknown skill subcommand: {sub}")
-    io.tool_output("Usage: z skill create [topic…]  |  z skill list")
+    io.tool_output("Usage: z skill add | create [topic…] | list | show <name> | reindex")
     return 1
 
 

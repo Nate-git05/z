@@ -228,6 +228,8 @@ openai==2.28.0
     #   -c requirements/common-constraints.txt
     #   litellm
 orjson==3.11.7
+chromadb>=0.5,<1.1
+    # via -r requirements/requirements.in
     # via
     #   -c requirements/common-constraints.txt
     #   -r requirements/requirements.in

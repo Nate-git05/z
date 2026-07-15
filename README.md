@@ -47,8 +47,11 @@ automatically — no local config files.
 
 ### Reusable skills
 
-Generate a skill from any task with your own model. Skills are auto-discovered
-and applied by the agent in future sessions — no manual file navigation.
+Paste a skill with `/skills add` or generate one with `z skill create`.
+Z writes `~/.z/skills/*.md`, infers metadata (including the file path), and
+indexes it in ChromaDB. Before a task, the agent retrieves matching skills by
+vector search and loads the body via `path`. After a solid turn it may offer to
+capture a new skill — and only shows metadata if you ask to see it.
 
 ### Bring your own model
 
@@ -98,9 +101,9 @@ you want to sign in (or switch accounts) without starting a session.
 | `z login` / `z logout` / `z whoami` | Sign in only, sign out, show current user/workspace |
 | `z models` | List curated available models |
 | `z mcp list` | View MCP tools connected via the web dashboard |
-| `z skill create "..."` / `z skill list` | Create a reusable skill with your model, or list skills |
+| `z skill add` / `create` / `list` / `show` | Paste, generate, list, or show skill metadata |
 | `/uncertainties` | Browse the uncertainty tree during a coding session |
-| `/skills` | List or create skills from inside a session |
+| `/skills add` / `create` / `list` / `show` | Same skill commands inside a session |
 | `z --model sonnet` | Start the agent with a specific model (same flags as Aider) |
 
 Any other arguments pass through to the coding agent (same surface as Aider).

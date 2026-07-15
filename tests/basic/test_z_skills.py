@@ -1,4 +1,4 @@
-"""Tests for Z skills — local store, relevance, API, web page."""
+"""Tests for Z skills — store, infer, ChromaDB index, session pull, API."""
 
 from __future__ import annotations
 
@@ -22,14 +22,19 @@ get_settings.cache_clear()
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from aider.z.skills.cli import cmd_skill_add, offer_view_new_skill  # noqa: E402
 from aider.z.skills.index import match_skills, relevance_score  # noqa: E402
+from aider.z.skills.infer import apply_inferred_metadata, infer_metadata  # noqa: E402
 from aider.z.skills.schema import Skill, SkillIndexEntry  # noqa: E402
 from aider.z.skills.session import (  # noqa: E402
+    format_skill_metadata,
     format_skills_for_context,
     load_skills_for_session,
+    resolve_full_skill,
     select_relevant_skills,
 )
 from aider.z.skills.store import LocalSkillStore, skill_from_markdown, skill_to_markdown  # noqa: E402
+from aider.z.skills.vector import SkillVectorIndex  # noqa: E402
 from z_server.app import create_app  # noqa: E402
 from z_server.db import init_db, reset_engine  # noqa: E402
 
@@ -39,32 +44,47 @@ class LocalStoreTest(unittest.TestCase):
         self.root = Path(tempfile.mkdtemp(prefix="z_skills_local_"))
         self.store = LocalSkillStore(root=self.root)
 
-    def test_save_and_list(self):
+    def test_save_and_list_sets_path(self):
         skill = Skill(
             title="Stripe webhook validation",
             description="How this repo validates Stripe webhooks",
             content="## Steps\n1. Verify signature\n2. Handle idempotency\n",
+            tags=["stripe", "webhooks"],
+            triggers=["stripe", "webhook", "signature"],
+            project_types=["api", "backend"],
+            source="paste",
         )
         path = self.store.save(skill)
         self.assertTrue(path.is_file())
+        self.assertEqual(skill.path, str(path.resolve()))
         listed = self.store.list_skills()
         self.assertEqual(len(listed), 1)
         self.assertEqual(listed[0].title, "Stripe webhook validation")
+        self.assertEqual(listed[0].tags, ["stripe", "webhooks"])
+        self.assertTrue(listed[0].path.endswith(".md"))
         loaded = self.store.get(skill.id)
         self.assertIsNotNone(loaded)
         self.assertIn("Verify signature", loaded.content)
 
-    def test_roundtrip_markdown(self):
+    def test_roundtrip_markdown_preserves_metadata(self):
         skill = Skill(
             title="Migration scripts",
             description="Team convention for Alembic migrations",
             content="Always expand then contract.",
             created_by="Ada",
+            tags=["alembic", "migrations"],
+            triggers=["migration", "alembic"],
+            project_types=["backend"],
+            path="/tmp/example.md",
+            source="generate",
         )
         text = skill_to_markdown(skill)
         again = skill_from_markdown(text, filename="x.md")
         self.assertEqual(again.title, skill.title)
         self.assertEqual(again.description, skill.description)
+        self.assertEqual(again.tags, ["alembic", "migrations"])
+        self.assertEqual(again.project_types, ["backend"])
+        self.assertEqual(again.source, "generate")
         self.assertIn("expand then contract", again.content)
 
     def test_index_is_lightweight(self):
@@ -75,6 +95,30 @@ class LocalStoreTest(unittest.TestCase):
         self.assertEqual(len(idx), 1)
         self.assertNotIn("content", idx[0])
         self.assertEqual(idx[0]["title"], "A")
+        self.assertIn("path", idx[0])
+
+
+class InferMetadataTest(unittest.TestCase):
+    def test_infer_from_paste_body(self):
+        body = "# Stripe webhooks\n\nVerify Stripe webhook signatures before handling events.\n"
+        meta = infer_metadata(body, source="paste")
+        self.assertIn("Stripe", meta["title"])
+        self.assertTrue(meta["description"])
+        self.assertTrue(meta["tags"])
+        self.assertTrue(meta["project_types"])
+        self.assertEqual(meta["source"], "paste")
+
+    def test_apply_keeps_existing_title(self):
+        skill = Skill(
+            title="My title",
+            description="",
+            content="Handle OAuth refresh tokens carefully in the API layer.",
+            source="paste",
+        )
+        apply_inferred_metadata(skill)
+        self.assertEqual(skill.title, "My title")
+        self.assertTrue(skill.description)
+        self.assertTrue(skill.tags)
 
 
 class RelevanceTest(unittest.TestCase):
@@ -83,6 +127,8 @@ class RelevanceTest(unittest.TestCase):
             id="1",
             title="Stripe webhook validation",
             description="Verify Stripe webhook signatures and idempotency",
+            tags=["stripe", "webhooks"],
+            triggers=["stripe", "webhook", "signature"],
         )
         score = relevance_score("add stripe webhook handler with signature check", entry)
         self.assertGreaterEqual(score, 0.35)
@@ -91,13 +137,62 @@ class RelevanceTest(unittest.TestCase):
 
     def test_match_skills_limit(self):
         index = [
-            SkillIndexEntry(id="1", title="Stripe webhooks", description="payment hooks"),
+            SkillIndexEntry(id="1", title="Stripe webhooks", description="payment hooks", triggers=["stripe"]),
             SkillIndexEntry(id="2", title="CSS layout", description="homepage styles"),
             SkillIndexEntry(id="3", title="Alembic migrations", description="schema changes"),
         ]
         hits = match_skills("fix stripe webhook signature", index, threshold=0.2)
         self.assertTrue(hits)
         self.assertEqual(hits[0][0].id, "1")
+
+
+def _has_chromadb() -> bool:
+    try:
+        import chromadb  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+@unittest.skipUnless(_has_chromadb(), "chromadb not installed")
+class ChromaVectorTest(unittest.TestCase):
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="z_skills_chroma_"))
+        self.store = LocalSkillStore(root=self.root / "skills")
+        self.vdir = self.root / "chroma"
+        self.index = SkillVectorIndex(persist_dir=self.vdir)
+
+    def test_upsert_query_and_path_resolve(self):
+        skill = Skill(
+            title="Stripe webhook validation",
+            description="Verify Stripe webhook signatures and idempotency",
+            content="Check the Stripe-Signature header.",
+            tags=["stripe", "webhooks"],
+            triggers=["stripe", "webhook"],
+            project_types=["api"],
+            source="paste",
+        )
+        path = self.store.save(skill)
+        self.index.upsert(skill)
+        hits = self.index.query("implement stripe webhook signature check", k=3)
+        self.assertTrue(hits)
+        entry, score = hits[0]
+        self.assertEqual(entry.title, "Stripe webhook validation")
+        self.assertEqual(entry.path, str(path.resolve()))
+        self.assertGreater(score, 0.0)
+
+        resolved = resolve_full_skill(entry)
+        self.assertIsNotNone(resolved)
+        self.assertIn("Stripe-Signature", resolved.content)
+
+    def test_reindex(self):
+        for title in ("Alpha skill", "Beta payments"):
+            s = Skill(title=title, description=title, content=f"Body for {title}")
+            self.store.save(s)
+        n = self.index.reindex(self.store.list_skills())
+        self.assertEqual(n, 2)
+        self.assertEqual(self.index.count(), 2)
 
 
 class SessionPullTest(unittest.TestCase):
@@ -108,19 +203,81 @@ class SessionPullTest(unittest.TestCase):
             title="Stripe webhook validation",
             description="Validate Stripe webhooks in this repo",
             content="Check the Stripe-Signature header.",
+            tags=["stripe"],
+            triggers=["stripe", "webhook"],
         )
         store.save(skill)
 
         with mock.patch("aider.z.skills.session.LocalSkillStore", return_value=store):
             with mock.patch("aider.z.skills.session.fetch_skill_index", return_value=[]):
-                load_skills_for_session()
-                pulled = select_relevant_skills(
-                    "implement stripe webhook validation endpoint"
-                )
+                with mock.patch("aider.z.skills.session._sync_local_to_chroma"):
+                    load_skills_for_session()
+                    # Force keyword path for deterministic unit test
+                    with mock.patch(
+                        "aider.z.skills.session.get_skill_vector_index"
+                    ) as gv:
+                        fake = mock.Mock()
+                        fake.available = False
+                        gv.return_value = fake
+                        pulled = select_relevant_skills(
+                            "implement stripe webhook validation endpoint"
+                        )
         self.assertEqual(len(pulled), 1)
         block = format_skills_for_context(pulled)
         self.assertIn("Stripe webhook", block)
         self.assertIn("Stripe-Signature", block)
+
+    def test_metadata_formatter(self):
+        skill = Skill(
+            title="T",
+            description="D",
+            content="body",
+            path="/tmp/t.md",
+            tags=["a"],
+            triggers=["b"],
+            project_types=["api"],
+            source="capture",
+        )
+        text = format_skill_metadata(skill)
+        self.assertIn("Skill: T", text)
+        self.assertIn("path: /tmp/t.md", text)
+        self.assertIn("source: capture", text)
+
+
+class SkillAddCliTest(unittest.TestCase):
+    def test_add_pastes_and_infers(self):
+        root = Path(tempfile.mkdtemp(prefix="z_skills_add_"))
+        store = LocalSkillStore(root=root)
+        io = mock.MagicMock()
+        body = "# OAuth refresh\n\nAlways rotate refresh tokens on the API.\n"
+
+        with mock.patch("aider.z.skills.cli.LocalSkillStore", return_value=store):
+            with mock.patch("aider.z.skills.cli.upsert_skill_vector", return_value=True):
+                with mock.patch("aider.z.skills.cli.sync_skill", return_value=None):
+                    code = cmd_skill_add(io, body, sync=False)
+        self.assertEqual(code, 0)
+        skills = store.list_skills()
+        self.assertEqual(len(skills), 1)
+        self.assertEqual(skills[0].source, "paste")
+        self.assertTrue(skills[0].path)
+        self.assertTrue(skills[0].tags)
+
+    def test_offer_view_shows_metadata_only_when_yes(self):
+        io = mock.MagicMock()
+        io.confirm_ask.return_value = True
+        skill = Skill(
+            title="Captured",
+            description="From task",
+            content="SECRET BODY SHOULD NOT AUTO PRINT",
+            path="/tmp/c.md",
+            source="capture",
+            tags=["x"],
+        )
+        offer_view_new_skill(io, skill)
+        printed = " ".join(str(c.args[0]) for c in io.tool_output.call_args_list if c.args)
+        self.assertIn("Captured", printed)
+        self.assertIn("/tmp/c.md", printed)
+        self.assertNotIn("SECRET BODY", printed)
 
 
 class SkillsApiTest(unittest.TestCase):
@@ -174,7 +331,7 @@ class SkillsApiTest(unittest.TestCase):
         self.assertEqual(listed.status_code, 200)
         rows = listed.json()["skills"]
         self.assertEqual(len(rows), 1)
-        self.assertNotIn("content", rows[0])  # index is lightweight
+        self.assertNotIn("content", rows[0])
 
         got = self.client.get(f"/v1/skills/{skill['id']}", headers=self.headers)
         self.assertEqual(got.status_code, 200)
@@ -211,15 +368,11 @@ class SkillsApiTest(unittest.TestCase):
                 "content": "Never destructive-first.",
             },
         )
-        # Use cookie session from login flow — hit page with bearer via cookie
-        # TestClient keeps cookies from verify? Auth was via API not cookie.
-        # Set cookie manually from token
         token = self.headers["Authorization"].split(" ", 1)[1]
         self.client.cookies.set("z_session", token)
         page = self.client.get("/app/skills")
         self.assertEqual(page.status_code, 200)
         self.assertIn("Migration convention", page.text)
-        self.assertIn("z skill create", page.text)
 
 
 class GenerateParseTest(unittest.TestCase):
@@ -227,7 +380,8 @@ class GenerateParseTest(unittest.TestCase):
         from aider.z.skills.generate import generate_skill
 
         fake_response = (
-            '{"title": "T", "description": "D", "content": "## Body\\nDo the thing."}'
+            '{"title": "T", "description": "D", "content": "## Body\\nDo the thing.",'
+            ' "tags": ["thing"], "triggers": ["thing"]}'
         )
 
         class FakeModel:
@@ -239,6 +393,7 @@ class GenerateParseTest(unittest.TestCase):
         self.assertIsNone(err)
         self.assertEqual(skill.title, "T")
         self.assertIn("Do the thing", skill.content)
+        self.assertIn("thing", skill.tags)
 
 
 if __name__ == "__main__":

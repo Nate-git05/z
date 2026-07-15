@@ -1716,29 +1716,44 @@ Just show me the edits I need to make.
         print_mcp_list(self.io)
 
     def cmd_skills(self, args):
-        "List reusable skills, or create one: /skills create <topic>"
+        "Skills: /skills add | create <topic> | list | show <name>"
         args = (args or "").strip()
         if not args or args.lower() in ("list", "ls"):
             from aider.z.skills.session import print_skills_list
 
             print_skills_list(self.io)
             return
+
         lower = args.lower()
-        if lower.startswith("create"):
-            topic = args[6:].strip()
-            from aider.z.skills.cli import cmd_skill_create
-
-            model_name = None
-            if getattr(self.coder, "main_model", None):
-                model_name = getattr(self.coder.main_model, "name", None)
-            return cmd_skill_create(self.io, topic, model_name=model_name)
-
-        # Treat bare text as create topic
-        from aider.z.skills.cli import cmd_skill_create
-
         model_name = None
         if getattr(self.coder, "main_model", None):
             model_name = getattr(self.coder.main_model, "name", None)
+
+        if lower.startswith("add"):
+            from aider.z.skills.cli import cmd_skill_add
+
+            content = args[3:].strip()
+            return cmd_skill_add(self.io, content)
+
+        if lower.startswith("create"):
+            from aider.z.skills.cli import cmd_skill_create
+
+            topic = args[6:].strip()
+            return cmd_skill_create(self.io, topic, model_name=model_name)
+
+        if lower.startswith("show"):
+            from aider.z.skills.cli import cmd_skill_show
+
+            return cmd_skill_show(self.io, args[4:].strip())
+
+        if lower.startswith("reindex"):
+            from aider.z.skills.cli import cmd_skill_reindex
+
+            return cmd_skill_reindex(self.io)
+
+        # Bare text → generate from topic
+        from aider.z.skills.cli import cmd_skill_create
+
         return cmd_skill_create(self.io, args, model_name=model_name)
 
     def cmd_skill(self, args):

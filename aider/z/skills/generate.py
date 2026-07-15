@@ -6,7 +6,8 @@ import json
 import re
 from typing import Optional, Tuple
 
-from .schema import Skill
+from .infer import apply_inferred_metadata
+from .schema import Skill, _as_str_list
 
 
 SKILL_SYSTEM = """You generate reusable coding-agent skills.
@@ -17,6 +18,9 @@ Respond with ONLY a JSON object (no markdown fences) with keys:
   "title": short plain-language title (max ~80 chars)
   "description": one sentence describing when to apply this skill
   "content": markdown body with clear steps, conventions, and examples
+  "tags": optional array of short keywords
+  "triggers": optional array of words/phrases that should activate this skill
+  "project_types": optional array from [api, backend, frontend, mobile, infra, data, general]
 """
 
 
@@ -116,12 +120,15 @@ def generate_skill(
     if not content:
         return None, "Model did not return skill content."
 
-    return (
-        Skill(
-            title=title,
-            description=description,
-            content=content,
-            created_by=created_by,
-        ),
-        None,
+    skill = Skill(
+        title=title,
+        description=description,
+        content=content,
+        created_by=created_by,
+        tags=_as_str_list(data.get("tags")),
+        triggers=_as_str_list(data.get("triggers")),
+        project_types=_as_str_list(data.get("project_types")),
+        source="generate",
     )
+    apply_inferred_metadata(skill, source="generate")
+    return skill, None

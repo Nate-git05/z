@@ -48,3 +48,6 @@ importlib-metadata<8.0.0
 # mcp which is a pywin32 dependency that fails on linux CI.
 fastapi
 orjson
+
+# Z skills vector index
+chromadb>=0.5,<1.1

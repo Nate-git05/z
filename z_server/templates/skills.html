@@ -4,7 +4,7 @@
   <h1>Skills</h1>
   <p class="muted">
     Reusable instructions your agent auto-discovers.
-    Create with <span class="meta">z skill create</span> — manage and share here.
+    Create with <span class="meta">z skill add</span> or <span class="meta">z skill create</span> — manage and share here.
     {% if workspace %} Workspace: <strong>{{ workspace.name }}</strong>.{% endif %}
   </p>
 
@@ -36,7 +36,7 @@
     </div>
     {% endfor %}
   {% else %}
-    <p class="muted">No personal skills yet. Run <span class="meta">z skill create "…"</span> in the CLI.</p>
+    <p class="muted">No personal skills yet. Run <span class="meta">z skill add</span> or <span class="meta">z skill create "…"</span> in the CLI.</p>
   {% endif %}
 
   <h2>Workspace shared</h2>

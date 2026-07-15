@@ -1042,7 +1042,7 @@ class Coder:
                 pass
 
     def _maybe_suggest_skill(self, user_message: str):
-        """Offer to save a skill after completing a non-trivial coding task."""
+        """After a task: ask to create a skill, then optionally show its metadata."""
         edited = self.aider_edited_files or set()
         if len(edited) < 1:
             return
@@ -1055,7 +1055,7 @@ class Coder:
                 default="n",
             ):
                 return
-            from aider.z.skills.cli import save_skill_from_task
+            from aider.z.skills.cli import offer_view_new_skill, save_skill_from_task
 
             rels = []
             for path in edited:
@@ -1073,8 +1073,12 @@ class Coder:
             model_name = None
             if getattr(self, "main_model", None):
                 model_name = getattr(self.main_model, "name", None)
-            save_skill_from_task(self.io, topic, context=context, model_name=model_name)
-            # Refresh session index
+            skill, created = save_skill_from_task(
+                self.io, topic, context=context, model_name=model_name
+            )
+            if created and skill:
+                offer_view_new_skill(self.io, skill)
+            # Refresh session index + Chroma
             try:
                 from aider.z.skills.session import load_skills_for_session
 

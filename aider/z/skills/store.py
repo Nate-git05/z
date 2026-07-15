@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
+
+import yaml
 
 from aider.z.paths import ensure_z_home
 
-from .schema import Skill, slugify
+from .schema import Skill, _as_str_list, slugify
 
 FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n(.*)\Z", re.DOTALL)
 
@@ -19,34 +21,34 @@ def skills_dir() -> Path:
     return d
 
 
-def _parse_frontmatter(raw: str) -> dict[str, str]:
-    meta: dict[str, str] = {}
-    for line in raw.splitlines():
-        if ":" not in line:
-            continue
-        key, _, val = line.partition(":")
-        meta[key.strip()] = val.strip().strip('"').strip("'")
-    return meta
+def chroma_dir() -> Path:
+    d = ensure_z_home() / "chroma" / "skills"
+    d.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return d
 
 
 def _dump_frontmatter(skill: Skill) -> str:
-    lines = [
-        "---",
-        f"id: {skill.id}",
-        f"title: {skill.title}",
-        f"description: {skill.description}",
-        f"created_at: {skill.created_at}",
-        f"updated_at: {skill.updated_at}",
-        f"scope: {skill.scope}",
-    ]
+    meta: dict[str, Any] = {
+        "id": skill.id,
+        "title": skill.title,
+        "description": skill.description,
+        "tags": list(skill.tags or []),
+        "project_types": list(skill.project_types or []),
+        "triggers": list(skill.triggers or []),
+        "path": skill.path or "",
+        "source": skill.source or "generate",
+        "created_at": skill.created_at,
+        "updated_at": skill.updated_at,
+        "scope": skill.scope,
+    }
     if skill.created_by:
-        lines.append(f"created_by: {skill.created_by}")
+        meta["created_by"] = skill.created_by
     if skill.remote_id:
-        lines.append(f"remote_id: {skill.remote_id}")
+        meta["remote_id"] = skill.remote_id
     if skill.workspace_id:
-        lines.append(f"workspace_id: {skill.workspace_id}")
-    lines.append("---")
-    return "\n".join(lines) + "\n"
+        meta["workspace_id"] = skill.workspace_id
+    dumped = yaml.safe_dump(meta, sort_keys=False, allow_unicode=True).strip()
+    return f"---\n{dumped}\n---\n"
 
 
 def skill_to_markdown(skill: Skill) -> str:
@@ -54,12 +56,19 @@ def skill_to_markdown(skill: Skill) -> str:
 
 
 def skill_from_markdown(text: str, *, filename: Optional[str] = None) -> Skill:
-    m = FRONTMATTER_RE.match(text.strip() + ("\n" if not text.endswith("\n") else ""))
+    raw = text.strip()
+    if not raw.endswith("\n"):
+        raw += "\n"
+    m = FRONTMATTER_RE.match(raw)
     if m:
-        meta = _parse_frontmatter(m.group(1))
+        try:
+            meta = yaml.safe_load(m.group(1)) or {}
+        except yaml.YAMLError:
+            meta = {}
+        if not isinstance(meta, dict):
+            meta = {}
         body = m.group(2).strip()
     else:
-        # Plain markdown fallback
         meta = {}
         body = text.strip()
         first = body.splitlines()[0] if body else "Untitled skill"
@@ -67,7 +76,7 @@ def skill_from_markdown(text: str, *, filename: Optional[str] = None) -> Skill:
         meta["description"] = ""
 
     return Skill(
-        id=meta.get("id") or "",
+        id=str(meta.get("id") or ""),
         title=meta.get("title") or "Untitled skill",
         description=meta.get("description") or "",
         content=body,
@@ -78,6 +87,11 @@ def skill_from_markdown(text: str, *, filename: Optional[str] = None) -> Skill:
         remote_id=meta.get("remote_id"),
         workspace_id=meta.get("workspace_id"),
         filename=filename,
+        path=meta.get("path") or None,
+        tags=_as_str_list(meta.get("tags")),
+        project_types=_as_str_list(meta.get("project_types")),
+        triggers=_as_str_list(meta.get("triggers")),
+        source=meta.get("source") or "generate",
     )
 
 
@@ -100,16 +114,18 @@ class LocalSkillStore:
         return skills
 
     def read_file(self, path: Path) -> Optional[Skill]:
+        path = Path(path)
         text = path.read_text(encoding="utf-8")
         skill = skill_from_markdown(text, filename=path.name)
         if not skill.id:
-            # Stable id from filename when missing
             skill.id = path.stem
         if not skill.created_at:
             from datetime import datetime, timezone
 
             skill.created_at = datetime.now(timezone.utc).isoformat()
             skill.updated_at = skill.created_at
+        skill.path = str(path.resolve())
+        skill.filename = path.name
         return skill
 
     def get(self, skill_id: str) -> Optional[Skill]:
@@ -118,10 +134,20 @@ class LocalSkillStore:
                 return skill
             if skill.remote_id and skill.remote_id == skill_id:
                 return skill
-        # Direct filename
+            if skill.title.lower() == skill_id.lower():
+                return skill
         path = self.root / f"{skill_id}.md"
         if path.is_file():
             return self.read_file(path)
+        # Match by short id suffix in filename
+        for path in self.root.glob(f"*-{skill_id[:8]}.md"):
+            return self.read_file(path)
+        return None
+
+    def get_by_path(self, path: str | Path) -> Optional[Skill]:
+        p = Path(path)
+        if p.is_file():
+            return self.read_file(p)
         return None
 
     def save(self, skill: Skill) -> Path:
@@ -130,9 +156,14 @@ class LocalSkillStore:
         skill.updated_at = datetime.now(timezone.utc).isoformat()
         if not skill.created_at:
             skill.created_at = skill.updated_at
+        if not skill.id:
+            import uuid
+
+            skill.id = str(uuid.uuid4())
         if not skill.filename:
             skill.filename = f"{slugify(skill.title)}-{skill.id[:8]}.md"
         path = self.root / skill.filename
+        skill.path = str(path.resolve())
         path.write_text(skill_to_markdown(skill), encoding="utf-8")
         try:
             path.chmod(0o600)
