@@ -43,6 +43,7 @@ def _dump_frontmatter(skill: Skill) -> str:
         "grounded_symbols": list(skill.grounded_symbols or []),
         "source_files": list(skill.source_files or []),
         "needs_review": bool(skill.needs_review),
+        "quality_state": skill.quality_state or "verified",
         "path": skill.path or "",
         "source": skill.source or "generate",
         "created_at": skill.created_at,
@@ -122,6 +123,12 @@ def skill_from_markdown(text: str, *, filename: Optional[str] = None) -> Skill:
         grounded_symbols=_as_str_list(meta.get("grounded_symbols")),
         source_files=_as_str_list(meta.get("source_files")),
         needs_review=bool(meta.get("needs_review")),
+        quality_state=(
+            str(meta.get("quality_state") or "").strip().lower()
+            if str(meta.get("quality_state") or "").strip().lower()
+            in ("draft", "verified", "rejected")
+            else ("draft" if meta.get("needs_review") else "verified")
+        ),
         grounded_at=meta.get("grounded_at"),
         content_hash=meta.get("content_hash"),
     )

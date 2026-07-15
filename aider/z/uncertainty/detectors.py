@@ -925,39 +925,56 @@ def detect_requirement_gaps(
         detail = detail_by_id.get(item.id) or {}
         missing = detail.get("missing") or f"Complete: {item.text}"
         evidence = detail.get("evidence") or []
-        nodes.append(
-            _make_node(
-                title=f"Requirement gap: {item.text[:80]}",
-                node_type=NodeType.REQUIREMENT_GAP,
-                signals=signals,
-                summary=f"We didn’t finish what was asked — marked {item.status}.",
-                explanation=(
-                    f"Asked for: {item.text}\n"
-                    f"Delivery status: {item.status}\n"
-                    f"Missing: {missing}\n"
-                    f"Evidence: {', '.join(evidence) if evidence else '(none)'}\n"
-                    "Compared the structured checklist against bound edit/test evidence."
-                ),
-                why_uncertain="Sub-requirement was not marked Fully Addressed after implementation.",
-                what_could_go_wrong="User intent remains partially unmet; follow-up work will be needed.",
-                suggested_fix=missing,
-                suggested_prompt=(
-                    f"The requirement '{item.text}' is marked {item.status}. "
-                    f"Missing: {missing}. Implement only that gap, then stop."
-                ),
-                task_id=task_id or checklist.task_id,
-                task_title=task_title or checklist.title,
-                created_by_session=created_by_session,
-                created_by_user=created_by_user,
-                extra_signals={
-                    "requirement_id": item.id,
-                    "requirement_text": item.text,
-                    "requirement_status": item.status,
-                    "missing": missing,
-                    "evidence": list(evidence),
-                },
-            )
+        kind = getattr(item, "kind", None) or "product"
+        # Process gaps are informational Medium at most — never invent product features
+        node = _make_node(
+            title=f"Requirement gap: {item.text[:80]}",
+            node_type=NodeType.REQUIREMENT_GAP,
+            signals=signals,
+            summary=f"We didn’t finish what was asked — marked {item.status}.",
+            explanation=(
+                f"Asked for: {item.text}\n"
+                f"Kind: {kind}\n"
+                f"Delivery status: {item.status}\n"
+                f"Missing: {missing}\n"
+                f"Evidence: {', '.join(evidence) if evidence else '(none)'}\n"
+                "Compared the structured checklist against bound evidence "
+                "(code for product; session/verify for process)."
+            ),
+            why_uncertain="Sub-requirement was not marked Fully Addressed after implementation.",
+            what_could_go_wrong="User intent remains partially unmet; follow-up work will be needed.",
+            suggested_fix=missing,
+            suggested_prompt=(
+                f"The requirement '{item.text}' is marked {item.status}. "
+                f"Missing: {missing}. "
+                + (
+                    "This is a process/tooling requirement — do not add product commands; "
+                    "satisfy it via verification/session evidence only."
+                    if kind in ("process", "verification", "decision")
+                    else "Implement only that gap, then stop."
+                )
+            ),
+            task_id=task_id or checklist.task_id,
+            task_title=task_title or checklist.title,
+            created_by_session=created_by_session,
+            created_by_user=created_by_user,
+            extra_signals={
+                "requirement_id": item.id,
+                "requirement_text": item.text,
+                "requirement_status": item.status,
+                "requirement_kind": kind,
+                "missing": missing,
+                "evidence": list(evidence),
+            },
         )
+        # Align stored risk with gate tier for Not Addressed product gaps
+        if item.status == "Not Addressed" and kind == "product":
+            node.risk_tier = Tier.HIGH
+        elif kind in ("process", "decision"):
+            # Never High-block on process wording — ask/review only
+            node.risk_tier = Tier.LOW
+            node.status = NodeStatus.OPEN
+        nodes.append(node)
     return nodes
 
 

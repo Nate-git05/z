@@ -191,6 +191,10 @@ def _effective_gate_tier(node: UncertaintyNode) -> Tier:
         return Tier.HIGH
     if node.type == NodeType.REQUIREMENT_GAP:
         req_status = node.signals.get("requirement_status") or ""
+        req_kind = (node.signals.get("requirement_kind") or "product").lower()
+        # Process/decision gaps must not hard-block or invent product features
+        if req_kind in ("process", "decision"):
+            return Tier.LOW
         if req_status == "Not Addressed":
             return Tier.HIGH
         if req_status == "Partially Addressed":
@@ -237,8 +241,10 @@ def classify_nodes(
 def _format_node_lines(nodes: Sequence[UncertaintyNode], limit: int = 8) -> str:
     lines = []
     for node in nodes[:limit]:
+        # Show the gate-effective tier so UI matches "N high-risk issue(s)"
+        tier = _effective_gate_tier(node)
         lines.append(
-            f"  - [{node.risk_tier.value}] {node.type.value}: {node.title}"
+            f"  - [{tier.value}] {node.type.value}: {node.title}"
         )
     if len(nodes) > limit:
         lines.append(f"  … and {len(nodes) - limit} more")
@@ -301,6 +307,15 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
     )
     coder.last_verification = record
     coder.test_outcome = bool(record.meaningful_pass)
+    try:
+        engine.ctx.last_verification = record
+        engine.record_execution(
+            f"verification state={getattr(record.state, 'value', record.state)} "
+            f"discovered={record.tests_discovered} exit={record.exit_code} "
+            f"cmd={record.command}"
+        )
+    except Exception:
+        pass
 
     gen_attempts = int(getattr(coder, "_z_verify_gen_attempts", 0) or 0)
     fix_attempts = int(getattr(coder, "_z_verify_fix_attempts", 0) or 0)

@@ -13,6 +13,16 @@ def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _quality_state_from_data(data: dict[str, Any]) -> str:
+    raw = (data.get("quality_state") or "").strip().lower()
+    if raw in ("draft", "verified", "rejected"):
+        return raw
+    # Migrate legacy needs_review
+    if data.get("needs_review"):
+        return "draft"
+    return "verified"
+
+
 def slugify(title: str) -> str:
     s = (title or "skill").lower().strip()
     s = re.sub(r"[^a-z0-9]+", "-", s)
@@ -72,6 +82,8 @@ class Skill:
     grounded_symbols: List[str] = field(default_factory=list)
     source_files: List[str] = field(default_factory=list)
     needs_review: bool = False  # block auto-retrieve until user accepts
+    # draft = capture pending accept; verified = retrievable; rejected = quarantine
+    quality_state: str = "verified"
     grounded_at: Optional[str] = None
     content_hash: Optional[str] = None  # hash of grounding pack at capture
 
@@ -108,6 +120,7 @@ class Skill:
             "grounded_symbols": list(self.grounded_symbols or []),
             "source_files": list(self.source_files or []),
             "needs_review": bool(self.needs_review),
+            "quality_state": self.quality_state or "verified",
             "path": self.path,
             "scope": self.scope,
             "source": self.source,
@@ -136,6 +149,7 @@ class Skill:
             "grounded_symbols": list(self.grounded_symbols or []),
             "source_files": list(self.source_files or []),
             "needs_review": bool(self.needs_review),
+            "quality_state": self.quality_state or "verified",
             "source": self.source,
         }
 
@@ -172,6 +186,7 @@ class Skill:
             grounded_symbols=_as_str_list(data.get("grounded_symbols")),
             source_files=_as_str_list(data.get("source_files")),
             needs_review=bool(data.get("needs_review")),
+            quality_state=_quality_state_from_data(data),
             grounded_at=data.get("grounded_at"),
             content_hash=data.get("content_hash"),
         )
@@ -200,6 +215,7 @@ class SkillIndexEntry:
     grounded_symbols: List[str] = field(default_factory=list)
     source_files: List[str] = field(default_factory=list)
     needs_review: bool = False
+    quality_state: str = "verified"
 
     def match_text(self) -> str:
         bits = [

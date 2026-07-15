@@ -60,7 +60,7 @@ class DetectCommandTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             (root / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
-            self.assertEqual(detect_test_command(root), "python -m pytest -q")
+            self.assertIn("-m pytest -q", detect_test_command(root))
 
     def test_detects_tests_dir_uses_unittest_when_no_pytest_declared(self):
         with tempfile.TemporaryDirectory() as td:
@@ -71,10 +71,8 @@ class DetectCommandTest(unittest.TestCase):
                 "import unittest\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertTrue(True)\n",
                 encoding="utf-8",
             )
-            self.assertEqual(
-                detect_test_command(root),
-                "python -m unittest discover -s tests -v",
-            )
+            cmd = detect_test_command(root)
+            self.assertIn("-m unittest discover -s tests -v", cmd)
 
     def test_detects_pytest_when_declared(self):
         with tempfile.TemporaryDirectory() as td:
@@ -83,7 +81,7 @@ class DetectCommandTest(unittest.TestCase):
             tests = root / "tests"
             tests.mkdir()
             (tests / "test_foo.py").write_text("def test_a():\n    assert True\n", encoding="utf-8")
-            self.assertEqual(detect_test_command(root), "python -m pytest -q")
+            self.assertIn("-m pytest -q", detect_test_command(root))
 
 
 class PathImportTest(unittest.TestCase):

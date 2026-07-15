@@ -12,6 +12,7 @@ import enum
 import json
 import os
 import re
+import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +21,11 @@ from typing import List, Optional, Sequence, Tuple
 from aider.run_cmd import run_cmd
 
 from .detectors import find_relevant_tests
+
+
+def _python_exe() -> str:
+    """Prefer the running interpreter so smoke/tests work when `python` is missing."""
+    return sys.executable or "python3"
 
 # Patterns that mean the suite discovered nothing — must not count as pass.
 _ZERO_TEST_RE = re.compile(
@@ -105,8 +111,9 @@ def detect_test_command(root: Path) -> Optional[str]:
     """
     root = Path(root)
     # Explicit pytest config → pytest is declared
+    py = _python_exe()
     if (root / "pytest.ini").is_file() or (root / "conftest.py").is_file():
-        return "python -m pytest -q"
+        return f"{py} -m pytest -q"
     pyproject = root / "pyproject.toml"
     if pyproject.is_file():
         try:
@@ -114,12 +121,12 @@ def detect_test_command(root: Path) -> Optional[str]:
         except OSError:
             text = ""
         if "[tool.pytest" in text:
-            return "python -m pytest -q"
+            return f"{py} -m pytest -q"
         # requirements-style mention alone is weaker — still allow pytest if listed
         if re.search(r"(?m)^\s*pytest\b", text) or '"pytest"' in text or "'pytest'" in text:
-            return "python -m pytest -q"
+            return f"{py} -m pytest -q"
     if (root / "manage.py").is_file():
-        return "python manage.py test"
+        return f"{py} manage.py test"
     pkg = root / "package.json"
     if pkg.is_file():
         try:
@@ -137,14 +144,14 @@ def detect_test_command(root: Path) -> Optional[str]:
         except OSError:
             continue
         if re.search(r"(?m)^\s*pytest\b", rtext):
-            return "python -m pytest -q"
+            return f"{py} -m pytest -q"
 
     tests_dir = root / "tests"
     if tests_dir.is_dir() and any(tests_dir.rglob("test_*.py")):
         # Dependency-free default: stdlib unittest with -s tests
-        return "python -m unittest discover -s tests -v"
+        return f"{py} -m unittest discover -s tests -v"
     if any(root.glob("test_*.py")) or any(root.glob("*_test.py")):
-        return "python -m unittest discover -v"
+        return f"{py} -m unittest discover -v"
     return None
 
 
@@ -309,6 +316,54 @@ def path_to_importable(root: Path, rel: str) -> Optional[str]:
     return ".".join(parts)
 
 
+def run_smoke_cli(
+    root: Path,
+    *,
+    module: str = "",
+    args: str = "--help",
+    verbose: bool = False,
+    error_print=None,
+) -> Tuple[bool, str]:
+    """
+    Process-level CLI smoke via subprocess — asserts exit code, not just import.
+
+    Prefer this over calling main() in-process (which can hide SystemExit bugs).
+    """
+    root = Path(root)
+    mod = module
+    if not mod:
+        # Heuristic: package __main__ or module with if __name__ among edited later
+        return True, "no CLI module specified"
+    cmd = f"{_python_exe()} -m {mod} {args}".strip()
+    code, out = run_cmd(cmd, verbose=verbose, error_print=error_print, cwd=str(root))
+    if code != 0:
+        return False, f"{cmd} exit={code}: {(out or '')[-500:]}"
+    return True, f"{cmd} exit=0"
+
+
+def discover_cli_modules(root: Path, edited: Sequence[str]) -> List[str]:
+    """Find runnable CLI modules among edited files (__main__.py or *cli*.py)."""
+    root = Path(root)
+    mods: List[str] = []
+    for rel in edited:
+        p = Path(rel)
+        if p.name == "__main__.py":
+            pkg = ".".join(p.parent.parts)
+            if pkg and pkg not in mods:
+                mods.append(pkg)
+        elif p.suffix == ".py" and (
+            "cli" in p.stem.lower() or p.stem in ("__main__", "main")
+        ):
+            if p.name == "main.py" and p.parent == Path("."):
+                continue
+            parts = list(p.parent.parts) + ([p.stem] if p.stem != "__main__" else [])
+            if parts and all(part.isidentifier() for part in parts):
+                mod = ".".join(parts)
+                if mod not in mods:
+                    mods.append(mod)
+    return mods[:3]
+
+
 def run_smoke_imports(
     root: Path,
     edited: Sequence[str],
@@ -334,7 +389,9 @@ def run_smoke_imports(
     failures = []
     for mod in modules:
         # Prefer importing from project root on sys.path
-        cmd = f'python -c "import sys; sys.path.insert(0, \'.\'); import {mod}"'
+        cmd = (
+            f'{_python_exe()} -c "import sys; sys.path.insert(0, \'.\'); import {mod}"'
+        )
         code, out = run_cmd(cmd, verbose=verbose, error_print=error_print, cwd=str(root))
         if code != 0:
             failures.append(f"{mod}: {(out or '')[-500:]}")
@@ -387,7 +444,28 @@ def verify_edits(
             ok, detail = run_smoke_imports(
                 root, edited, verbose=verbose, error_print=error_print
             )
-            if detail.startswith("no importable"):
+            cli_mods = discover_cli_modules(root, edited)
+            cli_details = []
+            cli_ok = True
+            for mod in cli_mods:
+                cok, cdetail = run_smoke_cli(
+                    root, module=mod, args="--help", verbose=verbose, error_print=error_print
+                )
+                cli_details.append(cdetail)
+                if not cok:
+                    cli_ok = False
+            # Prefer CLI process smoke when available; else import smoke
+            if cli_mods:
+                record.smoke_ran = True
+                record.smoke_ok = cli_ok and (ok if not detail.startswith("no importable") else True)
+                record.smoke_detail = "; ".join(cli_details + ([detail] if not detail.startswith("no importable") else []))
+                if not record.smoke_ok:
+                    record.passed = False
+                    if record.state == VerifyState.TESTS_PASSED:
+                        record.state = VerifyState.TESTS_FAILED
+                    if not record.error:
+                        record.error = f"Smoke CLI failed: {record.smoke_detail}"
+            elif detail.startswith("no importable"):
                 record.smoke_ran = False
                 record.smoke_ok = None
                 record.smoke_detail = detail

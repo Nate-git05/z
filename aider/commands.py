@@ -1794,6 +1794,11 @@ Just show me the edits I need to make.
 
             return accept_skill(self.io, args[6:].strip())
 
+        if lower.startswith("reject"):
+            from aider.z.skills.cli import reject_skill
+
+            return reject_skill(self.io, args[6:].strip())
+
         if lower.startswith("reindex"):
             from aider.z.skills.cli import cmd_skill_reindex
 

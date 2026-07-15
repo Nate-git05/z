@@ -89,9 +89,14 @@ def build_parser() -> argparse.ArgumentParser:
     show.add_argument("name", nargs="*", help="Skill title or id")
     accept = skill_sub.add_parser(
         "accept",
-        help="Accept a captured skill (clear needs_review so it can auto-apply)",
+        help="Accept a draft skill (promote to verified so it can auto-apply)",
     )
     accept.add_argument("name", nargs="*", help="Skill title or id")
+    reject = skill_sub.add_parser(
+        "reject",
+        help="Quarantine a skill (quality_state=rejected — never auto-apply)",
+    )
+    reject.add_argument("name", nargs="*", help="Skill title or id")
     skill_sub.add_parser("reindex", help="Rebuild the ChromaDB skill vector index")
 
     # Anything else falls through to the main agent CLI
@@ -234,6 +239,7 @@ def cmd_skill(io, args) -> int:
         cmd_skill_list,
         cmd_skill_reindex,
         cmd_skill_show,
+        reject_skill,
     )
 
     sub = getattr(args, "skill_command", None) or "list"
@@ -256,11 +262,15 @@ def cmd_skill(io, args) -> int:
     if sub == "accept":
         name = " ".join(getattr(args, "name", None) or []).strip()
         return accept_skill(io, name)
+    if sub == "reject":
+        name = " ".join(getattr(args, "name", None) or []).strip()
+        return reject_skill(io, name)
     if sub == "reindex":
         return cmd_skill_reindex(io)
     io.tool_error(f"Unknown skill subcommand: {sub}")
     io.tool_output(
-        "Usage: z skill add | create [topic…] | list | show <name> | accept <name> | reindex"
+        "Usage: z skill add | create [topic…] | list | show <name> | "
+        "accept <name> | reject <name> | reindex"
     )
     return 1
 

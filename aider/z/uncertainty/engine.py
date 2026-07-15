@@ -66,6 +66,10 @@ class SessionContext:
     discussed_text: str = ""
     # Optional unified diff for scoping structural edge detection to changed lines
     last_diff: str = ""
+    # Accumulated session execution facts for process-requirement evidence
+    execution_log: str = ""
+    user_decisions: List[str] = field(default_factory=list)
+    last_verification: Optional[object] = None
     migration_data_impact: Optional[str] = None
     new_files_this_turn: List[str] = field(default_factory=list)
     pattern_results: dict = field(default_factory=dict)
@@ -105,9 +109,23 @@ class UncertaintyEngine:
 
     def record_discussed_text(self, text: str) -> None:
         self.ctx.discussed_text = text or ""
+        if text:
+            self.ctx.execution_log = (
+                (self.ctx.execution_log or "") + "\n" + text
+            )[-20000:]
 
     def record_diff(self, diff: str) -> None:
         self.ctx.last_diff = diff or ""
+
+    def record_execution(self, note: str) -> None:
+        if note:
+            self.ctx.execution_log = (
+                (self.ctx.execution_log or "") + "\n" + note
+            )[-20000:]
+
+    def record_user_decision(self, note: str) -> None:
+        if note:
+            self.ctx.user_decisions.append(note)
 
     def record_migration_impact(self, text: str) -> None:
         self.ctx.migration_data_impact = text
@@ -317,6 +335,9 @@ class UncertaintyEngine:
                 file_contents=contents,
                 symbols=symbols,
                 test_files=relevant,
+                execution_log=self.ctx.execution_log or self.ctx.discussed_text,
+                user_decisions=self.ctx.user_decisions,
+                verification=self.ctx.last_verification,
             )
             model_complete = getattr(self.ctx, "model_complete", None)
             if callable(model_complete):
