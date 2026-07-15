@@ -47,6 +47,11 @@ Tiers are **Low / Medium / High**. There are **no fake confidence percentages**.
 Dependency-free Python projects under `tests/` use
 `python -m unittest discover -s tests -v` unless pytest is declared.
 
+Checklist items are typed (`product` / `process` / `verification` / `decision`).
+Process phrases like “use uncertainty” are scored from the **session/execution log**,
+not by searching product source for the word “uncertainty”. Gate messages show the
+**effective** risk tier (so “high-risk” never labels a Medium-stored node).
+
 ---
 
 ## Risk vs confidence

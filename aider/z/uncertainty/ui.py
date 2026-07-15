@@ -173,9 +173,16 @@ def browse_interactive(io, store: UncertaintyStore, *, mode: SortMode = "risk") 
 def print_summary_line(io, new_nodes: List[UncertaintyNode]) -> None:
     if not new_nodes:
         return
-    high = sum(1 for n in new_nodes if n.risk_tier.value == "High")
-    med = sum(1 for n in new_nodes if n.risk_tier.value == "Medium")
+    try:
+        from .gate import _effective_gate_tier
+        from .schema import Tier
+
+        high = sum(1 for n in new_nodes if _effective_gate_tier(n) == Tier.HIGH)
+        med = sum(1 for n in new_nodes if _effective_gate_tier(n) == Tier.MEDIUM)
+    except Exception:
+        high = sum(1 for n in new_nodes if n.risk_tier.value == "High")
+        med = sum(1 for n in new_nodes if n.risk_tier.value == "Medium")
     io.tool_output(
         f"Uncertainty tree: {len(new_nodes)} new node(s) "
-        f"(risk High={high} Medium={med}). Use /uncertainties to review."
+        f"(gate High={high} Medium={med}). Use /uncertainties to review."
     )

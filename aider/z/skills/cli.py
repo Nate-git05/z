@@ -207,31 +207,30 @@ def save_skill_from_task(
         return None, False
 
     skill.source = "capture"
+    # Captures always start as draft — accept after review (even if grounded)
+    skill.quality_state = "draft"
+    skill.needs_review = True
     if ground and not ground.ok:
-        skill.needs_review = True
         io.tool_warning(
-            "Skill saved for review — it may not match the real implementation."
+            "Skill saved as draft — it may not match the real implementation."
         )
         if ground.reason:
             io.tool_warning(f"  {ground.reason}")
-        io.tool_output(
-            "It will not auto-apply until you accept it "
-            "(z skill show … then clear needs_review)."
-        )
         _emit_ungrounded_node(io, skill, ground, uncertainty_engine)
-    elif grounding_pack is not None:
-        skill.needs_review = False
-        if ground and ground.grounded_symbols:
-            io.tool_output(
-                "Grounded symbols: " + ", ".join(ground.grounded_symbols[:8])
-            )
+    elif ground and ground.grounded_symbols:
+        io.tool_output(
+            "Grounded symbols: " + ", ".join(ground.grounded_symbols[:8])
+        )
+    io.tool_output(
+        "Saved as draft (not auto-applied). Accept with: z skill accept <name>"
+    )
 
     skill = _persist_skill(io, skill, sync=True)
     return skill, True
 
 
 def accept_skill(io, name: str = "") -> int:
-    """Clear needs_review so a captured skill can auto-apply."""
+    """Promote a draft skill to verified so it can auto-apply."""
     name = (name or "").strip()
     if not name:
         name = io.prompt_ask("Skill name or id to accept").strip()
@@ -243,14 +242,36 @@ def accept_skill(io, name: str = "") -> int:
     if not skill:
         io.tool_error(f"No skill found for “{name}”.")
         return 1
-    if not skill.needs_review:
-        io.tool_output(f"“{skill.title}” is already accepted.")
+    if (skill.quality_state or "") == "verified" and not skill.needs_review:
+        io.tool_output(f"“{skill.title}” is already verified.")
         return 0
+    skill.quality_state = "verified"
     skill.needs_review = False
     store.save(skill)
     upsert_skill_vector(skill)
     io.tool_output(f"Accepted skill: {skill.title}")
     io.tool_output("It can now auto-apply on matching tasks.")
+    return 0
+
+
+def reject_skill(io, name: str = "") -> int:
+    """Quarantine a skill so it never auto-applies."""
+    name = (name or "").strip()
+    if not name:
+        name = io.prompt_ask("Skill name or id to reject").strip()
+    if not name:
+        io.tool_error("Skill name or id required.")
+        return 1
+    store = LocalSkillStore()
+    skill = store.get(name)
+    if not skill:
+        io.tool_error(f"No skill found for “{name}”.")
+        return 1
+    skill.quality_state = "rejected"
+    skill.needs_review = True
+    store.save(skill)
+    upsert_skill_vector(skill)
+    io.tool_output(f"Rejected (quarantined) skill: {skill.title}")
     return 0
 
 

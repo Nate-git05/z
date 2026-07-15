@@ -236,6 +236,7 @@ class SchemaRoundtripGroundingTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         loaded = store.get(skill.id)
         self.assertFalse(loaded.needs_review)
+        self.assertEqual(loaded.quality_state, "verified")
 
 
 if __name__ == "__main__":

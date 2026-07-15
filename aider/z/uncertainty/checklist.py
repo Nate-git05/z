@@ -39,6 +39,10 @@ class ItemEvidence:
     file_hits: List[str] = field(default_factory=list)
     symbol_hits: List[str] = field(default_factory=list)
     test_hits: List[str] = field(default_factory=list)
+    log_hits: List[str] = field(default_factory=list)
+    decision_hits: List[str] = field(default_factory=list)
+    verification_ok: Optional[bool] = None
+    kind: str = "product"
     missing: str = ""
 
     def evidence_strings(self) -> List[str]:
@@ -46,6 +50,10 @@ class ItemEvidence:
         out.extend(f"file:{f}" for f in self.file_hits[:5])
         out.extend(f"symbol:{s}" for s in self.symbol_hits[:5])
         out.extend(f"test:{t}" for t in self.test_hits[:5])
+        out.extend(f"log:{k}" for k in self.log_hits[:5])
+        out.extend(f"decision:{k}" for k in self.decision_hits[:5])
+        if self.verification_ok is not None:
+            out.append(f"verify:{'ok' if self.verification_ok else 'fail'}")
         out.extend(f"kw:{k}" for k in self.keyword_hits[:5])
         return out
 
@@ -56,6 +64,46 @@ class ItemEvidence:
     @property
     def has_test_only_evidence(self) -> bool:
         return bool(self.test_hits) and not self.has_code_evidence
+
+    @property
+    def has_process_evidence(self) -> bool:
+        return bool(self.log_hits or self.decision_hits) or self.verification_ok is True
+
+
+_PROCESS_RE = re.compile(
+    r"(?i)\b(use|enable|run|with|via)\b.{0,40}\b("
+    r"uncertainty|checklist|verify(?:-before-commit)?|commit\s+gate|skills?|auto-act"
+    r")\b"
+    r"|\b(ask|confirm|decide|review)\b.{0,40}\b(user|me|before)\b"
+)
+_VERIFY_RE = re.compile(
+    r"(?i)\b(test|tests|verify|verification|smoke\s*test|pytest|unittest|run\s+the\s+suite)\b"
+)
+_DECISION_RE = re.compile(
+    r"(?i)\b(confirm|decide|approve|acknowledge|ask\s+(the\s+)?user)\b"
+)
+
+
+def classify_requirement_kind(text: str) -> str:
+    """product | process | verification | decision — process never requires source hits."""
+    t = text or ""
+    has_product_verb = bool(
+        re.search(r"(?i)\b(implement|add|create|build|write|fix|refactor)\b", t)
+    )
+    # Mixed "build X and use uncertainty" → product (process is session-side)
+    if _PROCESS_RE.search(t) and not has_product_verb:
+        return "process"
+    if _DECISION_RE.search(t) and not has_product_verb:
+        return "decision"
+    if _VERIFY_RE.search(t) and not re.search(
+        r"(?i)\b(implement|add|create|build|write)\b.{0,20}\b(feature|endpoint|module|class)\b",
+        t,
+    ):
+        if re.search(r"(?i)^(add|write|create)\s+tests?\b", t.strip()):
+            return "verification"
+        if re.search(r"(?i)\b(run|execute|smoke)\b", t) and not has_product_verb:
+            return "verification"
+    return "product"
 
 
 def decompose_request(title: str, user_message: str) -> TaskChecklist:
@@ -73,7 +121,9 @@ def decompose_request(title: str, user_message: str) -> TaskChecklist:
         if m:
             chunk = m.group(1).strip()
             if chunk:
-                items.append(RequirementItem(text=chunk))
+                items.append(
+                    RequirementItem(text=chunk, kind=classify_requirement_kind(chunk))
+                )
 
     if not items:
         parts = re.split(r"(?:;|\.(?:\s|$)|(?:,\s*and\s+)|\band\bthen\b)", text)
@@ -83,10 +133,15 @@ def decompose_request(title: str, user_message: str) -> TaskChecklist:
                 continue
             if part.lower() in {"please", "thanks", "thank you"}:
                 continue
-            items.append(RequirementItem(text=part[0].upper() + part[1:]))
+            chunk = part[0].upper() + part[1:]
+            items.append(
+                RequirementItem(text=chunk, kind=classify_requirement_kind(chunk))
+            )
 
     if not items and text:
-        items.append(RequirementItem(text=text[:500]))
+        items.append(
+            RequirementItem(text=text[:500], kind=classify_requirement_kind(text))
+        )
 
     return TaskChecklist(
         task_id=str(uuid.uuid4()),
@@ -148,18 +203,79 @@ def bind_evidence(
     file_contents: Optional[dict[str, str]] = None,
     symbols: Sequence[str] = (),
     test_files: Sequence[str] = (),
+    execution_log: str = "",
+    user_decisions: Sequence[str] = (),
+    verification: Any = None,
 ) -> List[ItemEvidence]:
-    """Attach concrete edit/test evidence to each checklist item."""
+    """
+    Attach concrete evidence to each checklist item.
+
+    Process/verification/decision items use execution_log / VerificationRecord /
+    user decisions — never require the phrase to appear in product source.
+    """
     contents = file_contents or {}
     corpus_files = " ".join(files_changed).lower()
     corpus_body = " ".join(contents.values()).lower()[:12000]
     corpus_syms = " ".join(symbols).lower()
     corpus_tests = " ".join(test_files).lower()
+    log_blob = (execution_log or "").lower()
+    decisions_blob = " ".join(user_decisions or []).lower()
+    verify_ok = None
+    if verification is not None:
+        verify_ok = bool(getattr(verification, "meaningful_pass", False))
     out: List[ItemEvidence] = []
 
     for item in checklist.items:
+        kind = getattr(item, "kind", None) or classify_requirement_kind(item.text)
+        item.kind = kind
         words = _keywords(item.text)
-        ev = ItemEvidence(item_id=item.id, item_text=item.text)
+        ev = ItemEvidence(item_id=item.id, item_text=item.text, kind=kind)
+
+        # Process / verification / decision — evidence from session, not source
+        if kind == "process":
+            markers = [
+                "uncertainty",
+                "checklist",
+                "verification",
+                "verify",
+                "commit gate",
+                "skill",
+                "/uncertainties",
+                "gate",
+            ]
+            for m in markers:
+                if m in log_blob or m in decisions_blob:
+                    ev.log_hits.append(m)
+            # Engine/session running is enough for "use uncertainty"
+            if "uncertainty" in (item.text or "").lower() and (
+                "uncertainty" in log_blob
+                or "uncertainty tree" in log_blob
+                or "verify" in log_blob
+            ):
+                ev.log_hits.append("session_uncertainty")
+            out.append(ev)
+            continue
+
+        if kind == "verification":
+            ev.verification_ok = verify_ok
+            if verify_ok:
+                ev.log_hits.append("verification_passed")
+            elif verification is not None:
+                state = getattr(verification, "state", None)
+                ev.log_hits.append(f"verification_{getattr(state, 'value', state)}")
+            out.append(ev)
+            continue
+
+        if kind == "decision":
+            if checklist.confirmed_by_user or decisions_blob:
+                ev.decision_hits.append("confirmed")
+            for w in words:
+                if w in decisions_blob:
+                    ev.decision_hits.append(w)
+            out.append(ev)
+            continue
+
+        # Product requirements — code/test evidence
         for w in words:
             if w in corpus_files or w in corpus_body:
                 ev.keyword_hits.append(w)
@@ -172,7 +288,6 @@ def bind_evidence(
             if any(w in fl for w in words):
                 ev.file_hits.append(f)
             else:
-                # Content mention of distinctive keywords
                 body = (contents.get(f) or "").lower()
                 if words and sum(1 for w in words if w in body) >= max(1, len(words) // 3):
                     if f not in ev.file_hits:
@@ -181,7 +296,6 @@ def bind_evidence(
             tl = t.lower()
             if any(w in tl for w in words):
                 ev.test_hits.append(t)
-        # Deduplicate preserving order
         ev.file_hits = list(dict.fromkeys(ev.file_hits))
         ev.symbol_hits = list(dict.fromkeys(ev.symbol_hits))
         ev.test_hits = list(dict.fromkeys(ev.test_hits))
@@ -191,19 +305,37 @@ def bind_evidence(
 
 
 def _status_from_evidence(ev: ItemEvidence, words: List[str]) -> str:
+    kind = ev.kind or "product"
+
+    if kind == "process":
+        if ev.has_process_evidence:
+            return "Fully Addressed"
+        # Process reqs without session evidence stay open but should not demand source
+        return "Not Addressed"
+
+    if kind == "verification":
+        if ev.verification_ok is True:
+            return "Fully Addressed"
+        if ev.verification_ok is False:
+            return "Partially Addressed"
+        return "Not Addressed"
+
+    if kind == "decision":
+        if ev.decision_hits or ev.has_process_evidence:
+            return "Fully Addressed"
+        return "Not Addressed"
+
     if not words:
         if ev.has_code_evidence:
             return "Partially Addressed"
         if ev.has_test_only_evidence:
             return "Partially Addressed"
         return "Not Addressed"
-    # Count distinctive hits across code keywords + test path matches
     distinctive = set(ev.keyword_hits) | {
         w for w in words if any(w in t.lower() for t in ev.test_hits)
     }
     hit_ratio = len(distinctive) / max(len(words), 1)
     if ev.has_test_only_evidence:
-        # Tests/docs-only for a behavior item → at most Partial
         return "Partially Addressed" if hit_ratio >= 0.25 or ev.test_hits else "Not Addressed"
     if ev.has_code_evidence and hit_ratio >= 0.5:
         return "Fully Addressed"
@@ -219,23 +351,32 @@ def rescore_checklist_with_evidence(
     evidence: Sequence[ItemEvidence],
 ) -> TaskChecklist:
     """
-    Structured (non-lexical-only) rescore using bound evidence.
+    Structured rescore using bound evidence.
 
-    Rule overrides:
-    - zero evidence for a core item → Not Addressed
-    - test-only evidence → at most Partially Addressed
+    Process/verification/decision items never require product-source keyword hits.
     """
     by_id = {e.item_id: e for e in evidence}
     for item in checklist.items:
-        ev = by_id.get(item.id) or ItemEvidence(item_id=item.id, item_text=item.text)
+        ev = by_id.get(item.id) or ItemEvidence(
+            item_id=item.id, item_text=item.text, kind=getattr(item, "kind", "product")
+        )
         words = _keywords(item.text)
         status = _status_from_evidence(ev, words)
+        kind = ev.kind or getattr(item, "kind", "product")
         if status == "Not Addressed":
-            ev.missing = f"No code evidence found for: {item.text}"
+            if kind == "process":
+                ev.missing = (
+                    f"No session/execution evidence for process requirement: {item.text}"
+                )
+            elif kind == "verification":
+                ev.missing = f"Verification not yet satisfied for: {item.text}"
+            elif kind == "decision":
+                ev.missing = f"User decision still needed: {item.text}"
+            else:
+                ev.missing = f"No code evidence found for: {item.text}"
         elif status == "Partially Addressed":
             ev.missing = ev.missing or f"Only partial evidence for: {item.text}"
         item.status = status
-        # Stash on item via side channel dict if present later; callers use evidence list
     return checklist
 
 

@@ -141,6 +141,8 @@ def _copy_router_fields(entry: SkillIndexEntry, skill: Skill) -> None:
     if entry.source_files:
         skill.source_files = list(entry.source_files)
     skill.needs_review = bool(entry.needs_review)
+    if getattr(entry, "quality_state", None):
+        skill.quality_state = entry.quality_state
 
 
 def retrieve_skill_candidates(

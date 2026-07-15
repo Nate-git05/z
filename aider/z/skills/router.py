@@ -265,8 +265,12 @@ def route_skill(
     if sid and sid in injected:
         return RouteDecision(skill, False, "already injected this session", score)
 
-    # Captured skills that failed grounding stay local but never auto-apply
-    # until the user accepts them (clears needs_review).
+    # Captured / quarantined skills never auto-apply until verified.
+    qstate = (getattr(skill, "quality_state", None) or "").strip().lower()
+    if not qstate:
+        qstate = "draft" if getattr(skill, "needs_review", False) else "verified"
+    if qstate in ("draft", "rejected"):
+        return RouteDecision(skill, False, f"quality_state={qstate}", score)
     if getattr(skill, "needs_review", False):
         return RouteDecision(skill, False, "needs review (ungrounded capture)", score)
 

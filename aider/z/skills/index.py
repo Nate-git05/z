@@ -139,6 +139,12 @@ def _entry_from_row(r: dict, *, source: str) -> SkillIndexEntry:
         grounded_symbols=_as_str_list(r.get("grounded_symbols")),
         source_files=_as_str_list(r.get("source_files")),
         needs_review=bool(r.get("needs_review")),
+        quality_state=(
+            str(r.get("quality_state") or "").strip().lower()
+            if str(r.get("quality_state") or "").strip().lower()
+            in ("draft", "verified", "rejected")
+            else ("draft" if r.get("needs_review") else "verified")
+        ),
     )
 
 
