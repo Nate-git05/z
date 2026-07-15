@@ -389,8 +389,9 @@ class GenerateParseTest(unittest.TestCase):
                 return fake_response
 
         with mock.patch("aider.z.skills.generate.resolve_model", return_value=FakeModel()):
-            skill, err = generate_skill("how we do the thing")
+            skill, err, ground = generate_skill("how we do the thing")
         self.assertIsNone(err)
+        self.assertIsNone(ground)
         self.assertEqual(skill.title, "T")
         self.assertIn("Do the thing", skill.content)
         self.assertIn("thing", skill.tags)
