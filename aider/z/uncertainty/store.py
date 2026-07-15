@@ -42,8 +42,16 @@ class UncertaintyStore:
             node.created_by_session = self.created_by_session
         if not node.created_by_user and self.created_by_user:
             node.created_by_user = self.created_by_user
+        is_new = node.id not in self.nodes
         self.nodes[node.id] = node
         self.save_local()
+        if is_new:
+            try:
+                from .outcomes import record_node_created
+
+                record_node_created(node, repo_key=self.repo_key)
+            except Exception:
+                pass
         if sync and self.remote_sync:
             try:
                 self.remote_sync(node)
@@ -81,10 +89,26 @@ class UncertaintyStore:
         node = self.nodes.get(node_id)
         if not node:
             return None
+        prev = node.status
         node.status = status
         if status in (NodeStatus.RESOLVED, NodeStatus.IGNORED):
             node.resolved_at = datetime.now(timezone.utc).isoformat()
         self.save_local()
+        if status != prev and status in (NodeStatus.RESOLVED, NodeStatus.IGNORED):
+            try:
+                from .outcomes import record_outcome
+
+                disposition = (
+                    "ignored" if status == NodeStatus.IGNORED else "resolved"
+                )
+                record_outcome(
+                    node.type,
+                    disposition,
+                    repo_key=self.repo_key,
+                    node_id=node.id,
+                )
+            except Exception:
+                pass
         if self.remote_sync:
             try:
                 self.remote_sync(node)

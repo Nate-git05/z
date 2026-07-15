@@ -1902,6 +1902,10 @@ class Coder:
             # Capture model-listed edge cases / migration impact from the reply if present
             content = self.partial_response_content or ""
             self._ingest_uncertainty_self_reports(content)
+            try:
+                engine.record_discussed_text(content)
+            except Exception:
+                pass
 
             rels = []
             for path in edited:
@@ -1909,6 +1913,14 @@ class Coder:
                     rels.append(self.get_rel_fname(path))
                 except Exception:
                     rels.append(str(path))
+
+            # Diff scopes structural edge-case detection to changed lines
+            try:
+                repo = getattr(self, "repo", None)
+                if repo is not None and hasattr(repo, "get_diffs"):
+                    engine.record_diff(repo.get_diffs(fnames=list(edited)) or "")
+            except Exception:
+                pass
 
             new_nodes = engine.analyze_edits(
                 rels,

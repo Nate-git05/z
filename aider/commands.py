@@ -1818,6 +1818,11 @@ Just show me the edits I need to make.
 
         args = (args or "").strip().lower()
         mode = "risk"
+        if args in ("stats", "outcomes", "telemetry"):
+            from aider.z.uncertainty.outcomes import format_stats
+
+            self.io.tool_output(format_stats())
+            return
         if args in ("file", "files", "f"):
             mode = "file"
         elif args in ("session", "task", "s"):

@@ -81,9 +81,24 @@ def record_acceptances(
     *,
     commit_hash: Optional[str] = None,
 ) -> None:
+    try:
+        from .outcomes import record_outcome
+    except Exception:
+        record_outcome = None  # type: ignore
+
     for node in nodes:
         _mark_gate_signal(node, kind, commit_hash=commit_hash)
         store.nodes[node.id] = node
+        if record_outcome and kind in ("force_override", "medium_ack"):
+            try:
+                record_outcome(
+                    node.type,
+                    kind,
+                    repo_key=getattr(store, "repo_key", "") or "",
+                    node_id=node.id,
+                )
+            except Exception:
+                pass
     store.save_local()
 
 

@@ -59,7 +59,7 @@ A change can be **high risk + low confidence** (stop and look) or **low risk + h
 | Node type | Typical signal |
 |-----------|----------------|
 | Untested Path | No relevant tests, zero discovered, or tests failed |
-| Edge Case Blind Spot | Unhandled edges (model-listed or control-flow hints) |
+| Edge Case Blind Spot | **Structural** branches (else/except/None/empty…) undiscussed & untested; model list is supplement only |
 | Unverified Assumption | External API/MCP without live verification this session |
 | High-Stakes Surface | Payment / auth / security / data-loss paths |
 | Migration Risk | Schema migrations without clear data-impact handling |
@@ -83,7 +83,10 @@ A change can be **high risk + low confidence** (stop and look) or **low risk + h
 /uncertainties risk         Sort by risk
 /uncertainties file         Group by file
 /uncertainties session      Group by task / session
+/uncertainties stats        Per-detector disposition rates (noise signal)
 /uncertainties 3            Open note #3
+
+z uncertainty stats         Same disposition table from the CLI
 ```
 
 | Action | Effect |
@@ -135,13 +138,25 @@ Code: `aider/z/uncertainty/` (`engine.py`, `detectors.py`, `checklist.py`, `cont
 
 ---
 
+## Disposition telemetry (thin calibration loop)
+
+Every create / ignore / resolve / force-commit / medium-ack increments counters in
+`$Z_HOME/uncertainty/outcomes.json`, keyed by detector (node type).
+
+`z uncertainty stats` (or `/uncertainties stats`) prints override rates. A detector
+that is ignored or force-committed far more than it is resolved is a boy-who-cried-wolf
+candidate — use that to raise its bar later. This release only **records + reports**;
+it does not auto-tune thresholds yet.
+
 ## Design principles
 
 - **Human worries over metrics** — nodes should sound like a senior engineer’s checklist  
 - **Signals over vibes** — tiers from tests, paths, evidence — not “I’m 87% sure”  
 - **Risk ≠ confidence** — keep them separate  
 - **Evidence-bound requirements** — not bag-of-words alone  
+- **Structural edges over self-report** — empty model edge lists cannot silence the tree  
 - **Gate drives behavior** — High worries block or auto-act; don’t only report  
 - **Quality over quantity** — cap nodes; suppress greenfield scaffold noise  
+- **Measure dispositions** — track which detectors get overridden  
 
 That’s the Uncertainty Tree: the agent still ships code — Z makes the guesswork inspectable the way a careful human would.
