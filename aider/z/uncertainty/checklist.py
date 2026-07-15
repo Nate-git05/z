@@ -1,12 +1,61 @@
-"""Requirement checklist — decompose user intent, then gap-analyze after implementation."""
+"""Requirement checklist — decompose, bind evidence, semantic gap rescore."""
 
 from __future__ import annotations
 
+import json
 import re
 import uuid
-from typing import List, Optional, Sequence
+from dataclasses import dataclass, field
+from typing import Any, List, Optional, Sequence
 
 from .schema import RequirementItem, TaskChecklist
+
+_STOP = {
+    "with",
+    "that",
+    "this",
+    "from",
+    "have",
+    "should",
+    "would",
+    "could",
+    "into",
+    "using",
+    "please",
+    "also",
+    "just",
+    "make",
+    "sure",
+    "your",
+    "their",
+}
+
+
+@dataclass
+class ItemEvidence:
+    item_id: str
+    item_text: str
+    keyword_hits: List[str] = field(default_factory=list)
+    file_hits: List[str] = field(default_factory=list)
+    symbol_hits: List[str] = field(default_factory=list)
+    test_hits: List[str] = field(default_factory=list)
+    missing: str = ""
+
+    def evidence_strings(self) -> List[str]:
+        out = []
+        out.extend(f"file:{f}" for f in self.file_hits[:5])
+        out.extend(f"symbol:{s}" for s in self.symbol_hits[:5])
+        out.extend(f"test:{t}" for t in self.test_hits[:5])
+        out.extend(f"kw:{k}" for k in self.keyword_hits[:5])
+        return out
+
+    @property
+    def has_code_evidence(self) -> bool:
+        return bool(self.file_hits or self.symbol_hits)
+
+    @property
+    def has_test_only_evidence(self) -> bool:
+        return bool(self.test_hits) and not self.has_code_evidence
 
 
 def decompose_request(title: str, user_message: str) -> TaskChecklist:
@@ -19,7 +68,6 @@ def decompose_request(title: str, user_message: str) -> TaskChecklist:
     text = (user_message or "").strip()
     items: List[RequirementItem] = []
 
-    # Numbered or bulleted lines
     for line in text.splitlines():
         m = re.match(r"^\s*(?:[-*]|\d+[.)])\s+(.+)$", line)
         if m:
@@ -28,13 +76,11 @@ def decompose_request(title: str, user_message: str) -> TaskChecklist:
                 items.append(RequirementItem(text=chunk))
 
     if not items:
-        # Split on semicolons / " and " / periods for multi-part asks
         parts = re.split(r"(?:;|\.(?:\s|$)|(?:,\s*and\s+)|\band\bthen\b)", text)
         for part in parts:
             part = part.strip(" \n\t-")
             if len(part) < 8:
                 continue
-            # Skip pure greetings
             if part.lower() in {"please", "thanks", "thank you"}:
                 continue
             items.append(RequirementItem(text=part[0].upper() + part[1:]))
@@ -66,11 +112,6 @@ def apply_gap_analysis(
     partial_ids: Optional[Sequence[str]] = None,
     statuses: Optional[dict[str, str]] = None,
 ) -> TaskChecklist:
-    """
-    Second pass: mark each item Fully / Partially / Not Addressed.
-
-    `statuses` maps item id → status string. Alternatively pass id lists.
-    """
     addressed = set(addressed_ids or [])
     partial = set(partial_ids or [])
     status_map = dict(statuses or {})
@@ -83,7 +124,6 @@ def apply_gap_analysis(
         elif item.id in partial:
             item.status = "Partially Addressed"
         else:
-            # Leave existing status if already set to something other than default
             if item.status not in (
                 "Fully Addressed",
                 "Partially Addressed",
@@ -93,20 +133,123 @@ def apply_gap_analysis(
     return checklist
 
 
+def _keywords(text: str) -> List[str]:
+    return [
+        w
+        for w in re.findall(r"[a-z0-9_]{4,}", (text or "").lower())
+        if w not in _STOP
+    ]
+
+
+def bind_evidence(
+    checklist: TaskChecklist,
+    *,
+    files_changed: Sequence[str],
+    file_contents: Optional[dict[str, str]] = None,
+    symbols: Sequence[str] = (),
+    test_files: Sequence[str] = (),
+) -> List[ItemEvidence]:
+    """Attach concrete edit/test evidence to each checklist item."""
+    contents = file_contents or {}
+    corpus_files = " ".join(files_changed).lower()
+    corpus_body = " ".join(contents.values()).lower()[:12000]
+    corpus_syms = " ".join(symbols).lower()
+    corpus_tests = " ".join(test_files).lower()
+    out: List[ItemEvidence] = []
+
+    for item in checklist.items:
+        words = _keywords(item.text)
+        ev = ItemEvidence(item_id=item.id, item_text=item.text)
+        for w in words:
+            if w in corpus_files or w in corpus_body:
+                ev.keyword_hits.append(w)
+            if w in corpus_syms:
+                ev.symbol_hits.append(w)
+            if w in corpus_tests:
+                ev.test_hits.append(w)
+        for f in files_changed:
+            fl = f.lower()
+            if any(w in fl for w in words):
+                ev.file_hits.append(f)
+            else:
+                # Content mention of distinctive keywords
+                body = (contents.get(f) or "").lower()
+                if words and sum(1 for w in words if w in body) >= max(1, len(words) // 3):
+                    if f not in ev.file_hits:
+                        ev.file_hits.append(f)
+        for t in test_files:
+            tl = t.lower()
+            if any(w in tl for w in words):
+                ev.test_hits.append(t)
+        # Deduplicate preserving order
+        ev.file_hits = list(dict.fromkeys(ev.file_hits))
+        ev.symbol_hits = list(dict.fromkeys(ev.symbol_hits))
+        ev.test_hits = list(dict.fromkeys(ev.test_hits))
+        ev.keyword_hits = list(dict.fromkeys(ev.keyword_hits))
+        out.append(ev)
+    return out
+
+
+def _status_from_evidence(ev: ItemEvidence, words: List[str]) -> str:
+    if not words:
+        if ev.has_code_evidence:
+            return "Partially Addressed"
+        if ev.has_test_only_evidence:
+            return "Partially Addressed"
+        return "Not Addressed"
+    # Count distinctive hits across code keywords + test path matches
+    distinctive = set(ev.keyword_hits) | {
+        w for w in words if any(w in t.lower() for t in ev.test_hits)
+    }
+    hit_ratio = len(distinctive) / max(len(words), 1)
+    if ev.has_test_only_evidence:
+        # Tests/docs-only for a behavior item → at most Partial
+        return "Partially Addressed" if hit_ratio >= 0.25 or ev.test_hits else "Not Addressed"
+    if ev.has_code_evidence and hit_ratio >= 0.5:
+        return "Fully Addressed"
+    if hit_ratio >= 0.6 and ev.has_code_evidence:
+        return "Fully Addressed"
+    if hit_ratio >= 0.25 or ev.has_code_evidence:
+        return "Partially Addressed"
+    return "Not Addressed"
+
+
+def rescore_checklist_with_evidence(
+    checklist: TaskChecklist,
+    evidence: Sequence[ItemEvidence],
+) -> TaskChecklist:
+    """
+    Structured (non-lexical-only) rescore using bound evidence.
+
+    Rule overrides:
+    - zero evidence for a core item → Not Addressed
+    - test-only evidence → at most Partially Addressed
+    """
+    by_id = {e.item_id: e for e in evidence}
+    for item in checklist.items:
+        ev = by_id.get(item.id) or ItemEvidence(item_id=item.id, item_text=item.text)
+        words = _keywords(item.text)
+        status = _status_from_evidence(ev, words)
+        if status == "Not Addressed":
+            ev.missing = f"No code evidence found for: {item.text}"
+        elif status == "Partially Addressed":
+            ev.missing = ev.missing or f"Only partial evidence for: {item.text}"
+        item.status = status
+        # Stash on item via side channel dict if present later; callers use evidence list
+    return checklist
+
+
 def infer_gap_statuses_from_summary(
     checklist: TaskChecklist,
     implementation_summary: str,
 ) -> TaskChecklist:
     """
-    Lightweight lexical check: if checklist item keywords appear in the
-    implementation summary / edited file list text, mark Fully or Partially.
-    Used when no model gap-pass is available.
+    Backward-compatible lexical fallback when evidence binding is unavailable.
+    Prefer rescore_checklist_with_evidence in the main pipeline.
     """
     summary = (implementation_summary or "").lower()
     for item in checklist.items:
-        words = [w for w in re.findall(r"[a-z0-9_]{4,}", item.text.lower()) if w not in {
-            "with", "that", "this", "from", "have", "should", "would", "could", "into", "using"
-        }]
+        words = _keywords(item.text)
         if not words:
             continue
         hits = sum(1 for w in words if w in summary)
@@ -118,3 +261,102 @@ def infer_gap_statuses_from_summary(
         else:
             item.status = "Not Addressed"
     return checklist
+
+
+def rescore_checklist_with_model(
+    checklist: TaskChecklist,
+    evidence: Sequence[ItemEvidence],
+    *,
+    model_complete: Any = None,
+) -> TaskChecklist:
+    """
+    Optional structured Claude pass. `model_complete` is a callable(prompt)->str.
+
+    Falls back to evidence-based rescore when no model or parse failure.
+    Rule overrides still win when evidence is empty for Not Addressed.
+    """
+    # Always start from evidence rules
+    rescore_checklist_with_evidence(checklist, evidence)
+    if not callable(model_complete) or not checklist.items:
+        return checklist
+
+    by_ev_pre = {e.item_id: e for e in evidence}
+    payload = {
+        "items": [
+            {
+                "id": item.id,
+                "text": item.text,
+                "evidence": (
+                    by_ev_pre[item.id].evidence_strings()
+                    if item.id in by_ev_pre
+                    else []
+                ),
+                "current_status": item.status,
+            }
+            for item in checklist.items
+        ]
+    }
+    prompt = (
+        "You are scoring whether a coding agent finished each requirement.\n"
+        "Return ONLY JSON: {\"items\":[{\"id\":\"...\",\"status\":\"Fully Addressed|"
+        "Partially Addressed|Not Addressed\",\"evidence\":[\"...\"],\"missing\":\"...\"}]}\n"
+        "Use the evidence lists. If evidence is empty for a behavior requirement, "
+        "status must be Not Addressed. Tests-only evidence is at most Partially Addressed.\n"
+        f"INPUT:\n{json.dumps(payload)}"
+    )
+    try:
+        raw = model_complete(prompt)
+        if not raw:
+            return checklist
+        # Extract JSON object
+        m = re.search(r"\{[\s\S]*\}", raw)
+        if not m:
+            return checklist
+        data = json.loads(m.group(0))
+        by_ev = {e.item_id: e for e in evidence}
+        for row in data.get("items") or []:
+            item = next((i for i in checklist.items if i.id == row.get("id")), None)
+            if not item:
+                continue
+            status = row.get("status") or item.status
+            if status not in (
+                "Fully Addressed",
+                "Partially Addressed",
+                "Not Addressed",
+            ):
+                continue
+            ev = by_ev.get(item.id)
+            # Rule override: empty evidence → Not Addressed
+            if ev and not ev.has_code_evidence and not ev.test_hits and not ev.keyword_hits:
+                status = "Not Addressed"
+            elif ev and ev.has_test_only_evidence and status == "Fully Addressed":
+                status = "Partially Addressed"
+            item.status = status
+            if ev is not None:
+                ev.missing = (row.get("missing") or ev.missing or "").strip()
+    except (json.JSONDecodeError, TypeError, ValueError, AttributeError):
+        pass
+    return checklist
+
+
+def checklist_gap_details(
+    checklist: TaskChecklist,
+    evidence: Sequence[ItemEvidence],
+) -> List[dict]:
+    """Details for Requirement Gap nodes / auto-act prompts."""
+    by_id = {e.item_id: e for e in evidence}
+    out = []
+    for item in checklist.items:
+        if item.status == "Fully Addressed":
+            continue
+        ev = by_id.get(item.id)
+        out.append(
+            {
+                "id": item.id,
+                "text": item.text,
+                "status": item.status,
+                "evidence": ev.evidence_strings() if ev else [],
+                "missing": (ev.missing if ev and ev.missing else f"Complete: {item.text}"),
+            }
+        )
+    return out

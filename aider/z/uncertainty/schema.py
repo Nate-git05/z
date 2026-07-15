@@ -14,17 +14,64 @@ from typing import Any
 
 
 class NodeType(str, enum.Enum):
-    EDGE_CASE = "Edge Case"
-    API_ASSUMPTION = "API Assumption"
-    MISSING_TEST = "Missing Test"
+    """Human-worry node types (display values). Enum names kept stable for code."""
+
+    # "I haven’t tested this path thoroughly"
+    MISSING_TEST = "Untested Path"
+    # "This might break on weird data"
+    EDGE_CASE = "Edge Case Blind Spot"
+    # "I’m assuming this API/lib behaves as I think"
+    API_ASSUMPTION = "Unverified Assumption"
+    # "Money/auth/data loss — be paranoid" (+ migrations)
+    HIGH_STAKES = "High-Stakes Surface"
     MIGRATION_RISK = "Migration Risk"
-    PATTERN_INCONSISTENCY = "Pattern Inconsistency"
+    # "Looks right but feels clever/brittle"
+    FRAGILE_LOGIC = "Fragile Logic"
+    # "I copied a pattern; not sure it fits"
+    PATTERN_INCONSISTENCY = "Pattern Misfit"
+    # Kept for mature repos only; suppressed in greenfield
     NEW_FILE_NO_PATTERN = "New File (No Pattern Match)"
-    SHARED_LOGIC = "Shared Logic / Blast Radius"
+    # "Side effects I haven’t thought about"
+    SHARED_LOGIC = "Integration Ripple"
+    # "Didn’t check what happens if this fails" / secrets unverifiable
+    FAILURE_BLIND_SPOT = "Failure Blind Spot"
     TODO_COMMENT = "TODO / Unclear Comment"
     UNVERIFIABLE_CONFIG = "Unverifiable Config"
     REQUIREMENT_GAP = "Requirement Gap"
-    HIGH_CONFIDENCE = "High Confidence"
+    # Positive signal — informational only
+    HIGH_CONFIDENCE = "Evidence of Safety"
+
+
+# Older persisted display strings → current NodeType
+_NODE_TYPE_ALIASES = {
+    "Edge Case": NodeType.EDGE_CASE,
+    "API Assumption": NodeType.API_ASSUMPTION,
+    "Missing Test": NodeType.MISSING_TEST,
+    "Pattern Inconsistency": NodeType.PATTERN_INCONSISTENCY,
+    "Shared Logic / Blast Radius": NodeType.SHARED_LOGIC,
+    "High Confidence": NodeType.HIGH_CONFIDENCE,
+    "High-Stakes Surface": NodeType.HIGH_STAKES,
+    "Fragile Logic": NodeType.FRAGILE_LOGIC,
+    "Failure Blind Spot": NodeType.FAILURE_BLIND_SPOT,
+    "Untested Path": NodeType.MISSING_TEST,
+    "Edge Case Blind Spot": NodeType.EDGE_CASE,
+    "Unverified Assumption": NodeType.API_ASSUMPTION,
+    "Pattern Misfit": NodeType.PATTERN_INCONSISTENCY,
+    "Integration Ripple": NodeType.SHARED_LOGIC,
+    "Evidence of Safety": NodeType.HIGH_CONFIDENCE,
+}
+
+
+def parse_node_type(value: str) -> NodeType:
+    if value in NodeType._value2member_map_:
+        return NodeType(value)
+    if value in _NODE_TYPE_ALIASES:
+        return _NODE_TYPE_ALIASES[value]
+    # Fall back to enum name
+    try:
+        return NodeType[value]
+    except KeyError as err:
+        raise ValueError(f"Unknown node type: {value}") from err
 
 
 class Tier(str, enum.Enum):
@@ -97,7 +144,7 @@ class UncertaintyNode:
         return cls(
             id=data.get("id") or str(uuid.uuid4()),
             title=data["title"],
-            type=NodeType(data["type"]),
+            type=parse_node_type(data["type"]),
             confidence_tier=Tier(data["confidence_tier"]),
             risk_tier=Tier(data["risk_tier"]),
             summary=data.get("summary") or "",

@@ -193,25 +193,25 @@ def detect_missing_or_failing_tests(
         signals.tests_relevant_exist = False
         nodes.append(
             _make_node(
-                title="No relevant tests found for this change",
+                title="Untested path — no thorough test for this change",
                 node_type=NodeType.MISSING_TEST,
                 signals=signals,
-                summary="Changed code has no co-located or symbol-referencing tests.",
+                summary="I haven’t tested this path thoroughly — no relevant tests found.",
                 explanation=(
-                    "After the change, no relevant test suite was found by checking for "
-                    "tests in the same file/module or referencing the changed function/class "
-                    "by name."
+                    "Like a careful human developer: the change has no co-located or "
+                    "symbol-referencing tests, so there is no checkable evidence this path works."
                 ),
                 why_uncertain="Absence of a checkable test signal for the edited symbols.",
                 what_could_go_wrong="Regressions in this code path may ship unnoticed.",
-                suggested_fix="Add unit or integration tests covering the changed behavior.",
+                suggested_fix="Add a focused test for the happy path and one failure/edge case.",
                 suggested_tests=[
-                    f"Add tests covering {s}" for s in (signals.symbols_changed[:3] or ["the changed behavior"])
+                    f"Add tests covering {s}"
+                    for s in (signals.symbols_changed[:3] or ["the changed behavior"])
                 ],
                 suggested_prompt=(
                     "Add tests for the recent change in "
                     f"{', '.join(signals.files_changed[:3])}. Cover the primary success path "
-                    "and at least one failure/edge path."
+                    "and at least one failure/edge path. Run them."
                 ),
                 task_id=task_id,
                 task_title=task_title,
@@ -225,10 +225,10 @@ def detect_missing_or_failing_tests(
     if tests_passed is False:
         nodes.append(
             _make_node(
-                title="Relevant tests failed after this change",
+                title="Untested path — relevant tests failed",
                 node_type=NodeType.MISSING_TEST,
                 signals=signals,
-                summary="Relevant tests exist but failed; do not proceed silently.",
+                summary="Tests exist but failed; a careful human would not ship this yet.",
                 explanation=(
                     "Relevant tests were identified and executed. They failed. "
                     f"Test files: {', '.join(relevant_tests[:8])}."
@@ -312,16 +312,15 @@ def detect_high_stakes_and_migration(
             signals.high_stakes_hit = True
             break
 
-    if signals.high_stakes_hit and not any(n.type == NodeType.MIGRATION_RISK for n in nodes):
-        # High-stakes category is not its own node type — surface as Edge Case with
-        # forced Medium+ risk (payment/auth/security/database keyword match).
+    if signals.high_stakes_hit and not any(
+        n.type in (NodeType.MIGRATION_RISK, NodeType.HIGH_STAKES) for n in nodes
+    ):
         node = _make_node(
-            title="High-stakes code path changed (payment / auth / security / data)",
-            node_type=NodeType.EDGE_CASE,
+            title="High-stakes surface — money, auth, security, or data loss",
+            node_type=NodeType.HIGH_STAKES,
             signals=signals,
             summary=(
-                "Changed paths, imports, or symbols match payment, auth, security, "
-                "or database keywords — auto-flagged at least Medium risk."
+                "I’m extra paranoid here: payment/auth/security/data paths were touched."
             ),
             explanation=(
                 "Keyword/module pattern match against billing, auth, payment, migration, "
@@ -374,12 +373,11 @@ def detect_api_assumptions(
         sig.live_api_verified = False
         nodes.append(
             _make_node(
-                title=f"Assumed response shape for {api}",
+                title=f"Unverified assumption — {api} behavior",
                 node_type=NodeType.API_ASSUMPTION,
                 signals=sig,
                 summary=(
-                    f"Code involving {api} was written from trained/assumed knowledge; "
-                    "no live call was observed this session."
+                    f"I’m assuming {api} behaves exactly as I think — no live call this session."
                 ),
                 explanation=(
                     f"Session tracking shows no executed real call to '{api}' with an observed "
@@ -453,12 +451,26 @@ def detect_pattern_issues(
     task_title: Optional[str] = None,
     created_by_session: Optional[str] = None,
     created_by_user: Optional[str] = None,
+    emit_new_file_noise: bool = True,
+    emit_pattern_misfit: bool = True,
 ) -> List[UncertaintyNode]:
+    """
+    Pattern misfit / new-file noise.
+
+    In greenfield repos, callers should set emit_new_file_noise=False —
+    "no peers yet" is expected, not a human worry.
+    """
+    from .context import is_scaffold_file
+
     nodes: List[UncertaintyNode] = []
     for nf in new_files:
+        if is_scaffold_file(nf):
+            continue
         result = pattern_results.get(nf) or PatternSearchResult()
         if not result.matches:
             signals.pattern_match_found = False
+            if not emit_new_file_noise:
+                continue
             nodes.append(
                 _make_node(
                     title=f"New file with no pattern match: {Path(nf).name}",
@@ -471,8 +483,8 @@ def detect_pattern_issues(
                         + (f" Search key: {result.searched_for}." if result.searched_for else "")
                     ),
                     why_uncertain="No established local pattern to validate structure against.",
-                    what_could_go_wrong="The new file may diverge from project conventions and be hard to maintain.",
-                    suggested_fix="Align the new file with the closest existing module style, or document why it differs.",
+                    what_could_go_wrong="The new file may diverge from project conventions.",
+                    suggested_fix="Align with the closest existing module style, or document why it differs.",
                     suggested_prompt=(
                         f"Review new file {nf}. Find the closest existing pattern in the repo "
                         "and refactor this file to match, or explain the intentional divergence."
@@ -488,12 +500,18 @@ def detect_pattern_issues(
         elif result.conflicting or len(result.matches) > 1:
             signals.conflicting_patterns = True
             signals.pattern_match_found = True
+            if not emit_pattern_misfit and not result.conflicting:
+                continue
+            if not emit_pattern_misfit:
+                # Young repos: only surface hard conflicts
+                if not result.conflicting:
+                    continue
             nodes.append(
                 _make_node(
-                    title=f"Conflicting patterns near {Path(nf).name}",
+                    title=f"Pattern misfit near {Path(nf).name}",
                     node_type=NodeType.PATTERN_INCONSISTENCY,
                     signals=signals,
-                    summary="Multiple conflicting patterns exist for this kind of code.",
+                    summary="I copied a pattern but I’m not sure it fits this context.",
                     explanation=(
                         f"Pattern search for {nf} found multiple candidates: "
                         f"{', '.join(result.matches[:8])}."
@@ -502,7 +520,7 @@ def detect_pattern_issues(
                     what_could_go_wrong="Inconsistent APIs and duplicated approaches across the codebase.",
                     suggested_fix="Pick one canonical pattern and refactor toward it.",
                     suggested_prompt=(
-                        f"Resolve pattern inconsistency for {nf}. Candidates: "
+                        f"Resolve pattern misfit for {nf}. Candidates: "
                         f"{', '.join(result.matches[:5])}. Choose one style and align the new code."
                     ),
                     files=[nf, *result.matches[:5]],
@@ -545,12 +563,12 @@ def detect_blast_radius(
     label = referenced_symbol or (signals.symbols_changed[0] if signals.symbols_changed else "changed module")
     return [
         _make_node(
-            title=f"Shared logic blast radius: {label}",
+            title=f"Integration ripple — {label} is widely used",
             node_type=NodeType.SHARED_LOGIC,
             signals=signals,
             summary=(
-                f"{reference_count} references/imports exceed the blast-radius threshold "
-                f"of {threshold}."
+                f"There might be integration effects I haven’t thought about: "
+                f"{reference_count} references (threshold {threshold})."
             ),
             explanation=(
                 f"After the change, reference/dependency count for '{label}' is {reference_count} "
@@ -758,10 +776,10 @@ def detect_edge_cases(
             continue
         nodes.append(
             _make_node(
-                title=f"Edge case not fully handled: {case[:80]}",
+                title=f"Edge case blind spot: {case[:80]}",
                 node_type=NodeType.EDGE_CASE,
                 signals=signals,
-                summary=f"Considered but not fully handled: {case}",
+                summary=f"This might break on weird data — not fully handled: {case}",
                 explanation=(
                     "After generating the change, the agent listed edge cases considered but "
                     f"not fully handled. This item: {case}"
@@ -797,29 +815,36 @@ def detect_requirement_gaps(
     task_title: Optional[str] = None,
     created_by_session: Optional[str] = None,
     created_by_user: Optional[str] = None,
+    gap_details: Optional[Sequence[dict]] = None,
 ) -> List[UncertaintyNode]:
     nodes: List[UncertaintyNode] = []
+    detail_by_id = {d.get("id"): d for d in (gap_details or []) if d.get("id")}
     for item in checklist.items:
         if item.status == "Fully Addressed":
             continue
         signals.requirement_gaps.append(item.text)
+        detail = detail_by_id.get(item.id) or {}
+        missing = detail.get("missing") or f"Complete: {item.text}"
+        evidence = detail.get("evidence") or []
         nodes.append(
             _make_node(
                 title=f"Requirement gap: {item.text[:80]}",
                 node_type=NodeType.REQUIREMENT_GAP,
                 signals=signals,
-                summary=f"Checklist item marked {item.status}.",
+                summary=f"We didn’t finish what was asked — marked {item.status}.",
                 explanation=(
                     f"Asked for: {item.text}\n"
                     f"Delivery status: {item.status}\n"
-                    "Compared the stored task checklist against what was actually built."
+                    f"Missing: {missing}\n"
+                    f"Evidence: {', '.join(evidence) if evidence else '(none)'}\n"
+                    "Compared the structured checklist against bound edit/test evidence."
                 ),
                 why_uncertain="Sub-requirement was not marked Fully Addressed after implementation.",
                 what_could_go_wrong="User intent remains partially unmet; follow-up work will be needed.",
-                suggested_fix=f"Complete the requirement: {item.text}",
+                suggested_fix=missing,
                 suggested_prompt=(
                     f"The requirement '{item.text}' is marked {item.status}. "
-                    "Implement the missing pieces and confirm against the original checklist."
+                    f"Missing: {missing}. Implement only that gap, then stop."
                 ),
                 task_id=task_id or checklist.task_id,
                 task_title=task_title or checklist.title,
@@ -829,6 +854,8 @@ def detect_requirement_gaps(
                     "requirement_id": item.id,
                     "requirement_text": item.text,
                     "requirement_status": item.status,
+                    "missing": missing,
+                    "evidence": list(evidence),
                 },
             )
         )
@@ -857,11 +884,11 @@ def detect_high_confidence(
         return []
     return [
         _make_node(
-            title="High confidence: matches tested pattern and tests passed",
+            title="Evidence of safety — tested pattern match",
             node_type=NodeType.HIGH_CONFIDENCE,
             signals=signals,
             summary=(
-                "Change closely matches an existing well-tested pattern and relevant tests passed."
+                "This one I’m actually comfortable with: matches a tested pattern and tests passed."
             ),
             explanation=(
                 "Positive signal for review: pattern match found, relevant tests exist and passed. "
@@ -871,7 +898,7 @@ def detect_high_confidence(
             what_could_go_wrong="Residual risk remains if the pattern match was superficial.",
             suggested_fix="Optional spot-check; no mandatory remediation.",
             suggested_prompt=(
-                "Optionally spot-check the high-confidence change in "
+                "Optionally spot-check the evidence-of-safety change in "
                 f"{', '.join(signals.files_changed[:3])} — tests already passed against a known pattern."
             ),
             task_id=task_id,
@@ -881,6 +908,137 @@ def detect_high_confidence(
             status=NodeStatus.OPEN,
         )
     ]
+
+
+# ---------------------------------------------------------------------------
+# Fragile logic (looks clever / brittle)
+# ---------------------------------------------------------------------------
+
+_BROAD_EXCEPT_RE = re.compile(r"except\s*(:|\s+Exception\s*:|\s+BaseException\s*:)")
+_NESTED_IF_RE = re.compile(r"(?m)^(?:    ){3,}if\s+")
+
+
+def detect_fragile_logic(
+    signals: DetectionSignals,
+    *,
+    file_contents: dict[str, str],
+    task_id: Optional[str] = None,
+    task_title: Optional[str] = None,
+    created_by_session: Optional[str] = None,
+    created_by_user: Optional[str] = None,
+) -> List[UncertaintyNode]:
+    """
+    Heuristic 'this feels fragile' detector — dense nesting, broad excepts, magic.
+    Skips scaffold files.
+    """
+    from .context import is_scaffold_file
+
+    nodes: List[UncertaintyNode] = []
+    for fpath, text in (file_contents or {}).items():
+        if is_scaffold_file(fpath) or not text:
+            continue
+        reasons = []
+        if len(_BROAD_EXCEPT_RE.findall(text)) >= 1:
+            reasons.append("broad except / swallow-all error handling")
+        if len(_NESTED_IF_RE.findall(text)) >= 3:
+            reasons.append("deeply nested conditionals")
+        if re.search(r"\bmagic\b|\bhack\b|\btemporary\b", text, re.I):
+            reasons.append("self-labeled hack/temporary logic")
+        # Many numeric literals in conditionals
+        if len(re.findall(r"\bif\s+.*\b\d{2,}\b", text)) >= 3:
+            reasons.append("many magic-number conditionals")
+        if not reasons:
+            continue
+        nodes.append(
+            _make_node(
+                title=f"Fragile logic in {Path(fpath).name}",
+                node_type=NodeType.FRAGILE_LOGIC,
+                signals=signals,
+                summary="The logic looks correct but feels fragile or clever.",
+                explanation=(
+                    f"Heuristics in {fpath}: {', '.join(reasons)}. "
+                    "A careful human would want characterization tests before relying on this."
+                ),
+                why_uncertain="Complexity / brittle patterns raise gut-feel uncertainty.",
+                what_could_go_wrong="Small input changes may break nested or swallowed error paths.",
+                suggested_fix="Simplify or add characterization tests around the fragile block.",
+                suggested_prompt=(
+                    f"Review fragile logic in {fpath} ({', '.join(reasons)}). "
+                    "Simplify if possible and add a characterization test."
+                ),
+                files=[fpath],
+                task_id=task_id,
+                task_title=task_title,
+                created_by_session=created_by_session,
+                created_by_user=created_by_user,
+                extra_signals={"fragile_reasons": reasons},
+            )
+        )
+    return nodes
+
+
+# ---------------------------------------------------------------------------
+# Failure blind spot (I/O without failure handling)
+# ---------------------------------------------------------------------------
+
+_IO_CALL_RE = re.compile(
+    r"(?i)\b("
+    r"requests\.(get|post|put|patch|delete)|httpx\.|fetch\(|"
+    r"open\(|pathlib\.Path\([^\)]*\)\.write|"
+    r"\.execute\(|session\.(get|post|commit)|"
+    r"subprocess\.|urlopen\("
+    r")\b"
+)
+_ERROR_HANDLE_RE = re.compile(r"(?i)\b(except|try:|raises?|timeout|retry|rollback)\b")
+
+
+def detect_failure_blind_spots(
+    signals: DetectionSignals,
+    *,
+    file_contents: dict[str, str],
+    task_id: Optional[str] = None,
+    task_title: Optional[str] = None,
+    created_by_session: Optional[str] = None,
+    created_by_user: Optional[str] = None,
+) -> List[UncertaintyNode]:
+    """Flag I/O-ish code that lacks nearby failure handling."""
+    from .context import is_scaffold_file
+
+    nodes: List[UncertaintyNode] = []
+    for fpath, text in (file_contents or {}).items():
+        if is_scaffold_file(fpath) or not text:
+            continue
+        io_hits = _IO_CALL_RE.findall(text)
+        if not io_hits:
+            continue
+        if _ERROR_HANDLE_RE.search(text):
+            continue
+        nodes.append(
+            _make_node(
+                title=f"Failure blind spot in {Path(fpath).name}",
+                node_type=NodeType.FAILURE_BLIND_SPOT,
+                signals=signals,
+                summary="I didn’t check what happens if this fails — I/O without error handling.",
+                explanation=(
+                    f"{fpath} performs external/I/O calls ({len(io_hits)} hit(s)) but has no "
+                    "nearby try/except, timeout, retry, or rollback signals."
+                ),
+                why_uncertain="Failure modes for I/O were not evidenced in the change.",
+                what_could_go_wrong="Network/disk/DB failures may crash or corrupt state silently.",
+                suggested_fix="Handle failure paths and add a test that exercises one failure.",
+                suggested_prompt=(
+                    f"Add failure handling for I/O in {fpath} and a test for at least one "
+                    "failure path (timeout, non-200, or write error)."
+                ),
+                files=[fpath],
+                task_id=task_id,
+                task_title=task_title,
+                created_by_session=created_by_session,
+                created_by_user=created_by_user,
+                extra_signals={"io_hits": len(io_hits)},
+            )
+        )
+    return nodes
 
 
 def count_symbol_references(root: Path, symbol: str, exclude_files: Sequence[str] = ()) -> tuple[int, List[str]]:

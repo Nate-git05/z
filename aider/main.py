@@ -1017,6 +1017,8 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
             auto_test=args.auto_test,
             lint_cmds=lint_cmds,
             test_cmd=args.test_cmd,
+            verify_commit_gate=getattr(args, "verify_commit_gate", True),
+            force_commit=getattr(args, "force_commit", False),
             commands=commands,
             summarizer=summarizer,
             analytics=analytics,

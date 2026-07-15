@@ -565,6 +565,24 @@ def get_parser(default_config_files, git_root):
         help="Run tests, fix problems found and then exit",
         default=False,
     )
+    group.add_argument(
+        "--verify-commit-gate",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Z: run real tests and enforce tiered uncertainty policy before "
+            "auto-commit (default: True when uncertainty engine is active)"
+        ),
+    )
+    group.add_argument(
+        "--force-commit",
+        action="store_true",
+        default=False,
+        help=(
+            "Z: explicitly override high-risk verify-before-commit blockers "
+            "(logged on uncertainty nodes; never the default)"
+        ),
+    )
 
     ##########
     group = parser.add_argument_group("Analytics")
