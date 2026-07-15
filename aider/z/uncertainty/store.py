@@ -2,13 +2,31 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable, List, Optional
 
 from .schema import NodeStatus, Tier, UncertaintyNode, TIER_RANK
+
+logger = logging.getLogger(__name__)
+
+
+def local_store_filename(repo_key: str) -> str:
+    """
+    Stable, collision-resistant filename for a repo_key.
+
+    Keep a short human-readable prefix, then a content hash so two long paths
+    that share an 80-char sanitized prefix never collapse to the same file.
+    """
+    key = repo_key or "default"
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in key)
+    prefix = (safe[:40] if safe else "default").rstrip("_") or "default"
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
+    return f"{prefix}_{digest}.json"
 
 
 class UncertaintyStore:
@@ -34,8 +52,7 @@ class UncertaintyStore:
 
     def _default_local_path(self) -> Path:
         base = Path(os.environ.get("Z_HOME", Path.home() / ".z"))
-        safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in self.repo_key)[:80]
-        return base / "uncertainty" / f"{safe or 'default'}.json"
+        return base / "uncertainty" / local_store_filename(self.repo_key)
 
     def add(self, node: UncertaintyNode, *, sync: bool = True) -> UncertaintyNode:
         if not node.created_by_session and self.created_by_session:
@@ -134,6 +151,18 @@ class UncertaintyStore:
             return
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
+            stored_key = data.get("repo_key")
+            if stored_key is not None and stored_key != self.repo_key:
+                # Collision or reused filename — never silently mix node graphs
+                logger.warning(
+                    "Uncertainty store repo_key mismatch at %s "
+                    "(stored=%r current=%r); starting fresh",
+                    path,
+                    stored_key,
+                    self.repo_key,
+                )
+                self.nodes = {}
+                return
             for raw in data.get("nodes") or []:
                 try:
                     node = UncertaintyNode.from_dict(raw)

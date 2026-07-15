@@ -130,3 +130,43 @@ def prioritize_nodes(nodes: list, *, limit: int = 8) -> list:
         )
 
     return sorted(nodes, key=key)[:limit]
+
+
+def apply_uncertainty_budget(
+    nodes: list,
+    *,
+    max_blocking: int = 3,
+    include_informational: bool = False,
+) -> list:
+    """
+    Uncertainty budget (Codex #13): at most max_blocking High/Medium findings;
+    hide Low informational notes by default; keep Evidence of Safety.
+
+    Reserve slots for test/requirement gaps so high-stakes noise cannot
+    crowd out "no tests" / unfinished requirements.
+    """
+    from .schema import NodeType, Tier
+
+    if not nodes:
+        return []
+
+    reserved_types = {NodeType.MISSING_TEST, NodeType.REQUIREMENT_GAP}
+    positive = [n for n in nodes if getattr(n, "type", None) == NodeType.HIGH_CONFIDENCE]
+    blocking = [
+        n
+        for n in nodes
+        if getattr(n, "type", None) != NodeType.HIGH_CONFIDENCE
+        and getattr(n, "risk_tier", None) in (Tier.HIGH, Tier.MEDIUM)
+    ]
+    informational = [n for n in nodes if n not in blocking and n not in positive]
+
+    critical = [n for n in blocking if getattr(n, "type", None) in reserved_types]
+    other = [n for n in blocking if n not in critical]
+    critical = prioritize_nodes(critical, limit=max_blocking)
+    remaining = max(0, max_blocking - len(critical))
+    other = prioritize_nodes(other, limit=remaining)
+    out = list(critical) + list(other)
+    out.extend(positive[:1])
+    if include_informational:
+        out.extend(prioritize_nodes(informational, limit=2))
+    return out

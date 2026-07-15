@@ -146,6 +146,53 @@ def override_rate(bucket: dict) -> float:
     return overrides / created
 
 
+def resolution_rate(bucket: dict) -> float:
+    """resolved / created — 0% with high volume is a broken-detector signal."""
+    created = int(bucket.get("created") or 0)
+    if created <= 0:
+        return 0.0
+    return int(bucket.get("resolved") or 0) / created
+
+
+# Circuit breaker defaults (Claude Fix 1.3): 0% resolution past threshold → noisy
+_CIRCUIT_MIN_CREATED = 10
+_CIRCUIT_MAX_RESOLUTION = 0.05
+
+
+def detector_circuit_open(
+    detector_key: str,
+    *,
+    min_created: int = _CIRCUIT_MIN_CREATED,
+    max_resolution_rate: float = _CIRCUIT_MAX_RESOLUTION,
+) -> bool:
+    """
+    True when a detector has enough history and almost never resolves.
+
+    Used to downgrade severity / flag noise instead of blocking forever.
+    """
+    data = load_outcomes()
+    bucket = (data.get("by_detector") or {}).get(detector_key) or {}
+    created = int(bucket.get("created") or 0)
+    if created < min_created:
+        return False
+    return resolution_rate(bucket) <= max_resolution_rate
+
+
+def circuit_warnings(*, top: int = 10) -> List[str]:
+    """Human-readable warnings for detectors with open noise circuits."""
+    data = load_outcomes()
+    warnings: List[str] = []
+    for det, bucket in (data.get("by_detector") or {}).items():
+        if detector_circuit_open(det):
+            created = int(bucket.get("created") or 0)
+            resolved = int(bucket.get("resolved") or 0)
+            warnings.append(
+                f"{det}: resolution {resolved}/{created} "
+                f"({resolution_rate(bucket) * 100:.0f}%) — severity auto-downgraded"
+            )
+    return warnings[:top]
+
+
 def format_stats(*, top: int = 20) -> str:
     """Human-readable disposition table for CLI / /uncertainties stats."""
     data = load_outcomes()
@@ -192,6 +239,12 @@ def format_stats(*, top: int = 20) -> str:
         "ovr% ≈ (ignored + force_override + medium_ack) / created — "
         "high values may mean that detector is noisy."
     )
+    warns = circuit_warnings()
+    if warns:
+        lines.append("")
+        lines.append("Noise circuit open (severity resolution ≈ 0% — severity downgraded):")
+        for w in warns:
+            lines.append(f"  • {w}")
     lines.append(f"Raw log: {outcomes_path()}")
     return "\n".join(lines)
 
