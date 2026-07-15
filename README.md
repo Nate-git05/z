@@ -26,7 +26,7 @@ AI coding agents are getting trusted with more autonomy — editing across a cod
 
 ### Uncertainty tree
 
-**Every change comes with a risk and confidence tree.** Notes are derived from concrete signals — tests, patterns, unverified config — not fake confidence percentages.
+**Every change comes with a risk and confidence tree.** Notes are derived from concrete signals — tests, patterns, unverified config — not fake confidence percentages. Guide: [docs/uncertainty/README.md](docs/uncertainty/README.md).
 
 ### Ask, don't guess
 

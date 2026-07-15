@@ -60,6 +60,8 @@ managed at `/app/skills`. Create remains CLI-first.
 
 ## Uncertainty tree
 
+Product guide: [docs/uncertainty/README.md](docs/uncertainty/README.md).
+
 Detectors in `aider/z/uncertainty/` score checkable signals (tests, high-stakes
 keywords, API/MCP assumptions, migrations, TODOs, etc.) into separate **risk**
 and **confidence** tiers — not model self-rated percentages. Nodes persist
