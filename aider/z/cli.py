@@ -80,6 +80,11 @@ def build_parser() -> argparse.ArgumentParser:
     skill_sub.add_parser("list", help="List local and workspace skills")
     show = skill_sub.add_parser("show", help="Show skill metadata (and optional body)")
     show.add_argument("name", nargs="*", help="Skill title or id")
+    accept = skill_sub.add_parser(
+        "accept",
+        help="Accept a captured skill (clear needs_review so it can auto-apply)",
+    )
+    accept.add_argument("name", nargs="*", help="Skill title or id")
     skill_sub.add_parser("reindex", help="Rebuild the ChromaDB skill vector index")
 
     # Anything else falls through to the main agent CLI
@@ -123,6 +128,7 @@ def _print_help() -> None:
         "  z skill create \"how this repo validates Stripe webhooks\"\n"
         "  z skill list\n"
         "  z skill show stripe\n"
+        "  z skill accept stripe\n"
         "  z --model sonnet\n"
     )
 
@@ -191,6 +197,7 @@ def dispatch(args) -> int:
 
 def cmd_skill(io, args) -> int:
     from aider.z.skills.cli import (
+        accept_skill,
         cmd_skill_add,
         cmd_skill_create,
         cmd_skill_list,
@@ -215,10 +222,15 @@ def cmd_skill(io, args) -> int:
     if sub == "show":
         name = " ".join(getattr(args, "name", None) or []).strip()
         return cmd_skill_show(io, name)
+    if sub == "accept":
+        name = " ".join(getattr(args, "name", None) or []).strip()
+        return accept_skill(io, name)
     if sub == "reindex":
         return cmd_skill_reindex(io)
     io.tool_error(f"Unknown skill subcommand: {sub}")
-    io.tool_output("Usage: z skill add | create [topic…] | list | show <name> | reindex")
+    io.tool_output(
+        "Usage: z skill add | create [topic…] | list | show <name> | accept <name> | reindex"
+    )
     return 1
 
 

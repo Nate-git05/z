@@ -67,6 +67,13 @@ class Skill:
     languages: List[str] = field(default_factory=list)
     artifacts: List[str] = field(default_factory=list)  # paths that mean "already done"
     apply_once: bool = False
+    # Grounding / capture provenance
+    capability: str = ""  # short reusable capability label (not whole-app)
+    grounded_symbols: List[str] = field(default_factory=list)
+    source_files: List[str] = field(default_factory=list)
+    needs_review: bool = False  # block auto-retrieve until user accepts
+    grounded_at: Optional[str] = None
+    content_hash: Optional[str] = None  # hash of grounding pack at capture
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -97,6 +104,10 @@ class Skill:
             "kind": self.kind,
             "artifacts": list(self.artifacts or []),
             "apply_once": self.apply_once,
+            "capability": self.capability or "",
+            "grounded_symbols": list(self.grounded_symbols or []),
+            "source_files": list(self.source_files or []),
+            "needs_review": bool(self.needs_review),
             "path": self.path,
             "scope": self.scope,
             "source": self.source,
@@ -121,6 +132,10 @@ class Skill:
             "kind": self.kind,
             "artifacts": list(self.artifacts or []),
             "apply_once": self.apply_once,
+            "capability": self.capability or "",
+            "grounded_symbols": list(self.grounded_symbols or []),
+            "source_files": list(self.source_files or []),
+            "needs_review": bool(self.needs_review),
             "source": self.source,
         }
 
@@ -153,6 +168,12 @@ class Skill:
             languages=_as_str_list(data.get("languages")),
             artifacts=_as_str_list(data.get("artifacts")),
             apply_once=bool(apply_once),
+            capability=(data.get("capability") or "").strip(),
+            grounded_symbols=_as_str_list(data.get("grounded_symbols")),
+            source_files=_as_str_list(data.get("source_files")),
+            needs_review=bool(data.get("needs_review")),
+            grounded_at=data.get("grounded_at"),
+            content_hash=data.get("content_hash"),
         )
 
 
@@ -175,6 +196,10 @@ class SkillIndexEntry:
     kind: str = SKILL_KIND_PLAYBOOK
     artifacts: List[str] = field(default_factory=list)
     apply_once: bool = False
+    capability: str = ""
+    grounded_symbols: List[str] = field(default_factory=list)
+    source_files: List[str] = field(default_factory=list)
+    needs_review: bool = False
 
     def match_text(self) -> str:
         bits = [

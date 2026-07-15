@@ -135,6 +135,10 @@ def _entry_from_row(r: dict, *, source: str) -> SkillIndexEntry:
         kind=kind,
         artifacts=_as_str_list(r.get("artifacts")),
         apply_once=bool(apply_once),
+        capability=str(r.get("capability") or "").strip(),
+        grounded_symbols=_as_str_list(r.get("grounded_symbols")),
+        source_files=_as_str_list(r.get("source_files")),
+        needs_review=bool(r.get("needs_review")),
     )
 
 

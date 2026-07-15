@@ -85,12 +85,14 @@ Applying skill(s): Stripe webhook validation
 When Z finishes a non-trivial edit turn:
 
 1. **“Want me to save this as a reusable skill?”** → Yes / No  
-2. If Yes → Z writes the file, infers metadata, upserts ChromaDB  
-3. **“Want to see the new skill?”** → Yes / No  
-4. If Yes → shows **name + metadata only** (path, tags, triggers, …)  
-   Full body only if you ask to open it  
+2. If Yes → Z builds a **grounding pack** (git diff + final file contents + extracted symbols), then generates the skill from that evidence only  
+3. A **grounding check** verifies named classes/methods exist in the changed files. Invented APIs → `needs_review: true` (blocked from auto-apply) + an uncertainty node  
+4. **“Want to see the new skill?”** → Yes / No  
+5. If Yes → shows **name + metadata only** (path, grounded symbols, needs_review, …)  
 
-Two opt-ins. No surprise dumps.
+Accept a reviewed capture with `z skill accept <name>` so it can auto-apply.
+
+Two opt-ins. No surprise dumps. No invented TokenBuckets.
 
 ---
 
@@ -145,6 +147,7 @@ apply_once: true
 | `z skill create "…"` / `/skills create …` | Generate a skill with your connected model |
 | `z skill list` / `/skills` | List local (+ workspace when signed in) |
 | `z skill show <name>` / `/skills show <name>` | Show metadata; optionally open the body |
+| `z skill accept <name>` / `/skills accept <name>` | Clear `needs_review` so a capture can auto-apply |
 | `z skill reindex` | Rebuild the ChromaDB index from local files |
 
 Manage / share synced skills in the web app at `/app/skills` (create stays CLI-first).
@@ -172,8 +175,10 @@ paste / generate / capture
    │       │                                             │
    │       ▼                                             │
    │  skill router (precision)                           │
+   │    • needs_review? → skip until accept              │
    │    • language/stack match?                          │
    │    • scaffold artifacts already exist? → skip       │
+   │    • grounded symbols still present? (stale check)  │
    │    • already injected this session? → skip          │
    │    • scaffold vs ongoing task intent                │
    │       │                                             │
@@ -196,11 +201,12 @@ Satisfaction for scaffolds is remembered per repo under `~/.z/skills/state.json`
 | Piece | Path |
 |-------|------|
 | Router | `aider/z/skills/router.py` |
+| Grounding pack + check | `aider/z/skills/grounding.py` |
 | Multi-checkpoint pull | `aider/z/skills/session.py` (`pull_skills_for_checkpoint`) |
-| Wire-in | `aider/coders/base_coder.py` (`_maybe_pull_skills`, reflection loop) |
-| Schema | `aider/z/skills/schema.py` (`kind`, `languages`, `artifacts`, `apply_once`) |
+| Wire-in | `aider/coders/base_coder.py` (`_maybe_pull_skills`, `_maybe_suggest_skill`) |
+| Schema | `aider/z/skills/schema.py` (`kind`, `needs_review`, `grounded_symbols`, …) |
 | Infer defaults | `aider/z/skills/infer.py` |
-| Tests | `tests/basic/test_z_skill_router.py` |
+| Tests | `tests/basic/test_z_skill_router.py`, `tests/basic/test_z_skill_grounding.py` |
 
 ---
 

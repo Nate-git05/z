@@ -235,11 +235,37 @@ def route_skill(
     if sid and sid in injected:
         return RouteDecision(skill, False, "already injected this session", score)
 
+    # Captured skills that failed grounding stay local but never auto-apply
+    # until the user accepts them (clears needs_review).
+    if getattr(skill, "needs_review", False):
+        return RouteDecision(skill, False, "needs review (ungrounded capture)", score)
+
     if score and score < min_score:
         return RouteDecision(skill, False, f"low relevance ({score:.2f})", score)
 
     if not language_compatible(skill, signals):
         return RouteDecision(skill, False, "language/stack mismatch", score)
+
+    # Stale check: if we know grounded symbols + source files, skip when gone
+    if skill.grounded_symbols and skill.source_files:
+        try:
+            from .grounding import symbols_still_present
+
+            _present, missing = symbols_still_present(
+                skill.grounded_symbols,
+                root=signals.root,
+                source_files=skill.source_files,
+            )
+            # If a majority of grounded symbols vanished, skill is stale
+            if missing and len(missing) >= max(1, (len(skill.grounded_symbols) + 1) // 2):
+                return RouteDecision(
+                    skill,
+                    False,
+                    f"stale — missing symbols: {', '.join(missing[:5])}",
+                    score,
+                )
+        except Exception:
+            pass
 
     kind = (skill.kind or SKILL_KIND_PLAYBOOK).lower()
     apply_once = skill.apply_once or kind == SKILL_KIND_SCAFFOLD
