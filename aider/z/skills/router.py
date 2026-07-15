@@ -78,7 +78,7 @@ def collect_repo_signals(root: Path) -> RepoSignals:
             sig.markers.add(marker)
             sig.languages.add(lang)
 
-    # Extension sampling
+    # Extension sampling — >=1 is enough for small eval / greenfield repos
     counts = {"go": 0, "python": 0, "javascript": 0, "typescript": 0, "rust": 0, "html": 0}
     n = 0
     for p in root.rglob("*"):
@@ -104,7 +104,7 @@ def collect_repo_signals(root: Path) -> RepoSignals:
             break
     sig.file_count = n
     for lang, c in counts.items():
-        if c >= 2:
+        if c >= 1:
             sig.languages.add(lang)
     # Established if markers exist or enough source files
     sig.established = bool(sig.markers) or n >= 5
@@ -181,42 +181,72 @@ def is_skill_satisfied(repo_root: Path, skill_id: str) -> bool:
     return skill_id in (state.get("satisfied") or {}).get(key, [])
 
 
-def language_compatible(skill: Skill, signals: RepoSignals) -> bool:
-    """False when skill languages clearly conflict with the repo."""
+def _infer_skill_langs(skill: Skill) -> Set[str]:
     skill_langs = {lng.lower() for lng in (skill.languages or []) if lng}
+    if skill_langs:
+        return skill_langs
+    blob = " ".join(
+        [
+            skill.title or "",
+            skill.description or "",
+            " ".join(skill.tags or []),
+            " ".join(skill.triggers or []),
+            (skill.content or "")[:2000],
+        ]
+    ).lower()
+    for lang, hints in {
+        "go": (r"\bgo\b", r"\bgolang\b", r"\bgo\.mod\b"),
+        "python": (r"\bpython\b", r"\bdjango\b", r"\bflask\b", r"\bpytest\b"),
+        "javascript": (r"\bjavascript\b", r"\bnodejs\b", r"\breact\b"),
+        "typescript": (r"\btypescript\b", r"\btsx\b"),
+        "html": (r"\bhtml\b", r"\bcss\b"),
+        "rust": (r"\brust\b", r"\bcargo\b"),
+    }.items():
+        if any(re.search(h, blob) for h in hints):
+            skill_langs.add(lang)
+    return skill_langs
+
+
+def _task_languages(task: str) -> Set[str]:
+    try:
+        from .infer import infer_languages
+
+        return {lng.lower() for lng in infer_languages(task or "") if lng}
+    except Exception:
+        return set()
+
+
+def language_compatible(
+    skill: Skill,
+    signals: RepoSignals,
+    *,
+    task: str = "",
+) -> bool:
+    """False when skill languages clearly conflict with the repo or task."""
+    skill_langs = _infer_skill_langs(skill)
+    task_langs = _task_languages(task)
+    repo_langs = set(signals.languages or ())
+
     if not skill_langs:
-        # Infer crude language from title/tags/triggers
-        blob = " ".join(
-            [
-                skill.title or "",
-                " ".join(skill.tags or []),
-                " ".join(skill.triggers or []),
-            ]
-        ).lower()
-        for lang, hints in {
-            "go": ("go", "golang"),
-            "python": ("python", "django", "flask", "pytest"),
-            "javascript": ("javascript", "node", "react"),
-            "typescript": ("typescript", "tsx"),
-            "html": ("html", "css"),
-            "rust": ("rust", "cargo"),
-        }.items():
-            if any(h in blob for h in hints):
-                skill_langs.add(lang)
-    if not skill_langs:
-        return True  # unknown → don't block
-    if not signals.languages:
-        return True  # empty repo → allow scaffolds
-    # Compatible if intersection non-empty
-    if skill_langs & signals.languages:
+        return True  # unknown skill language → don't block on language alone
+
+    # Task implies a stack that conflicts with the skill → reject (even greenfield)
+    if task_langs and not (skill_langs & task_langs):
+        # Allow if skill is html-adjacent frontend and task is javascript/typescript
+        if skill_langs <= {"html"} and task_langs & {"javascript", "typescript", "html"}:
+            return True
+        return False
+
+    if not repo_langs:
+        # Empty/greenfield repo: still block foreign scaffolds when task is clear
+        return True if not task_langs else bool(skill_langs & task_langs)
+
+    if skill_langs & repo_langs:
         return True
     # html-only skill against non-html backend stack → reject
-    if skill_langs <= {"html"} and signals.languages & {"go", "python", "rust", "java"}:
+    if skill_langs <= {"html"} and repo_langs & {"go", "python", "rust", "java"}:
         return False
-    # go skill against python-only repo → reject
-    if not (skill_langs & signals.languages):
-        return False
-    return True
+    return False
 
 
 def route_skill(
@@ -226,7 +256,7 @@ def route_skill(
     *,
     already_injected: Optional[Set[str]] = None,
     score: float = 0.0,
-    min_score: float = 0.35,
+    min_score: float = 0.40,
 ) -> RouteDecision:
     """Decide apply/skip for one candidate at the current workflow checkpoint."""
     sid = skill.id or ""
@@ -243,7 +273,7 @@ def route_skill(
     if score and score < min_score:
         return RouteDecision(skill, False, f"low relevance ({score:.2f})", score)
 
-    if not language_compatible(skill, signals):
+    if not language_compatible(skill, signals, task=task):
         return RouteDecision(skill, False, "language/stack mismatch", score)
 
     # Stale check: if we know grounded symbols + source files, skip when gone
@@ -304,7 +334,7 @@ def route_skills(
     root: Optional[Path] = None,
     already_injected: Optional[Set[str]] = None,
     limit: int = 2,
-    min_score: float = 0.35,
+    min_score: float = 0.40,
     prefer_playbooks_when_established: bool = True,
 ) -> tuple[List[Skill], List[RouteDecision]]:
     """

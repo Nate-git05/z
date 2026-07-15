@@ -143,9 +143,12 @@ def plan_auto_act(
         prompts.append(f"- [{node.type.value}] {default_prompt_for_node(node)}")
 
     msg = (
-        "Z human-uncertainty auto-act: address these high-priority worries before "
+        "Z risk auto-act: address these high-priority findings before "
         "claiming completion or committing:\n"
         + "\n".join(prompts)
-        + "\nKeep changes focused. Re-run tests after edits."
+        + "\nRules: keep changes focused on product behavior only; "
+        "do not add meta/policy tests about agent process; "
+        "do not invent product commands for internal tooling; "
+        "re-run the project's test command after edits."
     )
     return AutoActResult(reflect_message=msg, acted_on=list(targets))

@@ -1071,7 +1071,18 @@ class Coder:
                 return
             names = ", ".join(s.title for s in skills)
             label = "Applying skill(s)" if checkpoint == "turn" else "Injecting skill(s) for this step"
+            why = "; ".join(
+                f"{s.title} [{s.kind or 'playbook'}"
+                + (f"/{','.join(s.languages)}" if s.languages else "")
+                + "]"
+                for s in skills
+            )
             self.io.tool_output(f"{label}: {names}")
+            self.io.tool_output(f"  why: {why}")
+            if skip_reasons and not getattr(self, "verbose", False):
+                # Always show a short skip sample so bad retrieval is visible
+                for reason in skip_reasons[:3]:
+                    self.io.tool_output(f"  skipped — {reason}")
             self.cur_messages += [
                 {"role": "user", "content": block},
                 {
@@ -1091,10 +1102,26 @@ class Coder:
         # Skip tiny one-liners / pure renames
         if len(user_message.strip()) < 24 and len(edited) < 2:
             return
+        # Never block task completion on skill capture (evals / --yes / failed verify)
+        if os.environ.get("Z_SKIP_SKILL_CAPTURE", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        ):
+            return
+        if getattr(self.io, "yes", None) is True:
+            # yes-always would auto-accept and hang on multi-minute model calls
+            return
+        last_ver = getattr(self, "last_verification", None)
+        if last_ver is not None and not getattr(last_ver, "meaningful_pass", False):
+            return
+        if getattr(self, "_z_gate_hold_dirty", False):
+            return
         try:
             if not self.io.confirm_ask(
                 "Want me to save this as a reusable skill for next time?",
                 default="n",
+                explicit_yes_required=True,
             ):
                 return
             from aider.z.skills.cli import offer_view_new_skill, save_skill_from_task
@@ -2558,6 +2585,16 @@ class Coder:
         if not self.repo:
             return
         if not self.dirty_commits:
+            return
+        # Hold dirty-commits while verify-gate reflect/recovery is in progress so
+        # the initial broken implementation is not committed before fixes land.
+        if getattr(self, "_z_gate_hold_dirty", False):
+            return
+        if int(getattr(self, "_z_verify_gen_attempts", 0) or 0) > 0:
+            return
+        if int(getattr(self, "_z_verify_fix_attempts", 0) or 0) > 0:
+            return
+        if os.environ.get("Z_NO_DIRTY_COMMIT", "").strip().lower() in ("1", "true", "yes"):
             return
         if not self.repo.is_dirty(path):
             return

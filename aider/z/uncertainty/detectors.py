@@ -66,7 +66,7 @@ def _make_node(
     if not suggested_prompt:
         suggested_prompt = (
             f"Regarding '{title}' in {', '.join(files_l[:3]) or 'the recent change'}: "
-            f"{suggested_fix or 'review and address this uncertainty'}."
+            f"{suggested_fix or 'review and address this risk'}."
         )
     meta = {
         "high_stakes": signals.high_stakes_hit,
