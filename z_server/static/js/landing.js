@@ -53,29 +53,33 @@
     setTimeout(next, 500);
   }
 
-  // ---- Copy install command ----
+  // ---- Copy install command(s) ----
   function setupCopy() {
-    var btn = document.getElementById("copy-install");
-    var code = document.getElementById("install-cmd");
-    if (!btn || !code) return;
-    btn.addEventListener("click", function () {
-      var text = code.getAttribute("data-cmd") || code.textContent.replace(/^\$\s*/, "").trim();
-      function done() {
-        var prev = btn.textContent;
-        btn.textContent = "Copied";
-        btn.classList.add("copied");
-        setTimeout(function () {
-          btn.textContent = prev;
-          btn.classList.remove("copied");
-        }, 1600);
-      }
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(done).catch(function () {
+    var buttons = document.querySelectorAll(".copy-install");
+    if (!buttons.length) return;
+    buttons.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var id = btn.getAttribute("data-target");
+        var code = id ? document.getElementById(id) : null;
+        if (!code) return;
+        var text = code.getAttribute("data-cmd") || code.textContent.replace(/^\$\s*/, "").trim();
+        function done() {
+          var prev = btn.textContent;
+          btn.textContent = "Copied";
+          btn.classList.add("copied");
+          setTimeout(function () {
+            btn.textContent = prev;
+            btn.classList.remove("copied");
+          }, 1600);
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done).catch(function () {
+            fallbackCopy(text, done);
+          });
+        } else {
           fallbackCopy(text, done);
-        });
-      } else {
-        fallbackCopy(text, done);
-      }
+        }
+      });
     });
   }
 

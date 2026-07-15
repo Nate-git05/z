@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Z — coding agent with an uncertainty tree</title>
-  <meta name="description" content="Z is a coding agent that surfaces structured uncertainty as you work — risk and confidence derived from concrete signals, not guesswork." />
+  <meta name="description" content="Z is a coding agent that surfaces structured uncertainty as you work — and learns reusable skills from your repo. Open for early testing." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -16,8 +16,9 @@
       <a class="lp-brand" href="/">Z</a>
       <div class="lp-nav-links">
         <a class="ghost" href="#how">How it works</a>
+        <a class="ghost" href="#skills">Skills</a>
         <a class="ghost" href="#detectors">Detectors</a>
-        <a class="ghost" href="#install">Install</a>
+        <a class="ghost" href="#install">Try it</a>
         {% if user %}
           <a class="ghost" href="/app/integrations">App</a>
           <span class="ghost" style="color:var(--muted)">{{ user.display_name() }}</span>
@@ -30,16 +31,18 @@
 
     <section class="lp-hero" aria-label="Hero">
       <div class="lp-hero-copy">
+        <p class="lp-eyebrow">Open for early testing</p>
         <h1>A coding agent that <span class="accent">knows what it doesn’t know</span></h1>
         <p class="lede">
-          Z attaches structured, reviewable uncertainty nodes to the code it touches —
-          ranked by real risk, not self-rated confidence percentages.
+          Z attaches structured, reviewable uncertainty to the code it touches —
+          and learns reusable skills from your work so it doesn’t ask the same
+          questions twice.
         </p>
         <div class="lp-hero-ctas">
-          <a class="lp-btn" href="#waitlist">Join the waitlist</a>
-          <a class="lp-btn lp-btn-ghost" href="#install">Install</a>
+          <a class="lp-btn" href="#install">Try early testing</a>
+          <a class="lp-btn lp-btn-ghost" href="#waitlist">Join the waitlist</a>
         </div>
-        <p class="lp-hero-note">BYOK models · terminal-native · uncertainty tree</p>
+        <p class="lp-hero-note">BYOK models · uncertainty tree · reusable skills</p>
       </div>
 
       <div class="term" aria-label="Uncertainty tree demo" role="img">
@@ -74,6 +77,31 @@
           <div class="step-num">03</div>
           <h3>You act from the tree</h3>
           <p>Browse risk-first. Fix, add a test, explain, or ignore — each action scopes a follow-up.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="lp-section" id="skills">
+      <h2>Reusable skills</h2>
+      <p class="section-lede">
+        Teach Z once how your repo works. It remembers — and applies the right
+        playbook on the next matching task.
+      </p>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">01</div>
+          <h3>Paste or capture</h3>
+          <p>Drop in a playbook with <span class="mono-inline">/skills add</span>, generate one, or let Z offer to save after a solid turn.</p>
+        </div>
+        <div class="step">
+          <div class="step-num">02</div>
+          <h3>Z indexes it</h3>
+          <p>Metadata is inferred for you — when to use it, what triggers it — so you don’t fill out a form.</p>
+        </div>
+        <div class="step">
+          <div class="step-num">03</div>
+          <h3>Auto-applied later</h3>
+          <p>On a matching task, Z pulls the skill in automatically. No manual attach. No re-explaining Stripe webhooks every session.</p>
         </div>
       </div>
     </section>
@@ -144,22 +172,35 @@
     </section>
 
     <section class="lp-section" id="install">
-      <h2>Install</h2>
-      <p class="section-lede">One line in your terminal. Bring your own model keys.</p>
+      <h2>Try early testing</h2>
+      <p class="section-lede">
+        Install now and run Z in a project. Bring your own model keys.
+        Rough edges are expected — that’s the point of early testing.
+      </p>
+
+      <p class="install-label">curl</p>
       <div class="install-block">
-        <code id="install-cmd" data-cmd="curl -fsSL https://raw.githubusercontent.com/Nate-git05/z/main/install.sh | sh"><span class="prompt">$</span>curl -fsSL https://raw.githubusercontent.com/Nate-git05/z/main/install.sh | sh</code>
-        <button type="button" id="copy-install" aria-label="Copy install command">Copy</button>
+        <code id="install-cmd-curl" data-cmd="curl -fsSL https://raw.githubusercontent.com/Nate-git05/z/main/install.sh | sh"><span class="prompt">$</span>curl -fsSL https://raw.githubusercontent.com/Nate-git05/z/main/install.sh | sh</code>
+        <button type="button" class="copy-install" data-target="install-cmd-curl" aria-label="Copy curl install command">Copy</button>
       </div>
-      <p class="section-lede" style="margin-top:1rem">
-        macOS / Linux. Puts <span style="font-family:var(--mono);color:var(--text)">z</span> on your PATH.
-        Then set your API key and run <span style="font-family:var(--mono);color:var(--text)">z</span> in a project.
+
+      <p class="install-label">pip</p>
+      <div class="install-block">
+        <code id="install-cmd-pip" data-cmd="pip install -U &quot;git+https://github.com/Nate-git05/z.git&quot;"><span class="prompt">$</span>pip install -U "git+https://github.com/Nate-git05/z.git"</code>
+        <button type="button" class="copy-install" data-target="install-cmd-pip" aria-label="Copy pip install command">Copy</button>
+      </div>
+
+      <p class="section-lede" style="margin-top:1.25rem">
+        macOS / Linux. Puts <span class="mono-inline">z</span> on your PATH.
+        Then set your API key and run <span class="mono-inline">z</span> in a project.
       </p>
     </section>
 
     <section class="lp-section" id="waitlist">
       <h2>Join the waitlist</h2>
       <p class="section-lede">
-        Early access for the uncertainty tree, workspace sharing, and MCP integrations.
+        Want updates on workspace sharing, MCP integrations, and what’s next?
+        Join the list — you can still try early testing above right now.
       </p>
 
       <div class="waitlist">
@@ -193,7 +234,7 @@
 
     <footer class="lp-footer">
       <span>Z</span>
-      <span>Model keys stay yours · Account unlocks workspace features</span>
+      <span>Early testing · Model keys stay yours · Account unlocks workspace features</span>
     </footer>
   </div>
   <script src="/static/js/landing.js" defer></script>

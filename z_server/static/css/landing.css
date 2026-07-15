@@ -108,6 +108,15 @@ a:hover { color: var(--accent-bright); }
   min-height: min(78vh, 720px);
 }
 
+.lp-eyebrow {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 0.85rem;
+}
+
 .lp-hero-copy h1 {
   font-family: var(--mono);
   font-size: clamp(2rem, 4.2vw, 3.15rem);
@@ -116,6 +125,12 @@ a:hover { color: var(--accent-bright); }
   letter-spacing: -0.02em;
   margin: 0 0 1.1rem;
   color: var(--text);
+}
+
+.mono-inline {
+  font-family: var(--mono);
+  color: var(--text);
+  font-size: 0.92em;
 }
 
 .lp-hero-copy h1 .accent { color: var(--accent); }
@@ -305,6 +320,19 @@ a:hover { color: var(--accent-bright); }
 }
 
 /* Install */
+.install-label {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 0.45rem;
+}
+
+.install-label + .install-block {
+  margin-bottom: 1rem;
+}
+
 .install-block {
   display: flex;
   align-items: stretch;

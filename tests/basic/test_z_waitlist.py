@@ -52,6 +52,10 @@ class WaitlistApiTest(unittest.TestCase):
         self.assertIn("text/html", resp.headers.get("content-type", ""))
         body = resp.text
         self.assertIn("uncertainty", body.lower())
+        self.assertIn("Reusable skills", body)
+        self.assertIn("early testing", body.lower())
+        self.assertIn("install-cmd-curl", body)
+        self.assertIn("install-cmd-pip", body)
         self.assertIn("waitlist-form", body)
         self.assertIn("You're on the list", body)
         self.assertIn("/static/css/landing.css", body)
