@@ -46,6 +46,13 @@ def build_parser() -> argparse.ArgumentParser:
     mcp_sub = mcp.add_subparsers(dest="mcp_command")
     mcp_sub.add_parser("list", help="List MCP tools connected to your Z account/workspace")
 
+    unc = sub.add_parser("uncertainty", help="Uncertainty tree utilities")
+    unc_sub = unc.add_subparsers(dest="uncertainty_command")
+    unc_sub.add_parser(
+        "stats",
+        help="Show per-detector disposition rates (ignored / force-commit / resolved)",
+    )
+
     skill = sub.add_parser("skill", help="Reusable skills (paste, generate, auto-retrieve)")
     skill_sub = skill.add_subparsers(dest="skill_command")
 
@@ -129,6 +136,7 @@ def _print_help() -> None:
         "  z skill list\n"
         "  z skill show stripe\n"
         "  z skill accept stripe\n"
+        "  z uncertainty stats\n"
         "  z --model sonnet\n"
     )
 
@@ -157,7 +165,16 @@ def main(argv: list[str] | None = None) -> int | None:
         _print_help()
         return 0
 
-    top_commands = {"login", "auth", "logout", "whoami", "models", "mcp", "skill"}
+    top_commands = {
+        "login",
+        "auth",
+        "logout",
+        "whoami",
+        "models",
+        "mcp",
+        "skill",
+        "uncertainty",
+    }
 
     # Bare `z` (or agent flags) → login if needed, then start the coding agent
     if not argv or argv[0] not in top_commands:
@@ -192,6 +209,20 @@ def dispatch(args) -> int:
         return cmd_mcp(io, args)
     if args.command == "skill":
         return cmd_skill(io, args)
+    if args.command == "uncertainty":
+        return cmd_uncertainty(io, args)
+    return 1
+
+
+def cmd_uncertainty(io, args) -> int:
+    sub = getattr(args, "uncertainty_command", None) or "stats"
+    if sub == "stats":
+        from aider.z.uncertainty.outcomes import format_stats
+
+        io.tool_output(format_stats())
+        return 0
+    io.tool_error(f"Unknown uncertainty subcommand: {sub}")
+    io.tool_output("Usage: z uncertainty stats")
     return 1
 
 

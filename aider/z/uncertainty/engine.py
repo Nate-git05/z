@@ -62,6 +62,10 @@ class SessionContext:
     current_task_id: Optional[str] = None
     current_task_title: Optional[str] = None
     edge_cases_from_model: List[str] = field(default_factory=list)
+    # Last agent reply — used to see if structural branches were discussed
+    discussed_text: str = ""
+    # Optional unified diff for scoping structural edge detection to changed lines
+    last_diff: str = ""
     migration_data_impact: Optional[str] = None
     new_files_this_turn: List[str] = field(default_factory=list)
     pattern_results: dict = field(default_factory=dict)
@@ -99,6 +103,12 @@ class UncertaintyEngine:
     def record_edge_cases(self, cases: Sequence[str]) -> None:
         self.ctx.edge_cases_from_model = [c.strip() for c in cases if c and c.strip()]
 
+    def record_discussed_text(self, text: str) -> None:
+        self.ctx.discussed_text = text or ""
+
+    def record_diff(self, diff: str) -> None:
+        self.ctx.last_diff = diff or ""
+
     def record_migration_impact(self, text: str) -> None:
         self.ctx.migration_data_impact = text
 
@@ -110,6 +120,8 @@ class UncertaintyEngine:
         tests_passed: Optional[bool] = None,
         file_contents: Optional[dict[str, str]] = None,
         run_gap_analysis: bool = True,
+        diff: Optional[str] = None,
+        discussed_text: Optional[str] = None,
     ) -> List[UncertaintyNode]:
         """Run all concrete detectors for a batch of edited files."""
         root = self.ctx.root
@@ -271,9 +283,30 @@ class UncertaintyEngine:
         nodes.extend(detect_fragile_logic(signals, file_contents=contents, **meta))
         nodes.extend(detect_failure_blind_spots(signals, file_contents=contents, **meta))
 
-        # Edge case blind spots (model-reported)
+        # Edge case blind spots — structural AST/regex first; model list supplements
+        test_blob = ""
+        try:
+            for tpath in relevant or []:
+                tp = root / tpath
+                if tp.is_file():
+                    test_blob += tp.read_text(encoding="utf-8", errors="ignore")[:8000]
+                    test_blob += "\n"
+        except OSError:
+            pass
         nodes.extend(
-            detect_edge_cases(signals, edge_cases=self.ctx.edge_cases_from_model, **meta)
+            detect_edge_cases(
+                signals,
+                edge_cases=self.ctx.edge_cases_from_model,
+                file_contents=contents,
+                discussed_text=(
+                    discussed_text
+                    if discussed_text is not None
+                    else self.ctx.discussed_text
+                ),
+                test_blob=test_blob,
+                diff=diff if diff is not None else self.ctx.last_diff,
+                **meta,
+            )
         )
 
         # Requirement gaps — evidence-bound structured rescore

@@ -754,25 +754,124 @@ def detect_unverifiable_config(
 
 
 # ---------------------------------------------------------------------------
-# Edge cases (scoped model listing — the one self-report trigger)
+# Edge cases — structural first (AST/regex), model list as supplement only
 # ---------------------------------------------------------------------------
 
 
 def detect_edge_cases(
     signals: DetectionSignals,
     *,
-    edge_cases: Sequence[str],
+    edge_cases: Sequence[str] = (),
+    file_contents: Optional[dict[str, str]] = None,
+    discussed_text: str = "",
+    test_blob: str = "",
+    diff: str = "",
     task_id: Optional[str] = None,
     task_title: Optional[str] = None,
     created_by_session: Optional[str] = None,
     created_by_user: Optional[str] = None,
 ) -> List[UncertaintyNode]:
-    """Each listed edge case considered but not fully handled becomes its own node."""
+    """
+    Edge Case Blind Spot from checkable control-flow, not model self-rating.
+
+    1. Enumerate branches in changed files (AST for Python).
+    2. Flag undiscussed / untested edge-ish branches (else/except/None/empty…).
+    3. Optionally add model-listed cases that aren't already covered — supplement only.
+       An empty model list can no longer silence this detector.
+    """
+    from .edges import (
+        collect_branches_from_files,
+        parse_changed_lines_from_diff,
+        select_undiscussed_branches,
+    )
+
     nodes: List[UncertaintyNode] = []
-    signals.edge_cases_listed = list(edge_cases)
-    for case in edge_cases:
-        case = (case or "").strip()
-        if not case:
+    model_cases = [c.strip() for c in (edge_cases or []) if c and str(c).strip()]
+    signals.edge_cases_listed = list(model_cases)
+
+    # Merge model list into "discussed" so structural won't double-count
+    discussed = "\n".join(
+        [
+            discussed_text or "",
+            "\n".join(model_cases),
+        ]
+    )
+
+    changed_lines = parse_changed_lines_from_diff(diff) if diff else None
+    branches = collect_branches_from_files(
+        file_contents or {},
+        changed_lines_by_file=changed_lines,
+    )
+    # If diff scoping wiped everything (path mismatch), fall back to full-file scan
+    if not branches and file_contents:
+        branches = collect_branches_from_files(file_contents, changed_lines_by_file=None)
+
+    undiscussed = select_undiscussed_branches(
+        branches,
+        discussed_text=discussed,
+        test_blob=test_blob or "",
+        limit=4,
+    )
+    structural_labels: List[str] = []
+    for br in undiscussed:
+        label = br.label()
+        structural_labels.append(label)
+        nodes.append(
+            _make_node(
+                title=f"Edge case blind spot: {label[:80]}",
+                node_type=NodeType.EDGE_CASE,
+                signals=signals,
+                summary=(
+                    f"This might break on weird data — {br.kind} path at "
+                    f"{Path(br.path).name}:{br.lineno} looks unhandled."
+                ),
+                explanation=(
+                    f"Structural control-flow in {br.path}:{br.lineno} "
+                    f"({br.kind}): `{br.condition}`. "
+                    "Flagged because this branch was not discussed in the agent reply "
+                    "and no relevant test mentions the enclosing symbol. "
+                    "Independent of any model self-reported edge-case list."
+                ),
+                why_uncertain=(
+                    "A checkable branch exists in the change without evidence it was "
+                    "considered or tested."
+                ),
+                what_could_go_wrong=(
+                    f"Hitting the {br.kind} path ({br.condition[:120]}) may mis-handle input."
+                ),
+                suggested_fix=(
+                    f"Handle or explicitly document the {br.kind} path in "
+                    f"{br.enclosing or br.path}, and add a test."
+                ),
+                suggested_tests=[
+                    f"Test {br.enclosing or Path(br.path).stem} covering: {br.condition[:80]}"
+                ],
+                suggested_prompt=(
+                    f"Fully handle this edge path in {br.path}:{br.lineno} "
+                    f"({br.kind}: {br.condition}). Add a test that would have failed before."
+                ),
+                files=[br.path],
+                symbols=[br.enclosing] if br.enclosing else None,
+                task_id=task_id,
+                task_title=task_title,
+                created_by_session=created_by_session,
+                created_by_user=created_by_user,
+                extra_signals={
+                    "edge_case": label,
+                    "edge_source": "structural",
+                    "branch_kind": br.kind,
+                    "branch_line": br.lineno,
+                },
+            )
+        )
+
+    # Model list is supplemental — only add cases not already covered structurally
+    struct_blob = " ".join(structural_labels).lower()
+    for case in model_cases:
+        case_l = case.lower()
+        # Skip if structural already covers similar wording
+        tokens = [t for t in re.findall(r"[a-z0-9_]{4,}", case_l)]
+        if tokens and any(t in struct_blob for t in tokens):
             continue
         nodes.append(
             _make_node(
@@ -781,8 +880,8 @@ def detect_edge_cases(
                 signals=signals,
                 summary=f"This might break on weird data — not fully handled: {case}",
                 explanation=(
-                    "After generating the change, the agent listed edge cases considered but "
-                    f"not fully handled. This item: {case}"
+                    "Agent self-reported this edge case as considered but not fully handled. "
+                    f"Item: {case}. Treated as a supplement to structural branch detection."
                 ),
                 why_uncertain="Explicitly acknowledged incomplete handling of this edge case.",
                 what_could_go_wrong=f"Encountering this case in production: {case}",
@@ -796,7 +895,7 @@ def detect_edge_cases(
                 task_title=task_title,
                 created_by_session=created_by_session,
                 created_by_user=created_by_user,
-                extra_signals={"edge_case": case},
+                extra_signals={"edge_case": case, "edge_source": "model"},
             )
         )
     return nodes
