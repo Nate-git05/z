@@ -1,11 +1,11 @@
 import json
+import os
 import platform
 import sys
 import time
 import uuid
 from pathlib import Path
 
-from mixpanel import MixpanelException
 from posthog import Posthog
 
 from aider import __version__
@@ -204,13 +204,22 @@ class Analytics:
         return None
 
     def posthog_error(self):
-        """disable posthog if we get an error"""
-        print("X" * 100)
+        """Disable posthog on error — never spam the coding session."""
         # https://github.com/PostHog/posthog-python/blob/9e1bb8c58afaa229da24c4fb576c08bb88a75752/posthog/consumer.py#L86
         # https://github.com/Aider-AI/aider/issues/2532
         self.ph = None
 
     def event(self, event_name, main_model=None, **kwargs):
+        # Hard kill-switch for Z / evals / incompatible PostHog installs
+        if os.environ.get("Z_NO_ANALYTICS", "").strip().lower() in ("1", "true", "yes"):
+            return
+        if os.environ.get("Z_CLI", "").strip().lower() in ("1", "true", "yes"):
+            # Z CLI: never send network telemetry (logfile-only if configured)
+            self.ph = None
+            self.mp = None
+            if not self.logfile:
+                return
+
         if not self.mp and not self.ph and not self.logfile:
             return
 
@@ -233,11 +242,26 @@ class Analytics:
         if self.mp:
             try:
                 self.mp.track(self.user_id, event_name, dict(properties))
-            except MixpanelException:
-                self.mp = None  # Disable mixpanel on connection errors
+            except Exception:
+                self.mp = None  # Disable mixpanel on any error
 
         if self.ph:
-            self.ph.capture(event_name, distinct_id=self.user_id, properties=dict(properties))
+            try:
+                # PostHog Python SDKs differ: prefer keyword form; fall back.
+                try:
+                    self.ph.capture(
+                        distinct_id=self.user_id,
+                        event=event_name,
+                        properties=dict(properties),
+                    )
+                except TypeError:
+                    self.ph.capture(
+                        event_name,
+                        distinct_id=self.user_id,
+                        properties=dict(properties),
+                    )
+            except Exception:
+                self.ph = None  # never print / never break the session
 
         if self.logfile:
             log_entry = {

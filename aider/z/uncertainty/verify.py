@@ -2,12 +2,13 @@
 Real test verification for the Z commit gate.
 
 Runs the project's test suite, treats zero discovered tests as failure,
-records a checkable VerificationRecord, and optionally smoke-imports
-changed Python modules.
+records a checkable VerificationRecord with structured VerifyState, and
+optionally smoke-imports changed Python modules.
 """
 
 from __future__ import annotations
 
+import enum
 import json
 import os
 import re
@@ -37,6 +38,21 @@ _RAN_RE = re.compile(r"(?i)ran\s+(\d+)\s+tests?")
 _PASSED_RE = re.compile(r"(?i)(\d+)\s+passed")
 _FAILED_RE = re.compile(r"(?i)(\d+)\s+failed")
 _ERROR_RE = re.compile(r"(?i)(\d+)\s+errors?")
+_COLLECTION_ERR_RE = re.compile(
+    r"(?i)(error\s+during\s+collection|collection\s+failed|ERROR\s+collecting)"
+)
+
+
+class VerifyState(str, enum.Enum):
+    """Structured verification outcome — never infer from vague substrings alone."""
+
+    NO_TESTS = "NO_TESTS"
+    TESTS_PASSED = "TESTS_PASSED"
+    TESTS_FAILED = "TESTS_FAILED"
+    COLLECTION_FAILED = "COLLECTION_FAILED"
+    RUNNER_MISSING = "RUNNER_MISSING"
+    TIMED_OUT = "TIMED_OUT"
+    NOT_RUN = "NOT_RUN"
 
 
 @dataclass
@@ -47,8 +63,12 @@ class VerificationRecord:
     command: Optional[str] = None
     exit_code: Optional[int] = None
     tests_discovered: Optional[int] = None
+    tests_passed: Optional[int] = None
+    tests_failed: Optional[int] = None
+    collection_errors: int = 0
     zero_tests: bool = False
     passed: bool = False
+    state: VerifyState = VerifyState.NOT_RUN
     output_excerpt: str = ""
     smoke_ran: bool = False
     smoke_ok: Optional[bool] = None
@@ -59,13 +79,16 @@ class VerificationRecord:
     )
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        d["state"] = self.state.value if isinstance(self.state, VerifyState) else str(self.state)
+        return d
 
     @property
     def meaningful_pass(self) -> bool:
         """True only when tests ran, discovered >0, and exited 0."""
         return (
             self.ran
+            and self.state == VerifyState.TESTS_PASSED
             and not self.zero_tests
             and (self.tests_discovered or 0) > 0
             and self.exit_code == 0
@@ -74,8 +97,14 @@ class VerificationRecord:
 
 
 def detect_test_command(root: Path) -> Optional[str]:
-    """Best-effort project test command when --test-cmd is unset."""
+    """
+    Best-effort project test command when --test-cmd is unset.
+
+    Prefer declared runners. For dependency-free Python layouts under tests/,
+    use unittest discover (not an undeclared pytest dependency).
+    """
     root = Path(root)
+    # Explicit pytest config → pytest is declared
     if (root / "pytest.ini").is_file() or (root / "conftest.py").is_file():
         return "python -m pytest -q"
     pyproject = root / "pyproject.toml"
@@ -84,7 +113,10 @@ def detect_test_command(root: Path) -> Optional[str]:
             text = pyproject.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             text = ""
-        if "[tool.pytest" in text or "pytest" in text:
+        if "[tool.pytest" in text:
+            return "python -m pytest -q"
+        # requirements-style mention alone is weaker — still allow pytest if listed
+        if re.search(r"(?m)^\s*pytest\b", text) or '"pytest"' in text or "'pytest'" in text:
             return "python -m pytest -q"
     if (root / "manage.py").is_file():
         return "python manage.py test"
@@ -97,11 +129,22 @@ def detect_test_command(root: Path) -> Optional[str]:
                 return "npm test -- --watchAll=false"
         except (OSError, json.JSONDecodeError):
             pass
+
+    # requirements*.txt declaring pytest
+    for req in root.glob("requirements*.txt"):
+        try:
+            rtext = req.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if re.search(r"(?m)^\s*pytest\b", rtext):
+            return "python -m pytest -q"
+
     tests_dir = root / "tests"
     if tests_dir.is_dir() and any(tests_dir.rglob("test_*.py")):
-        return "python -m pytest -q"
+        # Dependency-free default: stdlib unittest with -s tests
+        return "python -m unittest discover -s tests -v"
     if any(root.glob("test_*.py")) or any(root.glob("*_test.py")):
-        return "python -m pytest -q"
+        return "python -m unittest discover -v"
     return None
 
 
@@ -116,36 +159,83 @@ def normalize_test_cmd(test_cmd) -> Optional[str]:
     return str(test_cmd).strip() or None
 
 
+def parse_counts(output: str) -> dict:
+    """Parse discovery / pass / fail / error counts from runner output."""
+    text = output or ""
+    result = {
+        "discovered": None,
+        "zero": False,
+        "passed": None,
+        "failed": None,
+        "errors": None,
+        "collection_failed": bool(_COLLECTION_ERR_RE.search(text)),
+    }
+    if _ZERO_TEST_RE.search(text):
+        result["discovered"] = 0
+        result["zero"] = True
+    m = _COLLECTED_RE.search(text)
+    if m:
+        n = int(m.group(1))
+        result["discovered"] = n
+        result["zero"] = n == 0
+    else:
+        m = _RAN_RE.search(text)
+        if m:
+            n = int(m.group(1))
+            result["discovered"] = n
+            result["zero"] = n == 0
+
+    passed = _PASSED_RE.search(text)
+    failed = _FAILED_RE.search(text)
+    errors = _ERROR_RE.search(text)
+    if passed:
+        result["passed"] = int(passed.group(1))
+    if failed:
+        result["failed"] = int(failed.group(1))
+    if errors:
+        result["errors"] = int(errors.group(1))
+
+    # Sum when collected line missing
+    if result["discovered"] is None and (passed or failed or errors):
+        total = (result["passed"] or 0) + (result["failed"] or 0) + (result["errors"] or 0)
+        result["discovered"] = total
+        result["zero"] = total == 0
+    return result
+
+
 def parse_discovery_count(output: str) -> Tuple[Optional[int], bool]:
     """
     Return (count, zero_flag).
     zero_flag True when output explicitly indicates zero tests.
     """
-    text = output or ""
-    if _ZERO_TEST_RE.search(text):
-        return 0, True
-    m = _COLLECTED_RE.search(text)
-    if m:
-        n = int(m.group(1))
-        return n, n == 0
-    m = _RAN_RE.search(text)
-    if m:
-        n = int(m.group(1))
-        return n, n == 0
-    # Fall back to passed+failed+error sums when present
-    passed = _PASSED_RE.search(text)
-    failed = _FAILED_RE.search(text)
-    errors = _ERROR_RE.search(text)
-    if passed or failed or errors:
-        total = 0
-        if passed:
-            total += int(passed.group(1))
-        if failed:
-            total += int(failed.group(1))
-        if errors:
-            total += int(errors.group(1))
-        return total, total == 0
-    return None, False
+    parsed = parse_counts(output)
+    return parsed["discovered"], bool(parsed["zero"])
+
+
+def derive_verify_state(record: "VerificationRecord") -> VerifyState:
+    if not record.ran:
+        if record.error and "No test command" in (record.error or ""):
+            return VerifyState.RUNNER_MISSING
+        return VerifyState.NOT_RUN
+    if record.error and "timed out" in (record.error or "").lower():
+        return VerifyState.TIMED_OUT
+    if record.collection_errors or (
+        record.tests_discovered is None
+        and record.exit_code not in (0, None)
+        and "collect" in (record.output_excerpt or "").lower()
+    ):
+        if record.collection_errors or _COLLECTION_ERR_RE.search(record.output_excerpt or ""):
+            return VerifyState.COLLECTION_FAILED
+    if record.zero_tests or record.tests_discovered == 0:
+        return VerifyState.NO_TESTS
+    if (record.tests_discovered or 0) > 0:
+        if record.exit_code == 0 and record.passed:
+            return VerifyState.TESTS_PASSED
+        return VerifyState.TESTS_FAILED
+    # Ran but could not confirm discovery — fail closed as NO_TESTS for gate branching
+    if record.exit_code == 0:
+        return VerifyState.NO_TESTS
+    return VerifyState.TESTS_FAILED
 
 
 def run_test_suite(
@@ -168,23 +258,36 @@ def run_test_suite(
         record.exit_code = 1
         record.error = str(err)
         record.passed = False
+        record.state = (
+            VerifyState.TIMED_OUT
+            if "timed out" in str(err).lower()
+            else VerifyState.TESTS_FAILED
+        )
         return record
 
     record.exit_code = int(exit_code) if exit_code is not None else 1
     text = output or ""
     record.output_excerpt = text[-4000:] if len(text) > 4000 else text
-    count, zero = parse_discovery_count(text)
-    record.tests_discovered = count
-    record.zero_tests = zero or (count == 0)
-    # Unknown discovery with exit 0: do not treat as meaningful pass
+    counts = parse_counts(text)
+    record.tests_discovered = counts["discovered"]
+    record.tests_passed = counts["passed"]
+    record.tests_failed = counts["failed"]
+    record.collection_errors = int(counts["errors"] or 0) if counts["collection_failed"] else 0
+    if counts["collection_failed"]:
+        record.collection_errors = max(record.collection_errors, 1)
+    record.zero_tests = bool(counts["zero"]) or (counts["discovered"] == 0)
+
     if record.zero_tests:
         record.passed = False
-    elif count is None:
-        # Could not confirm discovery — fail closed for the gate
+    elif counts["discovered"] is None:
         record.passed = False
-        record.error = record.error or "Could not confirm tests were discovered from suite output"
+        record.error = record.error or (
+            "Could not confirm tests were discovered from suite output"
+        )
     else:
-        record.passed = record.exit_code == 0 and count > 0
+        record.passed = record.exit_code == 0 and counts["discovered"] > 0
+
+    record.state = derive_verify_state(record)
     return record
 
 
@@ -265,6 +368,7 @@ def verify_edits(
             zero_tests=True,
             tests_discovered=0,
             passed=False,
+            state=VerifyState.RUNNER_MISSING,
             error="No test command detected and --test-cmd unset",
         )
         return record, relevant
@@ -273,20 +377,16 @@ def verify_edits(
 
     # If suite reported discovery but find_relevant_tests was empty, still use suite count
     if record.tests_discovered is None and relevant and record.exit_code == 0:
-        # Some quiet runners omit collection lines — if we know relevant tests exist
-        # and exit was 0, accept len(relevant) as discovery lower bound only when
-        # output does not explicitly say zero.
         if not record.zero_tests and not _ZERO_TEST_RE.search(record.output_excerpt or ""):
             record.tests_discovered = len(relevant)
             record.passed = True
+            record.state = VerifyState.TESTS_PASSED
 
     if not skip_smoke:
-        # Only smoke when primary suite looks usable or we want extra signal
         try:
             ok, detail = run_smoke_imports(
                 root, edited, verbose=verbose, error_print=error_print
             )
-            # Vacuous (no modules) → smoke_ran False
             if detail.startswith("no importable"):
                 record.smoke_ran = False
                 record.smoke_ok = None
@@ -297,12 +397,18 @@ def verify_edits(
                 record.smoke_detail = detail
                 if not ok:
                     record.passed = False
+                    if record.state == VerifyState.TESTS_PASSED:
+                        record.state = VerifyState.TESTS_FAILED
                     if not record.error:
                         record.error = f"Smoke import failed: {detail}"
         except Exception as err:  # noqa: BLE001
             record.smoke_ran = True
             record.smoke_ok = False
             record.smoke_detail = str(err)
+
+    # Re-derive after smoke adjustments
+    if record.ran and record.state not in (VerifyState.RUNNER_MISSING, VerifyState.TIMED_OUT):
+        record.state = derive_verify_state(record)
 
     return record, relevant
 

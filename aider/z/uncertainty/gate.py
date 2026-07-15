@@ -20,7 +20,7 @@ from typing import List, Optional, Sequence, Set
 from .risk import DetectionSignals, derive_confidence_tier
 from .schema import NodeStatus, NodeType, Tier, UncertaintyNode
 from .store import UncertaintyStore
-from .verify import VerificationRecord, gate_enabled, verify_edits
+from .verify import VerificationRecord, VerifyState, gate_enabled, verify_edits
 
 # Max reflect loops for generate-tests / fix-tests before hard-blocking.
 MAX_TEST_GEN_ATTEMPTS = 1
@@ -306,23 +306,38 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
     fix_attempts = int(getattr(coder, "_z_verify_fix_attempts", 0) or 0)
     force = _force_requested(coder)
 
-    # No relevant tests and suite found nothing → ask agent to generate once
-    needs_tests = (
-        not relevant
+    # Branch on structured VerifyState / suite discovery — NOT on empty
+    # find_relevant_tests(). "2 failed, 7 passed" must never become "no tests".
+    state = record.state or VerifyState.NOT_RUN
+    discovered = record.tests_discovered
+    needs_generate = (
+        state in (VerifyState.NO_TESTS, VerifyState.RUNNER_MISSING, VerifyState.NOT_RUN)
+        or (not record.ran)
         or record.zero_tests
-        or (record.tests_discovered is not None and record.tests_discovered == 0)
-        or not record.ran
+        or (discovered is not None and discovered == 0)
     )
+    needs_fix = (
+        state in (VerifyState.TESTS_FAILED, VerifyState.COLLECTION_FAILED)
+        or (
+            record.ran
+            and not record.meaningful_pass
+            and (discovered or 0) > 0
+        )
+    )
+    # Prefer fix when we know tests existed and failed
+    if needs_fix and (discovered or 0) > 0:
+        needs_generate = False
 
-    if needs_tests and not record.meaningful_pass:
+    if needs_generate and not record.meaningful_pass:
         node = _upsert_verification_node(
             store,
             title="Untested Path — cannot verify",
             summary="Commit blocked: no discovered tests for this change.",
             explanation=(
-                "Verification ran (or could not find a suite) and discovered zero "
-                "relevant tests. Empty/misconfigured suites do not count as success. "
+                f"Verification state: {state.value}. "
+                "Empty/misconfigured suites do not count as success. "
                 f"Command: {record.command or '(none)'}. "
+                f"Discovered: {discovered}. "
                 f"Error: {record.error or record.output_excerpt[-800:] or 'n/a'}."
             ),
             files=edited_list,
@@ -330,10 +345,11 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
             task_id=getattr(engine.ctx, "current_task_id", None),
             task_title=getattr(engine.ctx, "current_task_title", None),
         )
+        coder._z_gate_hold_dirty = True
         if not force and gen_attempts < MAX_TEST_GEN_ATTEMPTS:
             coder._z_verify_gen_attempts = gen_attempts + 1
             io.tool_warning(
-                "Verification: no tests discovered — generating tests before commit."
+                f"Verification: {state.value} — generating tests before commit."
             )
             return GateResult(
                 allow_commit=False,
@@ -343,18 +359,18 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
                 reason="missing tests — reflect to generate",
             )
 
-    elif record.ran and not record.meaningful_pass:
-        # Suite ran but failed (or smoke failed)
+    elif needs_fix and not record.meaningful_pass:
+        # Suite ran with discovered tests but failed (or collection/smoke failed)
         node = _upsert_verification_node(
             store,
-            title="Untested Path — cannot verify"
-            if record.zero_tests
-            else "Untested Path — tests failed, commit blocked",
+            title="Untested Path — tests failed, commit blocked",
             summary="Commit blocked: test suite did not meaningfully pass.",
             explanation=(
+                f"State: {state.value}\n"
                 f"Command: {record.command}\n"
                 f"Exit: {record.exit_code}\n"
-                f"Discovered: {record.tests_discovered}\n"
+                f"Discovered: {discovered} "
+                f"(passed={record.tests_passed} failed={record.tests_failed})\n"
                 f"Zero tests: {record.zero_tests}\n"
                 f"Smoke: ran={record.smoke_ran} ok={record.smoke_ok} "
                 f"({record.smoke_detail})\n"
@@ -365,9 +381,14 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
             task_id=getattr(engine.ctx, "current_task_id", None),
             task_title=getattr(engine.ctx, "current_task_title", None),
         )
+        coder._z_gate_hold_dirty = True
         if not force and fix_attempts < MAX_TEST_FIX_ATTEMPTS:
             coder._z_verify_fix_attempts = fix_attempts + 1
-            io.tool_warning("Verification: tests failed — attempting fix before commit.")
+            io.tool_warning(
+                f"Verification: {state.value} "
+                f"({record.tests_failed or '?'} failed / "
+                f"{discovered or '?'} discovered) — attempting fix before commit."
+            )
             return GateResult(
                 allow_commit=False,
                 reflect_message=_reflect_fix_tests(record, edited_list),
@@ -406,8 +427,14 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
         if getattr(coder, "verbose", False):
             io.tool_warning(f"Uncertainty analysis skipped: {err}")
 
-    # --- 3) Auto-act on High human-fixables (bounded) ---
-    if not force and record.meaningful_pass:
+    # --- 3) Auto-act (OFF by default — prevents scope-expanding remediations) ---
+    # Enable only with Z_UNCERTAINTY_AUTO_ACT=1. Even then, only narrow prompts.
+    auto_act_on = os.environ.get("Z_UNCERTAINTY_AUTO_ACT", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if auto_act_on and not force and record.meaningful_pass:
         try:
             from .auto_act import plan_auto_act
 
@@ -420,8 +447,9 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
             )
             if act.reflect_message:
                 coder._z_auto_act_attempts = auto_attempts + 1
+                coder._z_gate_hold_dirty = True
                 io.tool_warning(
-                    "Human-uncertainty auto-act: addressing high-priority worries before commit."
+                    "Uncertainty auto-act (enabled): addressing high-priority worries."
                 )
                 return GateResult(
                     allow_commit=False,
@@ -546,10 +574,11 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
             reason="verification did not meaningfully pass",
         )
 
-    # Reset retry counters on success
+    # Reset retry counters on success; allow dirty-commits again
     coder._z_verify_gen_attempts = 0
     coder._z_verify_fix_attempts = 0
     coder._z_auto_act_attempts = 0
+    coder._z_gate_hold_dirty = False
     return GateResult(
         allow_commit=True,
         verification=record,

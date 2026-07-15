@@ -48,9 +48,10 @@ def apply_action(
             prompt = default_prompt_for_node(node)
         else:
             prompt = (
-                f"Add tests for uncertainty '{node.title}' affecting "
+                f"Add focused product tests for '{node.title}' affecting "
                 f"{', '.join(node.files_affected[:5]) or 'the recent change'}. "
-                f"Recommended: {tests}"
+                f"Recommended: {tests}. "
+                "Test observable behavior only — never lexical policy about agent process."
             )
         store.update_status(node.id, NodeStatus.IN_PROGRESS)
         return ActionResult(NodeStatus.IN_PROGRESS, prompt=prompt, message="Marked In Progress; queued test addition.")

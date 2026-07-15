@@ -90,6 +90,58 @@ class RouteSkillTest(unittest.TestCase):
             self.assertFalse(d.apply)
             self.assertIn("mismatch", d.reason)
 
+    def test_skip_go_skill_on_python_repo(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+            (root / "main.py").write_text("print('hi')\n", encoding="utf-8")
+            sig = collect_repo_signals(root)
+            skill = Skill(
+                title="Create Go HTTP server",
+                description="Bootstrap a Go module",
+                content="## Steps\n1. go mod init\n",
+                kind="scaffold",
+                languages=["go"],
+                artifacts=["go.mod"],
+            )
+            d = route_skill(
+                skill, "Build a Python CLI markdown scanner", sig, score=0.9
+            )
+            self.assertFalse(d.apply)
+            self.assertIn("mismatch", d.reason)
+
+    def test_skip_go_skill_on_python_task_even_in_empty_repo(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            sig = collect_repo_signals(root)
+            skill = Skill(
+                title="Create Go HTTP server",
+                description="Bootstrap a Go module",
+                content="go mod init example\n",
+                kind="scaffold",
+                languages=["go"],
+            )
+            d = route_skill(
+                skill, "Create a Python CLI tool from scratch", sig, score=0.95
+            )
+            self.assertFalse(d.apply)
+            self.assertIn("mismatch", d.reason)
+
+    def test_skip_html_skill_on_python_task(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "app.py").write_text("x=1\n", encoding="utf-8")
+            sig = collect_repo_signals(root)
+            skill = Skill(
+                title="Single-file HTML task manager",
+                description="Browser todo app",
+                content="<html></html>",
+                kind="playbook",
+                languages=["html"],
+            )
+            d = route_skill(skill, "Python CLI task manager", sig, score=0.8)
+            self.assertFalse(d.apply)
+
     def test_skip_scaffold_when_artifacts_exist(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

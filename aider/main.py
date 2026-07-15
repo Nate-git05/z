@@ -647,22 +647,26 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
         )
         os.environ["OPENAI_ORGANIZATION"] = args.openai_organization_id
 
+    z_cli = os.environ.get("Z_CLI", "").strip().lower() in ("1", "true", "yes")
+    z_no_analytics = os.environ.get("Z_NO_ANALYTICS", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
     analytics = Analytics(
         logfile=args.analytics_log,
-        permanently_disable=args.analytics_disable,
+        permanently_disable=bool(args.analytics_disable or z_cli or z_no_analytics),
         posthog_host=args.analytics_posthog_host,
         posthog_project_api_key=args.analytics_posthog_project_api_key,
     )
-    if args.analytics is not False:
+    if args.analytics is not False and not z_cli and not z_no_analytics:
         if analytics.need_to_ask(args.analytics):
-            z_cli = os.environ.get("Z_CLI", "").strip().lower() in ("1", "true", "yes")
-            product = "Z" if z_cli else "Aider"
+            product = "Aider"
             io.tool_output(
                 f"{product} respects your privacy and never collects your code, chat messages,"
                 " keys or personal info."
             )
-            if not z_cli:
-                io.tool_output(f"For more info: {urls.analytics}")
+            io.tool_output(f"For more info: {urls.analytics}")
             disable = not io.confirm_ask(
                 f"Allow collection of anonymous analytics to help improve {product}?"
             )

@@ -26,6 +26,7 @@ from aider.z.uncertainty.schema import (  # noqa: E402
 from aider.z.uncertainty.store import UncertaintyStore  # noqa: E402
 from aider.z.uncertainty.verify import (  # noqa: E402
     VerificationRecord,
+    VerifyState,
     detect_test_command,
     parse_discovery_count,
     path_to_importable,
@@ -61,9 +62,24 @@ class DetectCommandTest(unittest.TestCase):
             (root / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
             self.assertEqual(detect_test_command(root), "python -m pytest -q")
 
-    def test_detects_tests_dir(self):
+    def test_detects_tests_dir_uses_unittest_when_no_pytest_declared(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
+            tests = root / "tests"
+            tests.mkdir()
+            (tests / "test_foo.py").write_text(
+                "import unittest\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                detect_test_command(root),
+                "python -m unittest discover -s tests -v",
+            )
+
+    def test_detects_pytest_when_declared(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "requirements.txt").write_text("pytest>=7\n", encoding="utf-8")
             tests = root / "tests"
             tests.mkdir()
             (tests / "test_foo.py").write_text("def test_a():\n    assert True\n", encoding="utf-8")
@@ -188,6 +204,7 @@ class PrepareCommitTest(unittest.TestCase):
             tests_discovered=0,
             zero_tests=True,
             passed=False,
+            state=VerifyState.NO_TESTS,
             output_excerpt="collected 0 items\n",
         )
         with patch(
@@ -211,6 +228,9 @@ class PrepareCommitTest(unittest.TestCase):
             tests_discovered=2,
             zero_tests=False,
             passed=False,
+            state=VerifyState.TESTS_FAILED,
+            tests_failed=1,
+            tests_passed=1,
             output_excerpt="1 failed, 1 passed\n",
         )
         with patch(
@@ -223,6 +243,33 @@ class PrepareCommitTest(unittest.TestCase):
         self.assertIn("test suite failed", result.reflect_message)
         self.assertEqual(self.coder._z_verify_fix_attempts, 1)
 
+    def test_failed_suite_not_misreported_as_no_tests_when_relevant_empty(self):
+        """Regression: '2 failed, 7 passed' must FIX, not GENERATE — even if relevant=[]."""
+        record = VerificationRecord(
+            ran=True,
+            command="python -m unittest discover -s tests -v",
+            exit_code=1,
+            tests_discovered=9,
+            zero_tests=False,
+            passed=False,
+            state=VerifyState.TESTS_FAILED,
+            tests_failed=2,
+            tests_passed=7,
+            output_excerpt="2 failed, 7 passed in 0.4s\n",
+        )
+        with patch(
+            "aider.z.uncertainty.gate.verify_edits",
+            return_value=(record, []),  # empty relevant was the old bug trigger
+        ):
+            result = prepare_commit(self.coder, ["app.py"])
+        self.assertFalse(result.allow_commit)
+        self.assertIsNotNone(result.reflect_message)
+        self.assertIn("test suite failed", result.reflect_message)
+        self.assertNotIn("Write a focused automated test", result.reflect_message)
+        self.assertEqual(self.coder._z_verify_fix_attempts, 1)
+        self.assertEqual(self.coder._z_verify_gen_attempts, 0)
+        self.assertTrue(self.coder._z_gate_hold_dirty)
+
     def test_meaningful_pass_allows_commit(self):
         record = VerificationRecord(
             ran=True,
@@ -231,6 +278,7 @@ class PrepareCommitTest(unittest.TestCase):
             tests_discovered=2,
             zero_tests=False,
             passed=True,
+            state=VerifyState.TESTS_PASSED,
             smoke_ran=True,
             smoke_ok=True,
         )
@@ -251,6 +299,7 @@ class PrepareCommitTest(unittest.TestCase):
             tests_discovered=2,
             zero_tests=False,
             passed=True,
+            state=VerifyState.TESTS_PASSED,
         )
         medium_node = UncertaintyNode(
             title="Requirement gap: listing",
@@ -287,6 +336,7 @@ class PrepareCommitTest(unittest.TestCase):
             tests_discovered=2,
             zero_tests=False,
             passed=True,
+            state=VerifyState.TESTS_PASSED,
         )
         medium_node = UncertaintyNode(
             title="API assumption",
@@ -316,6 +366,7 @@ class PrepareCommitTest(unittest.TestCase):
             tests_discovered=1,
             zero_tests=False,
             passed=False,
+            state=VerifyState.TESTS_FAILED,
             output_excerpt="1 failed\n",
         )
         self.coder.force_commit = True
@@ -337,6 +388,7 @@ class PrepareCommitTest(unittest.TestCase):
             tests_discovered=1,
             zero_tests=False,
             passed=False,
+            state=VerifyState.TESTS_FAILED,
             output_excerpt="1 failed\n",
         )
         self.coder._z_verify_fix_attempts = 2
@@ -372,7 +424,12 @@ class MeaningfulPassTest(unittest.TestCase):
 
     def test_pass_with_discovery(self):
         r = VerificationRecord(
-            ran=True, exit_code=0, tests_discovered=3, zero_tests=False, passed=True
+            ran=True,
+            exit_code=0,
+            tests_discovered=3,
+            zero_tests=False,
+            passed=True,
+            state=VerifyState.TESTS_PASSED,
         )
         self.assertTrue(r.meaningful_pass)
 

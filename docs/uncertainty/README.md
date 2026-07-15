@@ -28,18 +28,24 @@ Traditional “confidence scores” don’t help — they’re usually the model
 ```text
 task
   → structured checklist (confirm when ambiguous)
-  → edit
+  → edit (dirty-commits held while verify reflect is pending)
   → settle edits
-  → verify (real suite + smoke)       # evidence for Confidence
+  → verify → structured VerifyState (NO_TESTS / PASSED / FAILED / …)
   → detect (human-worry detectors)  # context-aware, capped
   → checklist semantic re-score     # evidence + optional model JSON
-  → act on High auto-fixables        # tests / gaps (bounded)
+  → auto-act OFF by default (Z_UNCERTAINTY_AUTO_ACT=1 to enable)
   → gate (High block / Medium ack / Low ok)
   → commit only with VerificationRecord
   → /uncertainties for leftovers
 ```
 
 Tiers are **Low / Medium / High**. There are **no fake confidence percentages**.
+
+**VerifyState** distinguishes `NO_TESTS` from `TESTS_FAILED` — a suite that reports
+`2 failed, 7 passed` always takes the fix path, never “generate tests.”
+
+Dependency-free Python projects under `tests/` use
+`python -m unittest discover -s tests -v` unless pytest is declared.
 
 ---
 
