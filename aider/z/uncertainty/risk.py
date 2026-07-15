@@ -61,13 +61,15 @@ def derive_risk_tier(signals: DetectionSignals, node_type: NodeType) -> Tier:
     if signals.high_stakes_hit or signals.migration_hit:
         risk = _max_tier(risk, Tier.MEDIUM)
 
-    if node_type == NodeType.MIGRATION_RISK:
+    if node_type in (NodeType.MIGRATION_RISK, NodeType.HIGH_STAKES):
         risk = _max_tier(risk, Tier.MEDIUM)
 
     if node_type in (
         NodeType.SHARED_LOGIC,
         NodeType.UNVERIFIABLE_CONFIG,
         NodeType.API_ASSUMPTION,
+        NodeType.FAILURE_BLIND_SPOT,
+        NodeType.FRAGILE_LOGIC,
     ):
         if signals.high_stakes_hit:
             risk = _max_tier(risk, Tier.HIGH)
@@ -81,6 +83,9 @@ def derive_risk_tier(signals: DetectionSignals, node_type: NodeType) -> Tier:
 
     if signals.tests_relevant_exist is True and signals.tests_passed is False:
         risk = _max_tier(risk, Tier.HIGH)
+
+    if signals.tests_relevant_exist is False and node_type == NodeType.MISSING_TEST:
+        risk = _max_tier(risk, Tier.MEDIUM)
 
     if node_type == NodeType.REQUIREMENT_GAP:
         risk = _max_tier(risk, Tier.MEDIUM)

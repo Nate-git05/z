@@ -26,17 +26,20 @@ from .verify import VerificationRecord, gate_enabled, verify_edits
 MAX_TEST_GEN_ATTEMPTS = 1
 MAX_TEST_FIX_ATTEMPTS = 2
 
-# Medium types that can soft-block. Pattern/scaffold noise is excluded so
-# empty-repo "no matching pattern" findings stay informational.
+# Medium types that can soft-block. Pattern/scaffold noise and Evidence of Safety
+# are excluded — they stay informational.
 _MEDIUM_GATE_TYPES = {
     NodeType.REQUIREMENT_GAP,
     NodeType.UNVERIFIABLE_CONFIG,
     NodeType.API_ASSUMPTION,
     NodeType.MIGRATION_RISK,
+    NodeType.HIGH_STAKES,
     NodeType.EDGE_CASE,
     NodeType.TODO_COMMENT,
     NodeType.SHARED_LOGIC,
     NodeType.MISSING_TEST,
+    NodeType.FAILURE_BLIND_SPOT,
+    NodeType.FRAGILE_LOGIC,
 }
 
 
@@ -299,7 +302,7 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
     if needs_tests and not record.meaningful_pass:
         node = _upsert_verification_node(
             store,
-            title="Missing Test — cannot verify",
+            title="Untested Path — cannot verify",
             summary="Commit blocked: no discovered tests for this change.",
             explanation=(
                 "Verification ran (or could not find a suite) and discovered zero "
@@ -329,9 +332,9 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
         # Suite ran but failed (or smoke failed)
         node = _upsert_verification_node(
             store,
-            title="Missing Test — cannot verify"
+            title="Untested Path — cannot verify"
             if record.zero_tests
-            else "Relevant tests failed — commit blocked",
+            else "Untested Path — tests failed, commit blocked",
             summary="Commit blocked: test suite did not meaningfully pass.",
             explanation=(
                 f"Command: {record.command}\n"
@@ -364,7 +367,7 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
             if existing.signals.get("verification_blocked"):
                 store.update_status(existing.id, NodeStatus.RESOLVED)
 
-    # --- 2) Uncertainty analysis with real test_outcome ---
+    # --- 2) Human-worry detectors + structured checklist rescore ---
     try:
         content = getattr(coder, "partial_response_content", None) or ""
         ingest = getattr(coder, "_ingest_uncertainty_self_reports", None)
@@ -388,7 +391,35 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
         if getattr(coder, "verbose", False):
             io.tool_warning(f"Uncertainty analysis skipped: {err}")
 
-    # --- 3) Tiered policy ---
+    # --- 3) Auto-act on High human-fixables (bounded) ---
+    if not force and record.meaningful_pass:
+        try:
+            from .auto_act import plan_auto_act
+
+            auto_attempts = int(getattr(coder, "_z_auto_act_attempts", 0) or 0)
+            act = plan_auto_act(
+                store,
+                store.list(include_resolved=False),
+                attempts=auto_attempts,
+                max_attempts=1,
+            )
+            if act.reflect_message:
+                coder._z_auto_act_attempts = auto_attempts + 1
+                io.tool_warning(
+                    "Human-uncertainty auto-act: addressing high-priority worries before commit."
+                )
+                return GateResult(
+                    allow_commit=False,
+                    reflect_message=act.reflect_message,
+                    verification=record,
+                    blocked_high=list(act.acted_on),
+                    reason="auto-act on high human worries",
+                )
+        except Exception as err:  # noqa: BLE001
+            if getattr(coder, "verbose", False):
+                io.tool_warning(f"Auto-act skipped: {err}")
+
+    # --- 4) Tiered gate policy ---
     open_nodes = store.list(include_resolved=False)
     high, medium = classify_nodes(open_nodes)
 
@@ -398,7 +429,7 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
             high.append(
                 _upsert_verification_node(
                     store,
-                    title="Missing Test — cannot verify",
+                    title="Untested Path — cannot verify",
                     summary="Commit blocked: verification did not meaningfully pass.",
                     explanation=record.error or record.output_excerpt or "verification failed",
                     files=edited_list,
@@ -503,6 +534,7 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
     # Reset retry counters on success
     coder._z_verify_gen_attempts = 0
     coder._z_verify_fix_attempts = 0
+    coder._z_auto_act_attempts = 0
     return GateResult(
         allow_commit=True,
         verification=record,

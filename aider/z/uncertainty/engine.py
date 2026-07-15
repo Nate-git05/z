@@ -8,13 +8,29 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Sequence, Set
 
-from .checklist import TaskChecklist, decompose_request, infer_gap_statuses_from_summary
+from .checklist import (
+    TaskChecklist,
+    bind_evidence,
+    checklist_gap_details,
+    decompose_request,
+    rescore_checklist_with_evidence,
+    rescore_checklist_with_model,
+)
+from .context import (
+    assess_repo_maturity,
+    filter_scaffold_files,
+    prioritize_nodes,
+    should_emit_new_file_noise,
+    should_emit_pattern_misfit,
+)
 from .detectors import (
     PatternSearchResult,
     count_symbol_references,
     detect_api_assumptions,
     detect_blast_radius,
     detect_edge_cases,
+    detect_failure_blind_spots,
+    detect_fragile_logic,
     detect_high_confidence,
     detect_high_stakes_and_migration,
     detect_missing_or_failing_tests,
@@ -49,6 +65,8 @@ class SessionContext:
     migration_data_impact: Optional[str] = None
     new_files_this_turn: List[str] = field(default_factory=list)
     pattern_results: dict = field(default_factory=dict)
+    # Optional callable(prompt: str) -> str for structured checklist rescore
+    model_complete: Optional[object] = None
 
 
 class UncertaintyEngine:
@@ -147,9 +165,16 @@ class UncertaintyEngine:
             created_by_user=self.ctx.user_label,
         )
 
+        maturity = assess_repo_maturity(root)
+        emit_new_file = should_emit_new_file_noise(maturity)
+        emit_misfit = should_emit_pattern_misfit(maturity)
+        # Soften blast radius in greenfield (few peers → noisy)
+        if maturity == "greenfield":
+            signals.blast_radius_threshold = max(signals.blast_radius_threshold, 20)
+
         nodes: List[UncertaintyNode] = []
 
-        # Tests
+        # Tests → Untested Path
         relevant = find_relevant_tests(root, files, symbols)
         nodes.extend(
             detect_missing_or_failing_tests(
@@ -170,7 +195,7 @@ class UncertaintyEngine:
             )
         )
 
-        # API / MCP
+        # API / MCP → Unverified Assumption
         nodes.extend(
             detect_api_assumptions(
                 signals,
@@ -181,45 +206,51 @@ class UncertaintyEngine:
             )
         )
 
-        # Patterns / new files
+        # Patterns / new files (context-aware noise)
+        candidate_new = new_files or [
+            f
+            for f in files
+            if not (self.ctx.pattern_results.get(f) or PatternSearchResult()).matches
+            and self._looks_new(f)
+        ]
+        candidate_new = filter_scaffold_files(candidate_new)
         nodes.extend(
             detect_pattern_issues(
                 signals,
-                new_files=new_files or [
-                    f
-                    for f in files
-                    if not (self.ctx.pattern_results.get(f) or PatternSearchResult()).matches
-                    and self._looks_new(f)
-                ],
+                new_files=candidate_new,
                 pattern_results=self.ctx.pattern_results,
+                emit_new_file_noise=emit_new_file,
+                emit_pattern_misfit=emit_misfit,
                 **meta,
             )
         )
-        # Conflicting patterns on non-new files
         for f in files:
             pr = self.ctx.pattern_results.get(f)
-            if pr and pr.conflicting and f not in new_files:
+            if pr and pr.conflicting and f not in candidate_new:
                 nodes.extend(
                     detect_pattern_issues(
                         signals,
                         new_files=[f],
                         pattern_results={f: pr},
+                        emit_new_file_noise=False,
+                        emit_pattern_misfit=True,
                         **meta,
                     )
                 )
 
-        # Blast radius
-        for sym in symbols or self._extract_symbols(contents):
-            count, refs = count_symbol_references(root, sym, exclude_files=files)
-            nodes.extend(
-                detect_blast_radius(
-                    signals,
-                    reference_count=count,
-                    referenced_symbol=sym,
-                    referencing_files=refs,
-                    **meta,
+        # Integration ripple (blast radius)
+        if maturity != "greenfield":
+            for sym in symbols or self._extract_symbols(contents):
+                count, refs = count_symbol_references(root, sym, exclude_files=files)
+                nodes.extend(
+                    detect_blast_radius(
+                        signals,
+                        reference_count=count,
+                        referenced_symbol=sym,
+                        referencing_files=refs,
+                        **meta,
+                    )
                 )
-            )
 
         # TODOs
         todos_by_file = {}
@@ -236,24 +267,47 @@ class UncertaintyEngine:
             detect_unverifiable_config(signals, config_refs_by_file=config_refs, **meta)
         )
 
-        # Edge cases
+        # Fragile logic + failure blind spots
+        nodes.extend(detect_fragile_logic(signals, file_contents=contents, **meta))
+        nodes.extend(detect_failure_blind_spots(signals, file_contents=contents, **meta))
+
+        # Edge case blind spots (model-reported)
         nodes.extend(
             detect_edge_cases(signals, edge_cases=self.ctx.edge_cases_from_model, **meta)
         )
 
-        # Requirement gaps
+        # Requirement gaps — evidence-bound structured rescore
         if run_gap_analysis and self.ctx.checklist:
-            summary = " ".join(files) + " " + " ".join(contents.values())[:4000]
-            infer_gap_statuses_from_summary(self.ctx.checklist, summary)
+            evidence = bind_evidence(
+                self.ctx.checklist,
+                files_changed=files,
+                file_contents=contents,
+                symbols=symbols,
+                test_files=relevant,
+            )
+            model_complete = getattr(self.ctx, "model_complete", None)
+            if callable(model_complete):
+                rescore_checklist_with_model(
+                    self.ctx.checklist, evidence, model_complete=model_complete
+                )
+            else:
+                rescore_checklist_with_evidence(self.ctx.checklist, evidence)
+            gaps = checklist_gap_details(self.ctx.checklist, evidence)
             nodes.extend(
-                detect_requirement_gaps(signals, checklist=self.ctx.checklist, **meta)
+                detect_requirement_gaps(
+                    signals,
+                    checklist=self.ctx.checklist,
+                    gap_details=gaps,
+                    **meta,
+                )
             )
 
-        # High confidence positive signal
+        # Evidence of Safety (positive)
         nodes.extend(detect_high_confidence(signals, **meta))
 
-        # Deduplicate by (type, title, files)
+        # Cap noise: keep top actionable nodes this turn
         deduped = self._dedupe(nodes)
+        deduped = prioritize_nodes(deduped, limit=8)
         self.store.add_many(deduped)
         return deduped
 

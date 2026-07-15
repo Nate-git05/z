@@ -556,6 +556,7 @@ class Coder:
         self.last_verification = None
         self._z_verify_gen_attempts = 0
         self._z_verify_fix_attempts = 0
+        self._z_auto_act_attempts = 0
         try:
             from aider.z.uncertainty.engine import attach_engine_to_coder
 

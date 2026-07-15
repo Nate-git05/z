@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Optional
 
-from .schema import NodeStatus, UncertaintyNode
+from .auto_act import default_prompt_for_node
+from .schema import NodeStatus, NodeType, UncertaintyNode
 from .store import UncertaintyStore
 
 
@@ -29,27 +30,28 @@ def apply_action(
     """
     Map user follow-up to status + optional agent prompt.
 
-    Fix this → In Progress + suggested_prompt (or fix-oriented prompt)
+    Fix this → In Progress + type-aware human prompt
     Add a test → In Progress + test prompt
-    Explain further → stays Open / Needs Human Review + explain prompt
-    Ignore → Ignored
+    Explain further → Needs Human Review + explain prompt
+    Ignore → Ignored (does not clear High for the commit gate)
     Custom → In Progress + custom text
     """
     action = (action or "").strip().lower()
     if action in ("fix", "fix this", "f"):
-        prompt = node.suggested_prompt or (
-            f"Fix the issue described in uncertainty node '{node.title}': {node.summary}"
-        )
+        prompt = default_prompt_for_node(node)
         store.update_status(node.id, NodeStatus.IN_PROGRESS)
         return ActionResult(NodeStatus.IN_PROGRESS, prompt=prompt, message="Marked In Progress; queued fix.")
 
     if action in ("test", "add a test", "add test", "t"):
         tests = "; ".join(node.suggested_tests) if node.suggested_tests else node.summary
-        prompt = (
-            f"Add tests for uncertainty '{node.title}' affecting "
-            f"{', '.join(node.files_affected[:5]) or 'the recent change'}. "
-            f"Recommended: {tests}"
-        )
+        if node.type == NodeType.MISSING_TEST:
+            prompt = default_prompt_for_node(node)
+        else:
+            prompt = (
+                f"Add tests for uncertainty '{node.title}' affecting "
+                f"{', '.join(node.files_affected[:5]) or 'the recent change'}. "
+                f"Recommended: {tests}"
+            )
         store.update_status(node.id, NodeStatus.IN_PROGRESS)
         return ActionResult(NodeStatus.IN_PROGRESS, prompt=prompt, message="Marked In Progress; queued test addition.")
 
