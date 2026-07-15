@@ -53,6 +53,8 @@ indexes it in ChromaDB. Before a task, the agent retrieves matching skills by
 vector search and loads the body via `path`. After a solid turn it may offer to
 capture a new skill — and only shows metadata if you ask to see it.
 
+Full write-up: [docs/skills/README.md](docs/skills/README.md)
+
 ### Bring your own model
 
 Works with Claude, GPT, or other providers via your own API key.
