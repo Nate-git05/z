@@ -39,6 +39,11 @@ def _as_str_list(value: Any) -> List[str]:
     return [str(value).strip()]
 
 
+# scaffold = one-shot bootstrap; playbook = reusable ongoing guidance
+SKILL_KIND_SCAFFOLD = "scaffold"
+SKILL_KIND_PLAYBOOK = "playbook"
+
+
 @dataclass
 class Skill:
     title: str
@@ -57,6 +62,11 @@ class Skill:
     project_types: List[str] = field(default_factory=list)
     triggers: List[str] = field(default_factory=list)
     source: str = "generate"  # paste | generate | capture
+    # Router fields
+    kind: str = SKILL_KIND_PLAYBOOK  # scaffold | playbook
+    languages: List[str] = field(default_factory=list)
+    artifacts: List[str] = field(default_factory=list)  # paths that mean "already done"
+    apply_once: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -69,6 +79,8 @@ class Skill:
             " ".join(self.tags or []),
             " ".join(self.triggers or []),
             " ".join(self.project_types or []),
+            " ".join(self.languages or []),
+            self.kind or "",
         ]
         return "\n".join(p for p in parts if p).strip()
 
@@ -81,6 +93,10 @@ class Skill:
             "tags": list(self.tags or []),
             "project_types": list(self.project_types or []),
             "triggers": list(self.triggers or []),
+            "languages": list(self.languages or []),
+            "kind": self.kind,
+            "artifacts": list(self.artifacts or []),
+            "apply_once": self.apply_once,
             "path": self.path,
             "scope": self.scope,
             "source": self.source,
@@ -101,11 +117,21 @@ class Skill:
             "tags": list(self.tags or []),
             "project_types": list(self.project_types or []),
             "triggers": list(self.triggers or []),
+            "languages": list(self.languages or []),
+            "kind": self.kind,
+            "artifacts": list(self.artifacts or []),
+            "apply_once": self.apply_once,
             "source": self.source,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Skill":
+        kind = (data.get("kind") or SKILL_KIND_PLAYBOOK).strip().lower()
+        if kind not in (SKILL_KIND_SCAFFOLD, SKILL_KIND_PLAYBOOK):
+            kind = SKILL_KIND_PLAYBOOK
+        apply_once = data.get("apply_once")
+        if apply_once is None:
+            apply_once = kind == SKILL_KIND_SCAFFOLD
         return cls(
             id=str(data.get("id") or uuid.uuid4()),
             title=data.get("title") or "Untitled skill",
@@ -123,6 +149,10 @@ class Skill:
             project_types=_as_str_list(data.get("project_types")),
             triggers=_as_str_list(data.get("triggers")),
             source=data.get("source") or "generate",
+            kind=kind,
+            languages=_as_str_list(data.get("languages")),
+            artifacts=_as_str_list(data.get("artifacts")),
+            apply_once=bool(apply_once),
         )
 
 
@@ -141,6 +171,10 @@ class SkillIndexEntry:
     tags: List[str] = field(default_factory=list)
     project_types: List[str] = field(default_factory=list)
     triggers: List[str] = field(default_factory=list)
+    languages: List[str] = field(default_factory=list)
+    kind: str = SKILL_KIND_PLAYBOOK
+    artifacts: List[str] = field(default_factory=list)
+    apply_once: bool = False
 
     def match_text(self) -> str:
         bits = [
@@ -149,5 +183,7 @@ class SkillIndexEntry:
             " ".join(self.tags or []),
             " ".join(self.triggers or []),
             " ".join(self.project_types or []),
+            " ".join(self.languages or []),
+            self.kind or "",
         ]
         return " ".join(b for b in bits if b).lower()

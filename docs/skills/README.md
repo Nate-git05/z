@@ -30,9 +30,20 @@ You re-explain the same Stripe signature check. You restate the same Alembic exp
 1. **Create** — paste a playbook, generate from a prompt, or capture after a completed task  
 2. **Store** — markdown file in `~/.z/skills/*.md` with metadata (including `path`)  
 3. **Index** — metadata + embedding in local **ChromaDB** (`~/.z/chroma/skills`)  
-4. **Apply** — before a task, Z queries the index, opens the file at `path`, and follows the skill  
+4. **Route + apply** — before a task *and again on each workflow step* (reflections), Z retrieves candidates, then a **skill router** decides apply vs skip (language/stack match, scaffold already done, already injected). Only approved skills are injected.
 
-Z owns metadata inference (`title`, `description`, `tags`, `triggers`, `project_types`, `path`). You write the body; you don’t fill out a form.
+Z owns metadata inference (`title`, `description`, `tags`, `triggers`, `project_types`, `kind`, `languages`, `artifacts`, `path`). You write the body; you don’t fill out a form.
+
+### Skill router (apply vs skip)
+
+| Kind | Meaning | When it applies |
+|------|---------|-----------------|
+| **scaffold** | One-shot bootstrap (“create Go project”) | Only while artifacts are missing and the step is scaffolding |
+| **playbook** | Ongoing guidance (“how we do auth”) | When the *current* step matches; not re-injected every turn |
+
+Wrong-stack skills are skipped (e.g. HTML skill on a Go repo). Scaffold skills stop firing once `go.mod` / listed artifacts exist — so creating a Go server won’t keep re-applying “create Go file” on every later turn.
+
+Skills can be injected **progressively** during a task (turn start + each reflection), not only once at the beginning.
 
 ---
 

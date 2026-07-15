@@ -64,6 +64,8 @@ def relevance_score(task: str, entry: SkillIndexEntry) -> float:
                 " ".join(entry.tags or []),
                 " ".join(entry.triggers or []),
                 " ".join(entry.project_types or []),
+                " ".join(entry.languages or []),
+                entry.kind or "",
             ]
         )
     )
@@ -107,6 +109,16 @@ def match_skills(
 
 
 def _entry_from_row(r: dict, *, source: str) -> SkillIndexEntry:
+    kind = (r.get("kind") or "playbook")
+    if isinstance(kind, str):
+        kind = kind.strip().lower()
+    else:
+        kind = "playbook"
+    if kind not in ("scaffold", "playbook"):
+        kind = "playbook"
+    apply_once = r.get("apply_once")
+    if apply_once is None:
+        apply_once = kind == "scaffold"
     return SkillIndexEntry(
         id=str(r.get("id") or ""),
         title=r.get("title") or "",
@@ -119,6 +131,10 @@ def _entry_from_row(r: dict, *, source: str) -> SkillIndexEntry:
         tags=_as_str_list(r.get("tags")),
         project_types=_as_str_list(r.get("project_types")),
         triggers=_as_str_list(r.get("triggers")),
+        languages=_as_str_list(r.get("languages")),
+        kind=kind,
+        artifacts=_as_str_list(r.get("artifacts")),
+        apply_once=bool(apply_once),
     )
 
 

@@ -988,10 +988,10 @@ class Coder:
         else:
             message = user_message
 
-        # Start-of-task requirement checklist (surfaced before implementation when feasible)
+        # Start-of-task: checklist + first skill-router checkpoint
         if message and not (isinstance(message, str) and message.startswith("/")):
             user_text = user_message if isinstance(user_message, str) else message
-            self._maybe_pull_skills(user_text)
+            self._maybe_pull_skills(user_text, checkpoint="turn")
             self._maybe_begin_uncertainty_task(user_text)
 
         while message:
@@ -1007,6 +1007,17 @@ class Coder:
 
             self.num_reflections += 1
             message = self.reflected_message
+            # Mid-workflow checkpoint: re-route skills for the *next* step
+            # (e.g. after verify gate asks for tests, or a requirement gap).
+            # Injects newly relevant skills; skips scaffolds already satisfied.
+            if isinstance(message, str) and not message.startswith("/"):
+                self._maybe_pull_skills(message, checkpoint="reflect")
+                try:
+                    from aider.z.skills.session import note_scaffold_progress
+
+                    note_scaffold_progress(root=getattr(self, "root", None))
+                except Exception:
+                    pass
 
         # After a non-trivial completed edit turn, offer to save a reusable skill
         if (
@@ -1015,10 +1026,22 @@ class Coder:
             and self.aider_edited_files
             and not self.reflected_message
         ):
+            try:
+                from aider.z.skills.session import note_scaffold_progress
+
+                note_scaffold_progress(root=getattr(self, "root", None))
+            except Exception:
+                pass
             self._maybe_suggest_skill(user_message)
 
-    def _maybe_pull_skills(self, user_message: str):
-        """Auto-pull full skill content when the task matches the session index."""
+    def _maybe_pull_skills(self, user_message: str, *, checkpoint: str = "turn"):
+        """
+        Skill-router checkpoint: retrieve candidates, route apply/skip, inject
+        only skills needed for *this* workflow step.
+
+        Called at turn start and again on each reflection so skills can be
+        injected progressively (not one-and-done).
+        """
         if not user_message or len(user_message.strip()) < 12:
             return
         try:
@@ -1026,24 +1049,35 @@ class Coder:
                 format_skills_for_context,
                 get_session_skill_index,
                 load_skills_for_session,
-                select_relevant_skills,
+                pull_skills_for_checkpoint,
             )
 
             if not get_session_skill_index():
                 load_skills_for_session(io=None)
 
-            skills = select_relevant_skills(user_message)
+            skills, skip_reasons = pull_skills_for_checkpoint(
+                user_message,
+                root=getattr(self, "root", None),
+                limit=2,
+                checkpoint=checkpoint,
+            )
+            if getattr(self, "verbose", False) and skip_reasons:
+                for reason in skip_reasons[:6]:
+                    self.io.tool_output(f"Skill skip — {reason}")
             if not skills:
                 return
-            block = format_skills_for_context(skills)
+            block = format_skills_for_context(skills, checkpoint=checkpoint)
             if not block:
                 return
             names = ", ".join(s.title for s in skills)
-            self.io.tool_output(f"Applying skill(s): {names}")
-            # Inject as a user/assistant exchange so the model sees it this turn
+            label = "Applying skill(s)" if checkpoint == "turn" else "Injecting skill(s) for this step"
+            self.io.tool_output(f"{label}: {names}")
             self.cur_messages += [
                 {"role": "user", "content": block},
-                {"role": "assistant", "content": "I'll follow those skills where they apply."},
+                {
+                    "role": "assistant",
+                    "content": "I'll follow those skills for this step where they apply.",
+                },
             ]
         except Exception:
             if getattr(self, "verbose", False):

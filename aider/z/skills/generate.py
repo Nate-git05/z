@@ -21,6 +21,9 @@ Respond with ONLY a JSON object (no markdown fences) with keys:
   "tags": optional array of short keywords
   "triggers": optional array of words/phrases that should activate this skill
   "project_types": optional array from [api, backend, frontend, mobile, infra, data, general]
+  "kind": "scaffold" for one-shot project bootstrap, or "playbook" for ongoing reusable guidance
+  "languages": optional array like ["go","python","typescript"]
+  "artifacts": optional array of files/dirs that mean the scaffold is done (e.g. ["go.mod","main.go"])
 """
 
 
