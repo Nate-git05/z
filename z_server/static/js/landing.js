@@ -11,10 +11,10 @@
     { html: "" },
     { html: '<span class="hi">Uncertainty tree</span> <span class="dim">(sort=risk)</span>' },
     { html: '<span class="dim">Add Stripe Billing / Backend</span>' },
-    { html: '  1. Assumed response shape for stripe  <span class="dim">API Assumption</span>  <span class="hi">risk=High</span>' },
-    { html: '  2. Database schema / migration change  <span class="dim">Migration Risk</span>  <span class="hi">risk=Medium</span>' },
+    { html: '  1. Assumed response shape for stripe  <span class="tag">API Assumption</span>  <span class="hi">risk=High</span>' },
+    { html: '  2. Database schema / migration change  <span class="tag">Migration Risk</span>  <span class="hi">risk=Medium</span>' },
     { html: '<span class="dim">Add Stripe Billing / Tests</span>' },
-    { html: '  3. No relevant tests found  <span class="dim">Missing Test</span>  <span class="hi">risk=Medium</span>' },
+    { html: '  3. No relevant tests found  <span class="tag">Missing Test</span>  <span class="hi">risk=Medium</span>' },
     { html: "" },
     { html: '<span class="ok">3 nodes · /uncertainties to review</span>' },
   ];

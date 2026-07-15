@@ -7,236 +7,300 @@
   <meta name="description" content="Z is a coding agent that surfaces structured uncertainty as you work — and learns reusable skills from your repo. Open for early testing." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Source+Sans+3:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/css/landing.css" />
 </head>
 <body>
-  <div class="lp-wrap">
-    <nav class="lp-nav" aria-label="Primary">
-      <a class="lp-brand" href="/">Z</a>
-      <div class="lp-nav-links">
-        <a class="ghost" href="#how">How it works</a>
-        <a class="ghost" href="#skills">Skills</a>
-        <a class="ghost" href="#detectors">Detectors</a>
-        <a class="ghost" href="#install">Try it</a>
+  <header class="lp-header">
+    <div class="lp-header-inner">
+      <a class="lp-logo" href="/" aria-label="Z home">
+        <span class="lp-logo-mark" aria-hidden="true">Z</span>
+        <span class="lp-logo-word">Z</span>
+      </a>
+      <nav class="lp-nav" aria-label="Primary">
+        <a href="#why">Why</a>
+        <a href="#how">How it works</a>
+        <a href="#skills">Skills</a>
+        <a href="#detectors">Detectors</a>
+        <a href="#install">Try it</a>
         {% if user %}
-          <a class="ghost" href="/app/integrations">App</a>
-          <span class="ghost" style="color:var(--muted)">{{ user.display_name() }}</span>
+          <a href="/app/integrations">App</a>
         {% else %}
-          <a class="ghost" href="/login">Sign in</a>
+          <a href="/login">Sign in</a>
         {% endif %}
-        <a class="lp-btn" href="#waitlist">Join waitlist</a>
-      </div>
-    </nav>
+      </nav>
+      <a class="lp-btn lp-btn-sm" href="#waitlist">Join waitlist</a>
+    </div>
+  </header>
 
+  <main class="lp-main">
     <section class="lp-hero" aria-label="Hero">
       <div class="lp-hero-copy">
-        <p class="lp-eyebrow">Open for early testing</p>
-        <h1>A coding agent that <span class="accent">knows what it doesn’t know</span></h1>
-        <p class="lede">
+        <p class="lp-eyebrow">
+          <span class="lp-pulse" aria-hidden="true"></span>
+          Open for early testing
+        </p>
+        <h1>A coding agent that <span class="muted">knows what it doesn’t know</span></h1>
+        <p class="lp-subhead">
           Z attaches structured, reviewable uncertainty to the code it touches —
           and learns reusable skills from your work so it doesn’t ask the same
           questions twice.
         </p>
         <div class="lp-hero-ctas">
           <a class="lp-btn" href="#install">Try early testing</a>
-          <a class="lp-btn lp-btn-ghost" href="#waitlist">Join the waitlist</a>
+          <a class="lp-btn lp-btn-outline" href="#waitlist">Join the waitlist</a>
         </div>
-        <p class="lp-hero-note">BYOK models · uncertainty tree · reusable skills</p>
       </div>
 
       <div class="term" aria-label="Uncertainty tree demo" role="img">
         <div class="term-bar">
-          <span class="term-dot"></span>
-          <span class="term-dot"></span>
-          <span class="term-dot"></span>
+          <span class="term-dots" aria-hidden="true">
+            <span class="term-dot"></span>
+            <span class="term-dot"></span>
+            <span class="term-dot"></span>
+          </span>
           <span class="term-title">z — uncertainty tree</span>
         </div>
         <div class="term-body" id="term-demo"></div>
       </div>
     </section>
 
+    <section class="lp-section" id="why">
+      <p class="lp-label">Why Z</p>
+      <h2>Wrong changes look like correct ones until something breaks</h2>
+      <p class="lp-lede">
+        Agents get more autonomy every month. The failure mode isn’t occasional
+        mistakes — it’s that a bad edit is indistinguishable from a good one
+        until production. Z makes the difference visible before you ship.
+      </p>
+      <div class="lp-cards">
+        <article class="lp-card">
+          <p class="lp-card-eyebrow">01 — Visibility</p>
+          <h3>Review what needs it</h3>
+          <p>Risk and confidence stay separate. High-risk nodes rise even when the agent is “sure.”</p>
+        </article>
+        <article class="lp-card">
+          <p class="lp-card-eyebrow">02 — Signals</p>
+          <h3>Checkable, not vibes</h3>
+          <p>Detectors read tests, paths, APIs, and blast radius — not fake confidence percentages.</p>
+        </article>
+        <article class="lp-card">
+          <p class="lp-card-eyebrow">03 — Memory</p>
+          <h3>Teach once, reuse</h3>
+          <p>Skills capture how your repo actually works so the same conventions aren’t re-explained every session.</p>
+        </article>
+      </div>
+    </section>
+
     <section class="lp-section" id="how">
-      <h2>How it works</h2>
-      <p class="section-lede">
+      <p class="lp-label">How it works</p>
+      <h2>Detectors build a tree you can act on</h2>
+      <p class="lp-lede">
         As Z edits your repo, it runs checkable detectors — tests, path keywords,
         live API verification, blast radius — and builds a tree you can act on.
       </p>
-      <div class="steps">
-        <div class="step">
-          <div class="step-num">01</div>
+      <div class="lp-cards">
+        <article class="lp-card">
+          <p class="lp-card-eyebrow">01</p>
           <h3>You describe the task</h3>
           <p>Z decomposes the request into a checklist so requirement gaps surface before they ship.</p>
-        </div>
-        <div class="step">
-          <div class="step-num">02</div>
+        </article>
+        <article class="lp-card">
+          <p class="lp-card-eyebrow">02</p>
           <h3>Detectors fire on real signals</h3>
           <p>Missing tests, unverified APIs, migrations, TODOs, shared logic — each becomes a typed node.</p>
-        </div>
-        <div class="step">
-          <div class="step-num">03</div>
+        </article>
+        <article class="lp-card">
+          <p class="lp-card-eyebrow">03</p>
           <h3>You act from the tree</h3>
           <p>Browse risk-first. Fix, add a test, explain, or ignore — each action scopes a follow-up.</p>
-        </div>
+        </article>
       </div>
     </section>
 
     <section class="lp-section" id="skills">
+      <p class="lp-label">Skills</p>
       <h2>Reusable skills</h2>
-      <p class="section-lede">
-        Teach Z once how your repo works. It remembers — and applies the right
-        playbook on the next matching task.
+      <p class="lp-lede">
+        Coding agents forget your project’s rules the moment the chat ends.
+        You re-explain Stripe signatures, migration rules, and auth patterns
+        every session. Teach Z once how your repo works — it remembers, and
+        applies the right playbook on the next matching task.
       </p>
-      <div class="steps">
-        <div class="step">
-          <div class="step-num">01</div>
+      <div class="lp-cards">
+        <article class="lp-card">
+          <p class="lp-card-eyebrow">01 — Create</p>
           <h3>Paste or capture</h3>
-          <p>Drop in a playbook with <span class="mono-inline">/skills add</span>, generate one, or let Z offer to save after a solid turn.</p>
-        </div>
-        <div class="step">
-          <div class="step-num">02</div>
-          <h3>Z indexes it</h3>
-          <p>Metadata is inferred for you — when to use it, what triggers it — so you don’t fill out a form.</p>
-        </div>
-        <div class="step">
-          <div class="step-num">03</div>
+          <p>
+            Drop in a playbook with <code class="mono">/skills add</code>,
+            generate one with <code class="mono">z skill create</code>, or let Z
+            offer to save after a solid turn.
+          </p>
+        </article>
+        <article class="lp-card">
+          <p class="lp-card-eyebrow">02 — Index</p>
+          <h3>Metadata inferred for you</h3>
+          <p>
+            Z writes when to use it, what triggers it, and where the body lives —
+            so you don’t fill out a form. You write the playbook; Z handles the rest.
+          </p>
+        </article>
+        <article class="lp-card">
+          <p class="lp-card-eyebrow">03 — Apply</p>
           <h3>Auto-applied later</h3>
-          <p>On a matching task, Z pulls the skill in automatically. No manual attach. No re-explaining Stripe webhooks every session.</p>
+          <p>
+            On a matching task, Z pulls the skill in automatically. No manual attach.
+            No re-explaining Stripe webhooks every session.
+          </p>
+        </article>
+      </div>
+
+      <div class="lp-skills-extra">
+        <p class="lp-label">What you can capture</p>
+        <div class="lp-chips lp-chips-compact">
+          <div class="lp-chip">
+            <strong>Stripe webhooks</strong>
+            <span>Signatures, idempotency, raw body handling</span>
+          </div>
+          <div class="lp-chip">
+            <strong>Migrations</strong>
+            <span>Expand/contract, existing-data impact</span>
+          </div>
+          <div class="lp-chip">
+            <strong>Auth patterns</strong>
+            <span>How sessions and permissions work here</span>
+          </div>
+          <div class="lp-chip">
+            <strong>Team conventions</strong>
+            <span>Naming, folders, review checklists</span>
+          </div>
         </div>
+        <p class="lp-skills-note">
+          After a non-trivial turn, Z can ask to save a skill — then optionally show
+          name and metadata only. Two opt-ins. No surprise dumps.
+          Use <code class="mono">z skill list</code> and <code class="mono">z skill show</code>
+          anytime.
+        </p>
       </div>
     </section>
 
     <section class="lp-section" id="detectors">
+      <p class="lp-label">Detectors</p>
       <h2>What gets flagged</h2>
-      <p class="section-lede">
+      <p class="lp-lede">
         Risk and confidence stay separate. High-risk nodes rise to the top even when confidence is high.
       </p>
-      <ul class="detectors">
-        <li>
-          <span class="tag">Risk</span>
-          <div class="det-body">
-            <strong>Payment / auth / security</strong>
-            <span>Path and symbol keyword match — auto Medium risk at minimum.</span>
-          </div>
-        </li>
-        <li>
-          <span class="tag">Tests</span>
-          <div class="det-body">
-            <strong>Missing or failing tests</strong>
-            <span>Relevant suite by module/symbol — fail escalates; none flags Missing Test.</span>
-          </div>
-        </li>
-        <li>
-          <span class="tag">API</span>
-          <div class="det-body">
-            <strong>API assumption</strong>
-            <span>No live-verified call this session, or unverifiable MCP result.</span>
-          </div>
-        </li>
-        <li>
-          <span class="tag">Pattern</span>
-          <div class="det-body">
-            <strong>Pattern inconsistency</strong>
-            <span>No match or conflicting conventions for a new file.</span>
-          </div>
-        </li>
-        <li>
-          <span class="tag">Blast</span>
-          <div class="det-body">
-            <strong>Shared logic / blast radius</strong>
-            <span>Reference count above a configurable threshold.</span>
-          </div>
-        </li>
-        <li>
-          <span class="tag">Config</span>
-          <div class="det-body">
-            <strong>Unverifiable config</strong>
-            <span>Env vars and secrets the agent cannot inspect.</span>
-          </div>
-        </li>
-        <li>
-          <span class="tag">Schema</span>
-          <div class="det-body">
-            <strong>Migration risk</strong>
-            <span>Schema changes plus explicit existing-data impact.</span>
-          </div>
-        </li>
-        <li>
-          <span class="tag">Safe</span>
-          <div class="det-body">
-            <strong>High confidence</strong>
-            <span>Positive signal when a change matches a tested pattern and passes.</span>
-          </div>
-        </li>
-      </ul>
-    </section>
-
-    <section class="lp-section" id="install">
-      <h2>Try early testing</h2>
-      <p class="section-lede">
-        Install now and run Z in a project. Bring your own model keys.
-        Rough edges are expected — that’s the point of early testing.
-      </p>
-
-      <p class="install-label">curl</p>
-      <div class="install-block">
-        <code id="install-cmd-curl" data-cmd="curl -fsSL https://raw.githubusercontent.com/Nate-git05/z/main/install.sh | sh"><span class="prompt">$</span>curl -fsSL https://raw.githubusercontent.com/Nate-git05/z/main/install.sh | sh</code>
-        <button type="button" class="copy-install" data-target="install-cmd-curl" aria-label="Copy curl install command">Copy</button>
-      </div>
-
-      <p class="install-label">pip</p>
-      <div class="install-block">
-        <code id="install-cmd-pip" data-cmd="pip install -U &quot;git+https://github.com/Nate-git05/z.git&quot;"><span class="prompt">$</span>pip install -U "git+https://github.com/Nate-git05/z.git"</code>
-        <button type="button" class="copy-install" data-target="install-cmd-pip" aria-label="Copy pip install command">Copy</button>
-      </div>
-
-      <p class="section-lede" style="margin-top:1.25rem">
-        macOS / Linux. Puts <span class="mono-inline">z</span> on your PATH.
-        Then set your API key and run <span class="mono-inline">z</span> in a project.
-      </p>
-    </section>
-
-    <section class="lp-section" id="waitlist">
-      <h2>Join the waitlist</h2>
-      <p class="section-lede">
-        Want updates on workspace sharing, MCP integrations, and what’s next?
-        Join the list — you can still try early testing above right now.
-      </p>
-
-      <div class="waitlist">
-        <div id="waitlist-error" class="waitlist-error" role="alert"></div>
-
-        <form id="waitlist-form" class="waitlist-form" novalidate>
-          <div class="row-2">
-            <div>
-              <label for="first_name">First name</label>
-              <input id="first_name" name="first_name" type="text" autocomplete="given-name" required placeholder="Ada" />
-            </div>
-            <div>
-              <label for="last_name">Last name</label>
-              <input id="last_name" name="last_name" type="text" autocomplete="family-name" required placeholder="Lovelace" />
-            </div>
-          </div>
-          <div>
-            <label for="email">Email</label>
-            <input id="email" name="email" type="email" autocomplete="email" required placeholder="ada@example.com" />
-          </div>
-          <button class="lp-btn" type="submit" id="waitlist-submit">Join waitlist</button>
-        </form>
-
-        <div id="waitlist-success" class="waitlist-success" aria-live="polite">
-          <div class="check" aria-hidden="true">✓</div>
-          <h3>You're on the list</h3>
-          <p>We'll be in touch when a spot opens. No spam.</p>
+      <div class="lp-chips">
+        <div class="lp-chip">
+          <strong>Payment / auth / security</strong>
+          <span>Path and symbol keyword match — auto Medium risk at minimum.</span>
+        </div>
+        <div class="lp-chip">
+          <strong>Missing or failing tests</strong>
+          <span>Relevant suite by module/symbol — fail escalates; none flags Missing Test.</span>
+        </div>
+        <div class="lp-chip">
+          <strong>API assumption</strong>
+          <span>No live-verified call this session, or unverifiable MCP result.</span>
+        </div>
+        <div class="lp-chip">
+          <strong>Pattern inconsistency</strong>
+          <span>No match or conflicting conventions for a new file.</span>
+        </div>
+        <div class="lp-chip">
+          <strong>Shared logic / blast radius</strong>
+          <span>Reference count above a configurable threshold.</span>
+        </div>
+        <div class="lp-chip">
+          <strong>Unverifiable config</strong>
+          <span>Env vars and secrets the agent cannot inspect.</span>
+        </div>
+        <div class="lp-chip">
+          <strong>Migration risk</strong>
+          <span>Schema changes plus explicit existing-data impact.</span>
+        </div>
+        <div class="lp-chip">
+          <strong>High confidence</strong>
+          <span>Positive signal when a change matches a tested pattern and passes.</span>
         </div>
       </div>
     </section>
 
-    <footer class="lp-footer">
-      <span>Z</span>
-      <span>Early testing · Model keys stay yours · Account unlocks workspace features</span>
-    </footer>
-  </div>
+    <section class="lp-section" id="install">
+      <p class="lp-label">Install</p>
+      <h2>Try early testing</h2>
+      <p class="lp-lede">
+        Install now and run Z in a project. Bring your own model keys.
+        Rough edges are expected — that’s the point of early testing.
+      </p>
+
+      <p class="lp-install-label">curl</p>
+      <div class="lp-code">
+        <code id="install-cmd-curl" data-cmd="curl -fsSL https://raw.githubusercontent.com/Nate-git05/z/main/install.sh | sh"><span class="prompt">$</span> curl -fsSL https://raw.githubusercontent.com/Nate-git05/z/main/install.sh | sh</code>
+        <button type="button" class="copy-install" data-target="install-cmd-curl" aria-label="Copy curl install command">Copy</button>
+      </div>
+
+      <p class="lp-install-label">pip</p>
+      <div class="lp-code">
+        <code id="install-cmd-pip" data-cmd="pip install -U &quot;git+https://github.com/Nate-git05/z.git&quot;"><span class="prompt">$</span> pip install -U "git+https://github.com/Nate-git05/z.git"</code>
+        <button type="button" class="copy-install" data-target="install-cmd-pip" aria-label="Copy pip install command">Copy</button>
+      </div>
+
+      <p class="lp-lede lp-lede-after">
+        macOS / Linux. Puts <code class="mono">z</code> on your PATH.
+        Then set your API key and run <code class="mono">z</code> in a project.
+      </p>
+    </section>
+
+    <section class="lp-section lp-section-convert" id="waitlist">
+      <div class="lp-convert">
+        <div class="lp-convert-copy">
+          <p class="lp-label">Waitlist</p>
+          <h2>Join the waitlist</h2>
+          <p>
+            Want updates on workspace sharing, MCP integrations, and what’s next?
+            Join the list — you can still try early testing above right now.
+          </p>
+        </div>
+        <div class="lp-convert-form">
+          <div id="waitlist-error" class="waitlist-error" role="alert"></div>
+
+          <form id="waitlist-form" class="waitlist-form" novalidate>
+            <div class="row-2">
+              <div>
+                <label for="first_name">First name</label>
+                <input id="first_name" name="first_name" type="text" autocomplete="given-name" required placeholder="Ada" />
+              </div>
+              <div>
+                <label for="last_name">Last name</label>
+                <input id="last_name" name="last_name" type="text" autocomplete="family-name" required placeholder="Lovelace" />
+              </div>
+            </div>
+            <div>
+              <label for="email">Email</label>
+              <input id="email" name="email" type="email" autocomplete="email" required placeholder="ada@example.com" />
+            </div>
+            <button class="lp-btn lp-btn-block" type="submit" id="waitlist-submit">Join waitlist</button>
+          </form>
+
+          <div id="waitlist-success" class="waitlist-success" aria-live="polite">
+            <div class="check" aria-hidden="true">✓</div>
+            <h3>You're on the list</h3>
+            <p>We'll be in touch when a spot opens. No spam.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="lp-footer">
+    <a class="lp-logo lp-logo-sm" href="/" aria-label="Z home">
+      <span class="lp-logo-mark" aria-hidden="true">Z</span>
+      <span class="lp-logo-word">Z</span>
+    </a>
+    <p>Early testing · Model keys stay yours · Account unlocks workspace features</p>
+  </footer>
+
   <script src="/static/js/landing.js" defer></script>
 </body>
 </html>
