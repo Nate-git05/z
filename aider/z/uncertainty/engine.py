@@ -13,10 +13,12 @@ from .checklist import (
     bind_evidence,
     checklist_gap_details,
     decompose_request,
+    ledger_snapshot,
     rescore_checklist_with_evidence,
     rescore_checklist_with_model,
 )
 from .context import (
+    apply_uncertainty_budget,
     assess_repo_maturity,
     filter_scaffold_files,
     prioritize_nodes,
@@ -75,6 +77,8 @@ class SessionContext:
     pattern_results: dict = field(default_factory=dict)
     # Optional callable(prompt: str) -> str for structured checklist rescore
     model_complete: Optional[object] = None
+    # Requirement-to-evidence ledger snapshot from last gap analysis
+    requirement_ledger: List[dict] = field(default_factory=list)
 
 
 class UncertaintyEngine:
@@ -206,11 +210,17 @@ class UncertaintyEngine:
 
         # Tests → Untested Path
         relevant = find_relevant_tests(root, files, symbols)
+        suite_discovered = None
+        if self.ctx.last_verification is not None:
+            suite_discovered = getattr(
+                self.ctx.last_verification, "tests_discovered", None
+            )
         nodes.extend(
             detect_missing_or_failing_tests(
                 signals,
                 relevant_tests=relevant,
                 tests_passed=tests_passed,
+                suite_discovered=suite_discovered,
                 **meta,
             )
         )
@@ -329,15 +339,27 @@ class UncertaintyEngine:
 
         # Requirement gaps — evidence-bound structured rescore
         if run_gap_analysis and self.ctx.checklist:
+            # Prefer reading README/docs even if not in the edit set
+            doc_contents = dict(contents)
+            for doc_name in ("README.md", "README.rst", "README.txt", "README"):
+                doc_path = root / doc_name
+                if doc_name not in doc_contents and doc_path.is_file():
+                    try:
+                        doc_contents[doc_name] = doc_path.read_text(
+                            encoding="utf-8", errors="ignore"
+                        )[:12000]
+                    except OSError:
+                        pass
             evidence = bind_evidence(
                 self.ctx.checklist,
                 files_changed=files,
-                file_contents=contents,
+                file_contents=doc_contents,
                 symbols=symbols,
                 test_files=relevant,
                 execution_log=self.ctx.execution_log or self.ctx.discussed_text,
                 user_decisions=self.ctx.user_decisions,
                 verification=self.ctx.last_verification,
+                tests_passed=tests_passed,
             )
             model_complete = getattr(self.ctx, "model_complete", None)
             if callable(model_complete):
@@ -346,12 +368,20 @@ class UncertaintyEngine:
                 )
             else:
                 rescore_checklist_with_evidence(self.ctx.checklist, evidence)
+            # Keep ledger on context for gate / debugging
+            try:
+                self.ctx.requirement_ledger = ledger_snapshot(
+                    self.ctx.checklist, evidence
+                )
+            except Exception:
+                pass
             gaps = checklist_gap_details(self.ctx.checklist, evidence)
             nodes.extend(
                 detect_requirement_gaps(
                     signals,
                     checklist=self.ctx.checklist,
                     gap_details=gaps,
+                    relevant_tests=relevant,
                     **meta,
                 )
             )
@@ -359,8 +389,9 @@ class UncertaintyEngine:
         # Evidence of Safety (positive)
         nodes.extend(detect_high_confidence(signals, **meta))
 
-        # Cap noise: keep top actionable nodes this turn
+        # Cap noise: dedupe, budget (max 3 blockers), then soft limit
         deduped = self._dedupe(nodes)
+        deduped = apply_uncertainty_budget(deduped, max_blocking=3)
         deduped = prioritize_nodes(deduped, limit=8)
         self.store.add_many(deduped)
         return deduped

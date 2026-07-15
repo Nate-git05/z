@@ -174,8 +174,7 @@ class RequirementItem:
     text: str
     status: str = "Not Addressed"  # Fully Addressed / Partially Addressed / Not Addressed
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    # product = implement in code; process = agent/tooling (don't search source);
-    # verification = tests/smoke; decision = user confirm/ack
+    # product | process | verification | decision | documentation | quality | external_assumption
     kind: str = "product"
 
     def to_dict(self) -> dict[str, Any]:

@@ -192,9 +192,15 @@ def _effective_gate_tier(node: UncertaintyNode) -> Tier:
     if node.type == NodeType.REQUIREMENT_GAP:
         req_status = node.signals.get("requirement_status") or ""
         req_kind = (node.signals.get("requirement_kind") or "product").lower()
-        # Process/decision gaps must not hard-block or invent product features
-        if req_kind in ("process", "decision"):
+        # Process/decision/verification gaps must not hard-block commits
+        if req_kind in ("process", "decision", "verification"):
             return Tier.LOW
+        # Noise circuit: chronically unresolved detector — never hard-block
+        if node.signals.get("detector_noisy"):
+            return Tier.LOW
+        # Documentation gaps are reviewable, not commit-blockers by default
+        if req_kind == "documentation":
+            return Tier.LOW if req_status != "Not Addressed" else Tier.MEDIUM
         if req_status == "Not Addressed":
             return Tier.HIGH
         if req_status == "Partially Addressed":

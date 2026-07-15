@@ -179,6 +179,7 @@ def detect_missing_or_failing_tests(
     *,
     relevant_tests: Sequence[str],
     tests_passed: Optional[bool],
+    suite_discovered: Optional[int] = None,
     task_id: Optional[str] = None,
     task_title: Optional[str] = None,
     created_by_session: Optional[str] = None,
@@ -190,6 +191,40 @@ def detect_missing_or_failing_tests(
     signals.tests_passed = tests_passed
 
     if not relevant_tests:
+        # Suite discovery contradicts co-located relevance heuristic — do not false-positive
+        if suite_discovered is not None and suite_discovered > 0:
+            signals.tests_relevant_exist = True
+            if tests_passed is True:
+                return []
+            if tests_passed is False:
+                nodes.append(
+                    _make_node(
+                        title="Untested path — suite tests failed",
+                        node_type=NodeType.MISSING_TEST,
+                        signals=signals,
+                        summary="The test suite ran and failed; do not treat this as NO_TESTS.",
+                        explanation=(
+                            f"Discovered {suite_discovered} test(s) at suite level even though "
+                            "co-located relevance matching found none. State is TESTS_FAILED."
+                        ),
+                        why_uncertain="Failing suite is a concrete negative correctness signal.",
+                        what_could_go_wrong="Shipping with red tests breaks known contracts.",
+                        suggested_fix="Fix failing tests until the suite passes.",
+                        task_id=task_id,
+                        task_title=task_title,
+                        created_by_session=created_by_session,
+                        created_by_user=created_by_user,
+                        status=NodeStatus.NEEDS_HUMAN_REVIEW,
+                        extra_signals={
+                            "suite_discovered": suite_discovered,
+                            "verify_state": "TESTS_FAILED",
+                        },
+                    )
+                )
+                return nodes
+            # Suite discovered but pass/fail unknown — skip "no relevant tests" FP
+            return []
+
         signals.tests_relevant_exist = False
         nodes.append(
             _make_node(
@@ -906,6 +941,52 @@ def detect_edge_cases(
 # ---------------------------------------------------------------------------
 
 
+_TEST_RUN_LANG = re.compile(
+    r"(?i)\b(run|execute)\b.{0,40}\b(test|tests|suite|pytest|unittest)\b"
+    r"|\b(test|tests|suite)\b.{0,20}\b(pass|passed|green)\b"
+    r"|\brun\s+the\s+tests?\b"
+)
+_PROCESS_FINISH_LANG = re.compile(
+    r"(?i)\b(fix\s+failures?|do\s+not\s+commit|don't\s+commit|"
+    r"before\s+finish|working\s+tree|until\s+.{0,40}pass)\b"
+)
+_CONCURRENCY_LANG = re.compile(
+    r"(?i)\b(concurren|thread[- ]?safe|race|contention|prune)\b"
+)
+
+
+def reconcile_requirement_with_signals(
+    item: RequirementItem,
+    signals: DetectionSignals,
+    *,
+    relevant_tests: Optional[Sequence[str]] = None,
+) -> Optional[str]:
+    """
+    Cross-check checklist status against concrete session signals.
+
+    Returns a corrected status when signals contradict an open gap, else None.
+    This is the cheap mechanical fix for "Run the tests" + tests_passed=True.
+    """
+    text = item.text or ""
+    kind = (getattr(item, "kind", None) or "product").lower()
+
+    if signals.tests_passed is True:
+        if kind == "verification" or _TEST_RUN_LANG.search(text):
+            return "Fully Addressed"
+        if kind == "process" and _PROCESS_FINISH_LANG.search(text):
+            return "Fully Addressed"
+        if kind == "process" and re.search(r"(?i)\b(verif|commit\s+gate|uncertainty)\b", text):
+            return "Fully Addressed"
+
+    if kind == "quality" and _CONCURRENCY_LANG.search(text):
+        rel = list(relevant_tests or [])
+        if any(re.search(r"(?i)concurr|thread|race|stress", t) for t in rel):
+            return "Fully Addressed"
+        # tests_passed alone is not enough for quality — leave open/partial
+
+    return None
+
+
 def detect_requirement_gaps(
     signals: DetectionSignals,
     *,
@@ -915,18 +996,35 @@ def detect_requirement_gaps(
     created_by_session: Optional[str] = None,
     created_by_user: Optional[str] = None,
     gap_details: Optional[Sequence[dict]] = None,
+    relevant_tests: Optional[Sequence[str]] = None,
 ) -> List[UncertaintyNode]:
     nodes: List[UncertaintyNode] = []
     detail_by_id = {d.get("id"): d for d in (gap_details or []) if d.get("id")}
+
+    # Circuit breaker: chronically unresolved detector → downgrade severity
+    noisy = False
+    try:
+        from .outcomes import detector_circuit_open
+
+        noisy = detector_circuit_open(NodeType.REQUIREMENT_GAP.value)
+    except Exception:
+        noisy = False
+
     for item in checklist.items:
+        reconciled = reconcile_requirement_with_signals(
+            item, signals, relevant_tests=relevant_tests
+        )
+        if reconciled:
+            item.status = reconciled
         if item.status == "Fully Addressed":
             continue
+
+        kind = getattr(item, "kind", None) or "product"
         signals.requirement_gaps.append(item.text)
         detail = detail_by_id.get(item.id) or {}
         missing = detail.get("missing") or f"Complete: {item.text}"
         evidence = detail.get("evidence") or []
-        kind = getattr(item, "kind", None) or "product"
-        # Process gaps are informational Medium at most — never invent product features
+        # Process gaps are informational — never invent product features
         node = _make_node(
             title=f"Requirement gap: {item.text[:80]}",
             node_type=NodeType.REQUIREMENT_GAP,
@@ -939,9 +1037,13 @@ def detect_requirement_gaps(
                 f"Missing: {missing}\n"
                 f"Evidence: {', '.join(evidence) if evidence else '(none)'}\n"
                 "Compared the structured checklist against bound evidence "
-                "(code for product; session/verify for process)."
+                "(code for product; session/verify for process; README for docs)."
             ),
-            why_uncertain="Sub-requirement was not marked Fully Addressed after implementation.",
+            why_uncertain=(
+                f"Missing evidence: {missing}"
+                if missing
+                else "Sub-requirement was not marked Fully Addressed after implementation."
+            ),
             what_could_go_wrong="User intent remains partially unmet; follow-up work will be needed.",
             suggested_fix=missing,
             suggested_prompt=(
@@ -951,7 +1053,11 @@ def detect_requirement_gaps(
                     "This is a process/tooling requirement — do not add product commands; "
                     "satisfy it via verification/session evidence only."
                     if kind in ("process", "verification", "decision")
-                    else "Implement only that gap, then stop."
+                    else (
+                        "Update documentation only — do not invent product features."
+                        if kind == "documentation"
+                        else "Implement only that gap, then stop."
+                    )
                 )
             ),
             task_id=task_id or checklist.task_id,
@@ -965,15 +1071,27 @@ def detect_requirement_gaps(
                 "requirement_kind": kind,
                 "missing": missing,
                 "evidence": list(evidence),
+                "detector_noisy": noisy,
             },
         )
         # Align stored risk with gate tier for Not Addressed product gaps
         if item.status == "Not Addressed" and kind == "product":
-            node.risk_tier = Tier.HIGH
-        elif kind in ("process", "decision"):
-            # Never High-block on process wording — ask/review only
+            node.risk_tier = Tier.LOW if noisy else Tier.HIGH
+        elif kind in ("process", "decision", "verification"):
+            # Never High-block on process/verification wording — ask/review only
             node.risk_tier = Tier.LOW
             node.status = NodeStatus.OPEN
+        elif kind == "documentation":
+            node.risk_tier = Tier.LOW if noisy else Tier.MEDIUM
+        elif kind == "quality":
+            node.risk_tier = Tier.LOW if noisy else Tier.MEDIUM
+        elif noisy:
+            node.risk_tier = Tier.LOW
+        if noisy:
+            node.summary = (
+                node.summary
+                + " [detector noise circuit: Requirement Gap has ~0% historical resolution]"
+            )
         nodes.append(node)
     return nodes
 
