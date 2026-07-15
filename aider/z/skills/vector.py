@@ -26,10 +26,20 @@ def _meta_to_chroma(skill: Skill) -> dict:
         "tags": ",".join(skill.tags or []),
         "project_types": ",".join(skill.project_types or []),
         "triggers": ",".join(skill.triggers or []),
+        "languages": ",".join(skill.languages or []),
+        "kind": skill.kind or "playbook",
+        "artifacts": ",".join(skill.artifacts or []),
+        "apply_once": "1" if skill.apply_once else "0",
     }
 
 
 def _entry_from_chroma(meta: dict, *, distance: float | None = None) -> SkillIndexEntry:
+    kind = (meta.get("kind") or "playbook").strip().lower()
+    if kind not in ("scaffold", "playbook"):
+        kind = "playbook"
+    apply_once = str(meta.get("apply_once") or "").strip() in ("1", "true", "yes")
+    if meta.get("apply_once") in (None, ""):
+        apply_once = kind == "scaffold"
     return SkillIndexEntry(
         id=str(meta.get("id") or ""),
         title=meta.get("title") or "",
@@ -42,6 +52,10 @@ def _entry_from_chroma(meta: dict, *, distance: float | None = None) -> SkillInd
         tags=_as_str_list(meta.get("tags")),
         project_types=_as_str_list(meta.get("project_types")),
         triggers=_as_str_list(meta.get("triggers")),
+        languages=_as_str_list(meta.get("languages")),
+        kind=kind,
+        artifacts=_as_str_list(meta.get("artifacts")),
+        apply_once=apply_once,
     )
 
 

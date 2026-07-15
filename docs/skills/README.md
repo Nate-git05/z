@@ -30,9 +30,20 @@ You re-explain the same Stripe signature check. You restate the same Alembic exp
 1. **Create** — paste a playbook, generate from a prompt, or capture after a completed task  
 2. **Store** — markdown file in `~/.z/skills/*.md` with metadata (including `path`)  
 3. **Index** — metadata + embedding in local **ChromaDB** (`~/.z/chroma/skills`)  
-4. **Apply** — before a task, Z queries the index, opens the file at `path`, and follows the skill  
+4. **Route + apply** — before a task *and again on each workflow step* (reflections), Z retrieves candidates, then a **skill router** decides apply vs skip (language/stack match, scaffold already done, already injected). Only approved skills are injected.
 
-Z owns metadata inference (`title`, `description`, `tags`, `triggers`, `project_types`, `path`). You write the body; you don’t fill out a form.
+Z owns metadata inference (`title`, `description`, `tags`, `triggers`, `project_types`, `kind`, `languages`, `artifacts`, `path`). You write the body; you don’t fill out a form.
+
+### Skill router (apply vs skip)
+
+| Kind | Meaning | When it applies |
+|------|---------|-----------------|
+| **scaffold** | One-shot bootstrap (“create Go project”) | Only while artifacts are missing and the step is scaffolding |
+| **playbook** | Ongoing guidance (“how we do auth”) | When the *current* step matches; not re-injected every turn |
+
+Wrong-stack skills are skipped (e.g. HTML skill on a Go repo). Scaffold skills stop firing once `go.mod` / listed artifacts exist — so creating a Go server won’t keep re-applying “create Go file” on every later turn.
+
+Skills can be injected **progressively** during a task (turn start + each reflection), not only once at the beginning.
 
 ---
 
@@ -90,6 +101,10 @@ Two opt-ins. No surprise dumps.
 id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
 title: Stripe webhook validation
 description: Verify signatures, idempotency, and raw body handling
+kind: playbook
+languages: [python]
+artifacts: []
+apply_once: false
 tags: [stripe, webhooks, payments]
 project_types: [api, backend]
 triggers: [stripe, webhook, signature]
@@ -107,9 +122,18 @@ updated_at: 2026-07-14T20:00:00Z
 …
 ```
 
+Scaffold example extras:
+
+```yaml
+kind: scaffold
+languages: [go]
+artifacts: [go.mod, main.go]
+apply_once: true
+```
+
 - **Body** lives on disk  
 - **Metadata + path + embedding** live in ChromaDB for retrieval  
-- Match → follow `path` → load body → apply  
+- Retrieve → **route** → open `path` → inject only if approved  
 
 ---
 
@@ -127,20 +151,56 @@ Manage / share synced skills in the web app at `/app/skills` (create stays CLI-f
 
 ---
 
-## Mental model
+## Mental model (refactored)
 
 ```text
 paste / generate / capture
             │
             ▼
-   ~/.z/skills/*.md     ← body + frontmatter (path is ground truth)
+   ~/.z/skills/*.md          ← body + frontmatter (path is ground truth)
             │
             ▼
-   ChromaDB index       ← metadata + path + embedding
+   ChromaDB index            ← metadata + path + embedding (recall)
             │
             ▼
-   task comes in → query → open path → apply skill
+   ┌── workflow checkpoints ─────────────────────────────┐
+   │  turn start                                         │
+   │  each reflection (tests / gaps / next step)         │
+   │       │                                             │
+   │       ▼                                             │
+   │  retrieve candidates                                │
+   │       │                                             │
+   │       ▼                                             │
+   │  skill router (precision)                           │
+   │    • language/stack match?                          │
+   │    • scaffold artifacts already exist? → skip       │
+   │    • already injected this session? → skip          │
+   │    • scaffold vs ongoing task intent                │
+   │       │                                             │
+   │       ▼                                             │
+   │  inject only newly approved skills                  │
+   └─────────────────────────────────────────────────────┘
 ```
+
+UI:
+- Turn start: `Applying skill(s): …`
+- Mid-task step: `Injecting skill(s) for this step: …`
+- Verbose: `Skill skip — <title>: <reason>`
+
+Satisfaction for scaffolds is remembered per repo under `~/.z/skills/state.json`.
+
+---
+
+## Code map
+
+| Piece | Path |
+|-------|------|
+| Router | `aider/z/skills/router.py` |
+| Multi-checkpoint pull | `aider/z/skills/session.py` (`pull_skills_for_checkpoint`) |
+| Wire-in | `aider/coders/base_coder.py` (`_maybe_pull_skills`, reflection loop) |
+| Schema | `aider/z/skills/schema.py` (`kind`, `languages`, `artifacts`, `apply_once`) |
+| Infer defaults | `aider/z/skills/infer.py` |
+| Tests | `tests/basic/test_z_skill_router.py` |
 
 ---
 
@@ -160,9 +220,10 @@ pip install -U "git+https://github.com/Nate-git05/z.git"
 ## Design principles
 
 - **Paste first** — importing a playbook must be one step  
-- **Z writes metadata** — including `path`  
-- **Vector retrieve, file load** — ChromaDB finds candidates; disk holds the truth  
+- **Z writes metadata** — including `path`, `kind`, `languages`, `artifacts`  
+- **Retrieve then route** — Chroma recalls; router decides apply/skip  
+- **Progressive injection** — skills can enter mid-task as the step changes  
+- **Scaffolds are one-shot** — stop once the project exists  
 - **Opt-in capture, opt-in peek** — never dump a new skill unless asked  
-- **No manual attach by default** — matching is automatic  
 
-That’s Z Skills: write the playbook once, let the agent pull it when it matters.
+That’s Z Skills: write the playbook once; the router pulls the *right* one when the *current* step needs it.

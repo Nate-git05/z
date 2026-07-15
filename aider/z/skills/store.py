@@ -35,6 +35,10 @@ def _dump_frontmatter(skill: Skill) -> str:
         "tags": list(skill.tags or []),
         "project_types": list(skill.project_types or []),
         "triggers": list(skill.triggers or []),
+        "languages": list(skill.languages or []),
+        "kind": skill.kind or "playbook",
+        "artifacts": list(skill.artifacts or []),
+        "apply_once": bool(skill.apply_once),
         "path": skill.path or "",
         "source": skill.source or "generate",
         "created_at": skill.created_at,
@@ -75,6 +79,16 @@ def skill_from_markdown(text: str, *, filename: Optional[str] = None) -> Skill:
         meta["title"] = first.lstrip("# ").strip() or "Untitled skill"
         meta["description"] = ""
 
+    kind = (meta.get("kind") or "playbook")
+    if isinstance(kind, str):
+        kind = kind.strip().lower()
+    else:
+        kind = "playbook"
+    if kind not in ("scaffold", "playbook"):
+        kind = "playbook"
+    apply_once = meta.get("apply_once")
+    if apply_once is None:
+        apply_once = kind == "scaffold"
     return Skill(
         id=str(meta.get("id") or ""),
         title=meta.get("title") or "Untitled skill",
@@ -92,6 +106,10 @@ def skill_from_markdown(text: str, *, filename: Optional[str] = None) -> Skill:
         project_types=_as_str_list(meta.get("project_types")),
         triggers=_as_str_list(meta.get("triggers")),
         source=meta.get("source") or "generate",
+        kind=kind,
+        languages=_as_str_list(meta.get("languages")),
+        artifacts=_as_str_list(meta.get("artifacts")),
+        apply_once=bool(apply_once),
     )
 
 
