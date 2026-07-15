@@ -103,6 +103,7 @@ Any other arguments pass through to the coding agent (same surface as Aider).
 |--|--|
 | **Repository** | https://github.com/Nate-git05/z |
 | **Architecture** | [ARCHITECTURE.md](ARCHITECTURE.md) |
+| **Uncertainty tree** | [docs/uncertainty/README.md](docs/uncertainty/README.md) |
 | **Skills guide** | [docs/skills/README.md](docs/skills/README.md) |
 | **Docs** | _Coming soon_ |
 | **Community** | _Coming soon_ |
