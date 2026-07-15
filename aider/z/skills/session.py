@@ -134,6 +134,13 @@ def _copy_router_fields(entry: SkillIndexEntry, skill: Skill) -> None:
     if entry.artifacts:
         skill.artifacts = list(entry.artifacts)
     skill.apply_once = bool(entry.apply_once)
+    if entry.capability:
+        skill.capability = entry.capability
+    if entry.grounded_symbols:
+        skill.grounded_symbols = list(entry.grounded_symbols)
+    if entry.source_files:
+        skill.source_files = list(entry.source_files)
+    skill.needs_review = bool(entry.needs_review)
 
 
 def retrieve_skill_candidates(
@@ -292,6 +299,10 @@ def format_skill_metadata(skill: Skill) -> str:
         f"  kind: {meta.get('kind')}",
         f"  languages: {', '.join(meta.get('languages') or []) or '(none)'}",
         f"  artifacts: {', '.join(meta.get('artifacts') or []) or '(none)'}",
+        f"  capability: {meta.get('capability') or '(none)'}",
+        f"  grounded_symbols: {', '.join(meta.get('grounded_symbols') or []) or '(none)'}",
+        f"  source_files: {', '.join(meta.get('source_files') or []) or '(none)'}",
+        f"  needs_review: {'yes' if meta.get('needs_review') else 'no'}",
         f"  tags: {', '.join(meta['tags']) or '(none)'}",
         f"  triggers: {', '.join(meta['triggers']) or '(none)'}",
         f"  project_types: {', '.join(meta['project_types']) or '(none)'}",
@@ -318,7 +329,8 @@ def print_skills_list(io) -> None:
         for s in local:
             kind = s.kind or "playbook"
             langs = ",".join(s.languages or []) or "-"
-            io.tool_output(f"  • {s.title}  [{kind}/{langs}]")
+            review = " needs-review" if s.needs_review else ""
+            io.tool_output(f"  • {s.title}  [{kind}/{langs}]{review}")
             if s.description:
                 io.tool_output(f"      {s.description}")
             if s.path:

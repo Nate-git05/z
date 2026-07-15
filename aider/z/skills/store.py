@@ -39,12 +39,20 @@ def _dump_frontmatter(skill: Skill) -> str:
         "kind": skill.kind or "playbook",
         "artifacts": list(skill.artifacts or []),
         "apply_once": bool(skill.apply_once),
+        "capability": skill.capability or "",
+        "grounded_symbols": list(skill.grounded_symbols or []),
+        "source_files": list(skill.source_files or []),
+        "needs_review": bool(skill.needs_review),
         "path": skill.path or "",
         "source": skill.source or "generate",
         "created_at": skill.created_at,
         "updated_at": skill.updated_at,
         "scope": skill.scope,
     }
+    if skill.grounded_at:
+        meta["grounded_at"] = skill.grounded_at
+    if skill.content_hash:
+        meta["content_hash"] = skill.content_hash
     if skill.created_by:
         meta["created_by"] = skill.created_by
     if skill.remote_id:
@@ -110,6 +118,12 @@ def skill_from_markdown(text: str, *, filename: Optional[str] = None) -> Skill:
         languages=_as_str_list(meta.get("languages")),
         artifacts=_as_str_list(meta.get("artifacts")),
         apply_once=bool(apply_once),
+        capability=str(meta.get("capability") or "").strip(),
+        grounded_symbols=_as_str_list(meta.get("grounded_symbols")),
+        source_files=_as_str_list(meta.get("source_files")),
+        needs_review=bool(meta.get("needs_review")),
+        grounded_at=meta.get("grounded_at"),
+        content_hash=meta.get("content_hash"),
     )
 
 

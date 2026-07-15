@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Optional, Tuple
 
 from .generate import generate_skill
+from .grounding import GroundingPack, make_ungrounded_skill_node
 from .infer import apply_inferred_metadata
 from .remote import sync_skill
 from .schema import Skill
@@ -110,7 +111,9 @@ def cmd_skill_create(
         return 1
 
     io.tool_output("Generating skill with your connected model…")
-    skill, err = generate_skill(topic, model_name=model_name, created_by=_created_by())
+    skill, err, _ground = generate_skill(
+        topic, model_name=model_name, created_by=_created_by()
+    )
     if err or not skill:
         io.tool_error(err or "Skill generation failed.")
         return 1
@@ -179,27 +182,102 @@ def save_skill_from_task(
     *,
     context: str = "",
     model_name: Optional[str] = None,
+    grounding_pack: Optional[GroundingPack] = None,
+    uncertainty_engine=None,
 ) -> Tuple[Optional[Skill], bool]:
     """
-    Capture a skill after a completed task.
-    Returns (skill, created).
+    Capture a skill after a completed task, grounded in diff/file evidence.
+
+    Returns (skill, created). Skills that fail the grounding check are still
+    saved with needs_review=True (blocked from auto-retrieve) and an uncertainty
+    node is attached when an engine is available.
     Caller handles the "want to see metadata?" prompt.
     """
-    io.tool_output("Generating skill…")
-    skill, err = generate_skill(
-        topic, model_name=model_name, context=context, created_by=_created_by()
+    io.tool_output("Generating skill from changed files…")
+    skill, err, ground = generate_skill(
+        topic,
+        model_name=model_name,
+        context=context,
+        created_by=_created_by(),
+        grounding_pack=grounding_pack,
+        two_phase=bool(grounding_pack),
     )
     if err or not skill:
         io.tool_error(err or "Skill generation failed.")
         return None, False
 
     skill.source = "capture"
+    if ground and not ground.ok:
+        skill.needs_review = True
+        io.tool_warning(
+            "Skill saved for review — it may not match the real implementation."
+        )
+        if ground.reason:
+            io.tool_warning(f"  {ground.reason}")
+        io.tool_output(
+            "It will not auto-apply until you accept it "
+            "(z skill show … then clear needs_review)."
+        )
+        _emit_ungrounded_node(io, skill, ground, uncertainty_engine)
+    elif grounding_pack is not None:
+        skill.needs_review = False
+        if ground and ground.grounded_symbols:
+            io.tool_output(
+                "Grounded symbols: " + ", ".join(ground.grounded_symbols[:8])
+            )
+
     skill = _persist_skill(io, skill, sync=True)
     return skill, True
 
 
+def accept_skill(io, name: str = "") -> int:
+    """Clear needs_review so a captured skill can auto-apply."""
+    name = (name or "").strip()
+    if not name:
+        name = io.prompt_ask("Skill name or id to accept").strip()
+    if not name:
+        io.tool_error("Skill name or id required.")
+        return 1
+    store = LocalSkillStore()
+    skill = store.get(name)
+    if not skill:
+        io.tool_error(f"No skill found for “{name}”.")
+        return 1
+    if not skill.needs_review:
+        io.tool_output(f"“{skill.title}” is already accepted.")
+        return 0
+    skill.needs_review = False
+    store.save(skill)
+    upsert_skill_vector(skill)
+    io.tool_output(f"Accepted skill: {skill.title}")
+    io.tool_output("It can now auto-apply on matching tasks.")
+    return 0
+
+
+def _emit_ungrounded_node(io, skill: Skill, ground, uncertainty_engine) -> None:
+    try:
+        node = make_ungrounded_skill_node(
+            skill_title=skill.title,
+            missing_symbols=getattr(ground, "missing_symbols", None) or [],
+            source_files=skill.source_files,
+            reason=getattr(ground, "reason", "") or "",
+        )
+        engine = uncertainty_engine
+        if engine is not None and hasattr(engine, "store"):
+            engine.store.add(node)
+        elif engine is not None and hasattr(engine, "add"):
+            engine.add(node)
+        io.tool_output(
+            "Uncertainty: skill may invent APIs — review before relying on it."
+        )
+    except Exception:
+        pass
+
+
 def offer_view_new_skill(io, skill: Skill) -> None:
     """Ask whether to show metadata for a newly captured skill."""
+    if skill.needs_review:
+        io.tool_output("This skill needs review before it will auto-apply.")
     if not io.confirm_ask("Want to see the new skill?", default="n"):
         return
     io.tool_output("")

@@ -1759,7 +1759,7 @@ Just show me the edits I need to make.
         print_mcp_list(self.io)
 
     def cmd_skills(self, args):
-        "Skills: /skills add | create <topic> | list | show <name>"
+        "Skills: /skills add | create <topic> | list | show <name> | accept <name>"
         args = (args or "").strip()
         if not args or args.lower() in ("list", "ls"):
             from aider.z.skills.session import print_skills_list
@@ -1788,6 +1788,11 @@ Just show me the edits I need to make.
             from aider.z.skills.cli import cmd_skill_show
 
             return cmd_skill_show(self.io, args[4:].strip())
+
+        if lower.startswith("accept"):
+            from aider.z.skills.cli import accept_skill
+
+            return accept_skill(self.io, args[6:].strip())
 
         if lower.startswith("reindex"):
             from aider.z.skills.cli import cmd_skill_reindex

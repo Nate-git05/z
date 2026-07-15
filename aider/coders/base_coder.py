@@ -1084,7 +1084,7 @@ class Coder:
                 pass
 
     def _maybe_suggest_skill(self, user_message: str):
-        """After a task: ask to create a skill, then optionally show its metadata."""
+        """After a task: ask to create a skill grounded in the real diff/files."""
         edited = self.aider_edited_files or set()
         if len(edited) < 1:
             return
@@ -1098,13 +1098,38 @@ class Coder:
             ):
                 return
             from aider.z.skills.cli import offer_view_new_skill, save_skill_from_task
+            from aider.z.skills.grounding import build_grounding_pack
 
             rels = []
+            abs_paths = []
             for path in edited:
+                abs_paths.append(str(path))
                 try:
                     rels.append(self.get_rel_fname(path))
                 except Exception:
                     rels.append(str(path))
+
+            diff = ""
+            try:
+                repo = getattr(self, "repo", None)
+                if repo is not None and hasattr(repo, "get_diffs"):
+                    diff = repo.get_diffs(fnames=list(edited)) or ""
+            except Exception:
+                diff = ""
+
+            root = None
+            try:
+                root = self.root if getattr(self, "root", None) else None
+            except Exception:
+                root = None
+
+            pack = build_grounding_pack(
+                user_request=user_message,
+                files_changed=abs_paths or rels,
+                root=root,
+                diff=diff,
+            )
+            # Fallback text context if pack is empty (unreadable paths)
             context = (
                 f"User request: {user_message}\n"
                 f"Files changed: {', '.join(rels[:20])}\n"
@@ -1116,7 +1141,12 @@ class Coder:
             if getattr(self, "main_model", None):
                 model_name = getattr(self.main_model, "name", None)
             skill, created = save_skill_from_task(
-                self.io, topic, context=context, model_name=model_name
+                self.io,
+                topic,
+                context=context,
+                model_name=model_name,
+                grounding_pack=pack if pack.files or pack.diff else None,
+                uncertainty_engine=getattr(self, "uncertainty_engine", None),
             )
             if created and skill:
                 offer_view_new_skill(self.io, skill)
