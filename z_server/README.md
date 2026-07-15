@@ -75,15 +75,29 @@ export Z_GOOGLE_CLIENT_ID=...
 export Z_GOOGLE_CLIENT_SECRET=...
 ```
 
-## Run
+## Run (local / early testing)
+
+No Postgres required. With `Z_SERVER_DEV=1` (the default), the server uses a
+local SQLite file `./z_server.db` unless you set `DATABASE_URL`.
 
 ```bash
+cd /path/to/z
 pip install -r requirements/requirements-web.txt
-# create tables (dev) or use Alembic:
-alembic revision --autogenerate -m "init"
-alembic upgrade head
+pip install uvicorn
 
-uvicorn z_server.app:app --host 0.0.0.0 --port 8080
+# use the same python that has the packages:
+python -m uvicorn z_server.app:app --host 127.0.0.1 --port 8080
+```
+
+Open http://127.0.0.1:8080/
+
+For Postgres instead:
+
+```bash
+export DATABASE_URL="postgresql+psycopg://z:z@localhost:5432/z"
+export Z_SECRET_KEY="replace-me"
+alembic upgrade head   # or let init_db create tables in dev
+python -m uvicorn z_server.app:app --host 127.0.0.1 --port 8080
 ```
 
 Point the CLI at it:

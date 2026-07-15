@@ -47,11 +47,27 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     return session.user
 
 
-def get_optional_user(request: Request, db: Session = Depends(get_db)) -> User | None:
+def get_optional_user(request: Request) -> User | None:
+    """Return the signed-in user, or None. Never 500 the public landing page.
+
+    Uses its own short-lived session (not get_db) so a failed auth lookup cannot
+    poison the request with a dependency-level DB error.
+    """
+    db: Session | None = None
     try:
+        factory = get_session_factory()
+        db = factory()
         return get_current_user(request, db)
     except HTTPException:
         return None
+    except Exception:
+        return None
+    finally:
+        if db is not None:
+            try:
+                db.close()
+            except Exception:
+                pass
 
 
 def get_primary_workspace(db: Session, user: User) -> Workspace | None:

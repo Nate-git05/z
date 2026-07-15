@@ -21,7 +21,19 @@ from z_server.routers import waitlist as waitlist_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_db()
+    try:
+        init_db()
+    except Exception as err:
+        settings = get_settings()
+        hint = (
+            "For local early testing, unset DATABASE_URL (defaults to sqlite ./z_server.db) "
+            "or run: export DATABASE_URL='sqlite+pysqlite:///./z_server.db'"
+            if settings.dev_mode
+            else "Check DATABASE_URL and that Postgres is reachable."
+        )
+        raise RuntimeError(
+            f"Z server failed to initialize the database ({settings.database_url!r}): {err}\n{hint}"
+        ) from err
     yield
 
 

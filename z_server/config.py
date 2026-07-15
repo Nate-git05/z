@@ -15,12 +15,21 @@ class Settings:
     """Runtime settings loaded from environment variables."""
 
     def __init__(self) -> None:
-        # postgresql+psycopg://user:pass@host:5432/z
-        # For local tests you can override with sqlite+pysqlite:///:memory:
-        self.database_url: str = os.environ.get(
-            "DATABASE_URL",
-            "postgresql+psycopg://z:z@localhost:5432/z",
+        self.dev_mode: bool = os.environ.get("Z_SERVER_DEV", "1").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
         )
+
+        # Default: SQLite file for local / early testing (no Postgres required).
+        # Production: set DATABASE_URL=postgresql+psycopg://user:pass@host:5432/z
+        default_db = (
+            "sqlite+pysqlite:///./z_server.db"
+            if self.dev_mode
+            else "postgresql+psycopg://z:z@localhost:5432/z"
+        )
+        self.database_url: str = os.environ.get("DATABASE_URL", default_db)
         self.secret_key: str = os.environ.get("Z_SECRET_KEY", "dev-change-me")
         self.access_token_ttl_seconds: int = int(
             os.environ.get("Z_ACCESS_TOKEN_TTL", str(60 * 60 * 24 * 30))
@@ -55,11 +64,4 @@ class Settings:
         self.mcp_github_client_id: str | None = os.environ.get("Z_MCP_GITHUB_CLIENT_ID")
         self.mcp_github_client_secret: str | None = os.environ.get(
             "Z_MCP_GITHUB_CLIENT_SECRET"
-        )
-
-        self.dev_mode: bool = os.environ.get("Z_SERVER_DEV", "1").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
         )
