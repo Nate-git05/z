@@ -352,6 +352,49 @@ class Commands:
             self.io.tool_warning("No more changes to commit.")
             return
 
+        # Z verify-before-commit gate for manual /commit as well
+        if (
+            getattr(self.coder, "uncertainty_engine", None)
+            and getattr(self.coder, "verify_commit_gate", True)
+            and not getattr(self.coder, "dry_run", False)
+        ):
+            try:
+                from aider.z.uncertainty.gate import bind_acceptances_to_commit, prepare_commit
+                from aider.z.uncertainty.verify import gate_enabled
+
+                if gate_enabled():
+                    dirty = self.coder.repo.get_dirty_files()
+                    result = prepare_commit(self.coder, dirty)
+                    if result.reflect_message:
+                        self.io.tool_error(
+                            "Commit blocked until verification is addressed:"
+                        )
+                        self.io.tool_output(result.reflect_message)
+                        return
+                    if not result.allow_commit:
+                        self.io.tool_error(
+                            "Commit blocked by Z verification gate. "
+                            f"{result.reason or 'Resolve high-risk issues first.'}"
+                        )
+                        return
+                    commit_message = args.strip() if args else None
+                    res = self.coder.repo.commit(
+                        message=commit_message, coder=self.coder
+                    )
+                    if res and getattr(self.coder, "uncertainty_store", None):
+                        commit_hash = res[0] if isinstance(res, tuple) else res
+                        accepted = list(result.acknowledged_medium)
+                        if result.force_override:
+                            accepted.extend(result.blocked_high)
+                        bind_acceptances_to_commit(
+                            self.coder.uncertainty_store,
+                            {n.id for n in accepted},
+                            str(commit_hash),
+                        )
+                    return
+            except Exception as err:  # noqa: BLE001
+                self.io.tool_warning(f"Verify gate skipped on /commit: {err}")
+
         commit_message = args.strip() if args else None
         self.coder.repo.commit(message=commit_message, coder=self.coder)
 
