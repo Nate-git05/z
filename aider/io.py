@@ -4,6 +4,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import time
 import webbrowser
 from collections import defaultdict
@@ -902,7 +903,31 @@ class InputOutput:
                     else:
                         res = input(question)
                 except EOFError:
-                    # Treat EOF (Ctrl+D) as if the user pressed Enter
+                    # Non-interactive / piped stdin: fail loud instead of
+                    # silently accepting the default and then exiting on the
+                    # next prompt with no explanation.
+                    interactive = False
+                    try:
+                        interactive = bool(sys.stdin and sys.stdin.isatty())
+                    except Exception:
+                        interactive = False
+                    if not interactive:
+                        q_short = (
+                            question.split(" (Y)es")[0].strip()
+                            if " (Y)es" in question
+                            else question.strip()
+                        )
+                        self.tool_error(
+                            f"blocked: needs human approval — cannot confirm "
+                            f"'{q_short}' (no interactive terminal / EOF on stdin). "
+                            "Re-run in a TTY and answer Yes, or use a safe "
+                            "auto-approved path (e.g. pip install of a package "
+                            "already declared in the project manifest)."
+                        )
+                        hist = f"{question.strip()} n  # eof/non-interactive"
+                        self.append_chat_history(hist, linebreak=True, blockquote=True)
+                        return False
+                    # Interactive Ctrl+D: treat like Enter (use default)
                     res = default
                     break
 

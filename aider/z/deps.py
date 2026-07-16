@@ -199,6 +199,144 @@ def _names_from_package_json(text: str) -> Set[str]:
     return names
 
 
+# Pure install of named packages only — no shell metacharacters / requirements files
+_SHELL_META_RE = re.compile(r"[;&|`$()<>\n]")
+_PIP_INSTALL_CMD_RE = re.compile(
+    r"(?i)^\s*(?:python(?:\d+(?:\.\d+)?)?\s+-m\s+)?"
+    r"(?:uv\s+pip|pip(?:3)?)\s+install\s+(.+?)\s*$"
+)
+_NPM_INSTALL_CMD_RE = re.compile(
+    r"(?i)^\s*(?:npm\s+install|yarn\s+add|pnpm\s+(?:add|install))\s+(.+?)\s*$"
+)
+# Flags that make an install no longer a simple named-package fulfill
+_UNSAFE_INSTALL_FLAGS = {
+    "-r",
+    "--requirement",
+    "-e",
+    "--editable",
+    "-t",
+    "--target",
+    "--prefix",
+    "--root",
+    "--src",
+    "--find-links",
+    "-f",
+    "--index-url",
+    "-i",
+    "--extra-index-url",
+    "--no-index",
+}
+
+
+def _parse_install_package_names(command: str) -> Optional[List[str]]:
+    """
+    If command is a simple pip/npm install of named packages, return those names.
+    Otherwise return None (not auto-approvable).
+    """
+    cmd = (command or "").strip()
+    if not cmd or cmd.startswith("#"):
+        return None
+    if _SHELL_META_RE.search(cmd):
+        return None
+
+    rest = None
+    m_pip = _PIP_INSTALL_CMD_RE.match(cmd)
+    m_npm = _NPM_INSTALL_CMD_RE.match(cmd)
+    if m_pip:
+        rest = m_pip.group(1)
+    elif m_npm:
+        rest = m_npm.group(1)
+    else:
+        return None
+
+    packages: List[str] = []
+    tokens = rest.split()
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        lower = tok.lower()
+        # Allow harmless modifiers
+        if lower in {"--upgrade", "-U", "--no-cache-dir", "--user", "--with-deps"}:
+            i += 1
+            continue
+        if lower in _UNSAFE_INSTALL_FLAGS or lower.startswith("--requirement"):
+            return None
+        if lower.startswith("-"):
+            # Unknown flag — refuse rather than guess
+            # Flags that take a value: skip pair if present
+            if lower in {"-c", "--constraint", "--use-pep517"}:
+                return None
+            return None
+        if (
+            "://" in tok
+            or tok.startswith("git+")
+            or tok.startswith(".")
+            or "/" in tok
+            or tok.endswith(".txt")
+            or tok.endswith(".whl")
+            or tok.endswith(".zip")
+            or tok.endswith(".tar.gz")
+        ):
+            return None
+        base = re.split(r"[\[<=>!~]", tok, maxsplit=1)[0]
+        # npm scoped @scope/pkg
+        if base.startswith("@"):
+            parts = base.split("/", 1)
+            base = parts[-1] if len(parts) == 2 else base.lstrip("@")
+        name = normalize_dep_name(base)
+        if not name or name in {"pip", "setuptools", "wheel"}:
+            return None
+        packages.append(name)
+        i += 1
+
+    return packages or None
+
+
+def is_safe_declared_dependency_install(
+    command: str,
+    root: Path,
+    *,
+    declared: Optional[Set[str]] = None,
+) -> bool:
+    """
+    True only for a simple package-manager install of names already declared
+    in the project's own dependency manifests.
+
+    This is the narrow auto-approve path for recovery after refusing dependency
+    fabrication — not a blanket shell allowlist.
+    """
+    packages = _parse_install_package_names(command)
+    if not packages:
+        return False
+    declared = declared if declared is not None else collect_declared_dependencies(Path(root))
+    if not declared:
+        return False
+    declared_norm = {normalize_dep_name(d) for d in declared}
+    declared_hyphen = {d.replace("_", "-") for d in declared_norm}
+    for pkg in packages:
+        if pkg not in declared_norm and pkg.replace("_", "-") not in declared_hyphen:
+            return False
+    return True
+
+
+def commands_are_safe_declared_installs(
+    commands: Sequence[str],
+    root: Path,
+) -> bool:
+    """True if every non-empty command line is a safe declared-dep install."""
+    lines = [
+        c.strip()
+        for c in commands
+        if c and c.strip() and not c.strip().startswith("#")
+    ]
+    if not lines:
+        return False
+    declared = collect_declared_dependencies(Path(root))
+    return all(
+        is_safe_declared_dependency_install(line, root, declared=declared) for line in lines
+    )
+
+
 def collect_declared_dependencies(root: Path) -> Set[str]:
     """Union of dependency names from common manifests under root."""
     root = Path(root)
