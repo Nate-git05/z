@@ -4,6 +4,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import time
 import webbrowser
 from collections import defaultdict
@@ -902,7 +903,25 @@ class InputOutput:
                     else:
                         res = input(question)
                 except EOFError:
-                    # Treat EOF (Ctrl+D) as if the user pressed Enter
+                    # Non-interactive / piped stdin: fail loud instead of
+                    # silently accepting the default and then exiting on the
+                    # next prompt with no explanation.
+                    interactive = False
+                    try:
+                        interactive = bool(sys.stdin and sys.stdin.isatty())
+                    except Exception:
+                        interactive = False
+                    if not interactive:
+                        q_short = question.split(" (Y)es")[0].strip() if " (Y)es" in question else question.strip()
+                        self.tool_error(
+                            f"Cannot confirm '{q_short}' — no interactive terminal "
+                            "(EOF on stdin). Pass --yes-always to auto-approve "
+                            "prompts, or run Z in an interactive terminal."
+                        )
+                        hist = f"{question.strip()} n  # eof/non-interactive"
+                        self.append_chat_history(hist, linebreak=True, blockquote=True)
+                        return False
+                    # Interactive Ctrl+D: treat like Enter (use default)
                     res = default
                     break
 

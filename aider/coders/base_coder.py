@@ -3116,13 +3116,24 @@ class Coder:
             1 for cmd in commands if cmd.strip() and not cmd.strip().startswith("#")
         )
         prompt = "Run shell command?" if command_count == 1 else "Run shell commands?"
+        # Do not use explicit_yes_required here: --yes-always must be able to
+        # approve suggested installs (e.g. pip install after refusing dependency
+        # fabrication). Gate/commit prompts still use explicit_yes_required so
+        # --yes-always cannot bypass those.
         if not self.io.confirm_ask(
             prompt,
             subject="\n".join(commands),
-            explicit_yes_required=True,
             group=group,
             allow_never=True,
         ):
+            skipped = "\n".join(c for c in commands if c.strip() and not c.strip().startswith("#"))
+            self.io.tool_error(
+                "Shell command not run — confirmation declined or unavailable. "
+                "Run interactively and answer Yes, or pass --yes-always to "
+                "auto-approve suggested shell commands "
+                "(needed for pip/npm install recovery).\n"
+                f"Skipped:\n{skipped}"
+            )
             return
 
         accumulated_output = ""
