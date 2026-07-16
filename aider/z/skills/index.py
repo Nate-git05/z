@@ -145,6 +145,8 @@ def _entry_from_row(r: dict, *, source: str) -> SkillIndexEntry:
             in ("draft", "verified", "rejected")
             else ("draft" if r.get("needs_review") else "verified")
         ),
+        repo_key=str(r.get("repo_key") or "").strip(),
+        shared=bool(r.get("shared")),
     )
 
 

@@ -2,16 +2,33 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional, Tuple
 
 from .generate import generate_skill
 from .grounding import GroundingPack, make_ungrounded_skill_node
 from .infer import apply_inferred_metadata
 from .remote import sync_skill
+from .router import normalize_repo_key
 from .schema import Skill
 from .session import format_skill_metadata, print_skills_list
 from .store import LocalSkillStore
 from .vector import get_skill_vector_index, upsert_skill_vector
+
+
+def _stamp_repo_key(skill: Skill, *, root: Optional[Path | str] = None, shared: bool = False) -> None:
+    """Bind skill to the current project unless explicitly shared."""
+    if shared:
+        skill.shared = True
+        skill.repo_key = ""
+        return
+    if skill.shared:
+        return
+    if skill.repo_key:
+        return
+    key = normalize_repo_key(root or Path.cwd())
+    if key:
+        skill.repo_key = key
 
 
 def _created_by() -> Optional[str]:
@@ -94,6 +111,14 @@ def cmd_skill_add(io, content: str = "", *, sync: bool = True) -> int:
     if parsed.id:
         kwargs["id"] = parsed.id
     skill = Skill(**kwargs)
+    # Preserve explicit shared/repo_key from pasted frontmatter; else bind to cwd
+    if parsed.shared or (parsed.repo_key or "").strip() in ("*", "global", "any"):
+        skill.shared = True
+        skill.repo_key = ""
+    elif parsed.repo_key:
+        skill.repo_key = parsed.repo_key.strip()
+    else:
+        _stamp_repo_key(skill)
 
     _persist_skill(io, skill, sync=sync)
     return 0
@@ -119,6 +144,7 @@ def cmd_skill_create(
         return 1
 
     skill.source = "generate"
+    _stamp_repo_key(skill)
     _persist_skill(io, skill, sync=sync)
     return 0
 
@@ -184,6 +210,7 @@ def save_skill_from_task(
     model_name: Optional[str] = None,
     grounding_pack: Optional[GroundingPack] = None,
     uncertainty_engine=None,
+    repo_root: Optional[Path | str] = None,
 ) -> Tuple[Optional[Skill], bool]:
     """
     Capture a skill after a completed task, grounded in diff/file evidence.
@@ -210,6 +237,7 @@ def save_skill_from_task(
     # Captures always start as draft — accept after review (even if grounded)
     skill.quality_state = "draft"
     skill.needs_review = True
+    _stamp_repo_key(skill, root=repo_root)
     if ground and not ground.ok:
         io.tool_warning(
             "Skill saved as draft — it may not match the real implementation."

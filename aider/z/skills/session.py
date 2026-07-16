@@ -143,6 +143,10 @@ def _copy_router_fields(entry: SkillIndexEntry, skill: Skill) -> None:
     skill.needs_review = bool(entry.needs_review)
     if getattr(entry, "quality_state", None):
         skill.quality_state = entry.quality_state
+    if getattr(entry, "repo_key", None):
+        skill.repo_key = entry.repo_key
+    if getattr(entry, "shared", False):
+        skill.shared = True
 
 
 def retrieve_skill_candidates(
@@ -305,12 +309,18 @@ def format_skill_metadata(skill: Skill) -> str:
         f"  grounded_symbols: {', '.join(meta.get('grounded_symbols') or []) or '(none)'}",
         f"  source_files: {', '.join(meta.get('source_files') or []) or '(none)'}",
         f"  needs_review: {'yes' if meta.get('needs_review') else 'no'}",
+        f"  quality_state: {meta.get('quality_state') or 'verified'}",
         f"  tags: {', '.join(meta['tags']) or '(none)'}",
         f"  triggers: {', '.join(meta['triggers']) or '(none)'}",
         f"  project_types: {', '.join(meta['project_types']) or '(none)'}",
         f"  path: {meta['path'] or '(unknown)'}",
         f"  source: {meta['source']}",
         f"  scope: {meta['scope']}",
+        (
+            "  repo: shared (all projects)"
+            if meta.get("shared")
+            else f"  repo: {meta.get('repo_key') or '(unscoped legacy)'}"
+        ),
     ]
     return "\n".join(lines)
 
@@ -332,7 +342,18 @@ def print_skills_list(io) -> None:
             kind = s.kind or "playbook"
             langs = ",".join(s.languages or []) or "-"
             review = " needs-review" if s.needs_review else ""
-            io.tool_output(f"  • {s.title}  [{kind}/{langs}]{review}")
+            qstate = (s.quality_state or "verified").strip()
+            if qstate == "draft":
+                review = (review + " draft").strip()
+            elif qstate == "rejected":
+                review = (review + " rejected").strip()
+            if s.shared:
+                repo_tag = " shared"
+            elif s.repo_key:
+                repo_tag = " repo-bound"
+            else:
+                repo_tag = ""
+            io.tool_output(f"  • {s.title}  [{kind}/{langs}]{review}{repo_tag}")
             if s.description:
                 io.tool_output(f"      {s.description}")
             if s.path:
