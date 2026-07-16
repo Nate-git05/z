@@ -1920,6 +1920,98 @@ def detect_getattr_shortcuts(
     return [n for n in nodes if n.type == NodeType.GETATTR_SHORTCUT]
 
 
+def detect_established_solution_gaps(
+    signals: DetectionSignals,
+    *,
+    diff: str = "",
+    plan: Optional[object] = None,
+    task_id: Optional[str] = None,
+    task_title: Optional[str] = None,
+    created_by_session: Optional[str] = None,
+    created_by_user: Optional[str] = None,
+) -> List[UncertaintyNode]:
+    """
+    Flag diffs that invent a custom solution for a well-known problem
+    (IP/email/URL/date/UUID, heaps, caches, concurrency) without evidence the
+    plan considered the established approach — or without using the standard
+    in the diff itself.
+    """
+    from .established_solutions import (
+        plan_allows_custom_invention,
+        scan_invention_in_diff,
+    )
+
+    hits = scan_invention_in_diff(diff or "")
+    if not hits:
+        return []
+
+    considerations = []
+    if plan is not None:
+        considerations = list(getattr(plan, "established_solutions", None) or [])
+
+    nodes: List[UncertaintyNode] = []
+    for hit in hits:
+        # Only an explicit custom justification suppresses invention.
+        # decision=use_standard without a stdlib import still flags.
+        if plan_allows_custom_invention(considerations, hit.category_id):
+            continue
+        prefer = "; ".join(hit.standard_names[:3])
+        node = _make_node(
+            title=f"Reinvented established solution: {hit.title}",
+            node_type=NodeType.ESTABLISHED_SOLUTION_GAP,
+            signals=signals,
+            summary=(
+                f"The diff appears to solve '{hit.title}' from scratch instead of "
+                f"using an established approach ({hit.standard_names[0] if hit.standard_names else 'stdlib'})."
+            ),
+            explanation=(
+                f"{hit.description}\n"
+                f"Evidence in diff: {hit.evidence}\n"
+                f"Prefer: {prefer}\n"
+                "A test suite written by the same process that invented the custom "
+                "logic often shares its blind spots — use the standard, or record "
+                "an explicit custom justification in the gated plan."
+            ),
+            why_uncertain=(
+                "No plan evidence named the standard approach / justified custom, "
+                "and the diff does not import or call the established solution."
+            ),
+            what_could_go_wrong=(
+                "Subtle correctness bugs (legal inputs rejected, illegal inputs "
+                "accepted) that hand-rolled tests never cover."
+            ),
+            suggested_fix=(
+                f"Replace the custom logic with: {prefer}. "
+                "If a custom implementation is truly required, update the plan "
+                f"with decision=custom and a justification for [{hit.category_id}]."
+            ),
+            suggested_prompt=(
+                f"Category [{hit.category_id}] ({hit.title}): the diff invents a "
+                f"custom solution ({hit.evidence[:120]}). Switch to "
+                f"{hit.standard_names[0] if hit.standard_names else 'the stdlib'} "
+                "unless there is an explicit, recorded justification for custom."
+            ),
+            files=list(signals.files_changed[:5]),
+            task_id=task_id,
+            task_title=task_title,
+            created_by_session=created_by_session,
+            created_by_user=created_by_user,
+            extra_signals={
+                "established_solution_gap": True,
+                "established_category_id": hit.category_id,
+                "established_hard_block": hit.hard_block,
+                "established_evidence": hit.evidence,
+            },
+        )
+        sev = (hit.severity or "Medium").strip().lower()
+        node.risk_tier = (
+            Tier.HIGH if sev == "high" else Tier.LOW if sev == "low" else Tier.MEDIUM
+        )
+        node.confidence_tier = Tier.LOW
+        nodes.append(node)
+    return nodes
+
+
 # ---------------------------------------------------------------------------
 # Dependency fabrication / import shadowing
 # ---------------------------------------------------------------------------

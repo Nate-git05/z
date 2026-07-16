@@ -60,6 +60,9 @@ class NodeType(str, enum.Enum):
     # New file matches a family, but siblings share a registry/__all__/index trait
     # the new file's diff did not update (see sibling_traits.py)
     PATTERN_COMPANION_GAP = "Missing Sibling Registration"
+    # Diff invents a custom solution for a well-known stdlib/algorithm problem
+    # without plan evidence of considering the established approach
+    ESTABLISHED_SOLUTION_GAP = "Reinvented Established Solution"
 
 
 # Older persisted display strings → current NodeType
@@ -87,6 +90,7 @@ _NODE_TYPE_ALIASES = {
     "Permissive getattr Shortcut": NodeType.GETATTR_SHORTCUT,
     "Failure Absorption": NodeType.FAILURE_ABSORPTION,
     "Missing Sibling Registration": NodeType.PATTERN_COMPANION_GAP,
+    "Reinvented Established Solution": NodeType.ESTABLISHED_SOLUTION_GAP,
 }
 
 

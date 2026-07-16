@@ -115,6 +115,9 @@ def derive_risk_tier(signals: DetectionSignals, node_type: NodeType) -> Tier:
     if node_type == NodeType.PATTERN_COMPANION_GAP:
         return Tier.MEDIUM
 
+    if node_type == NodeType.ESTABLISHED_SOLUTION_GAP:
+        return Tier.MEDIUM
+
     if node_type == NodeType.HIGH_CONFIDENCE:
         if signals.high_stakes_hit or signals.migration_hit:
             risk = _max_tier(risk, Tier.MEDIUM)

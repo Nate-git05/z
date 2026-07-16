@@ -12,6 +12,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from typing import List, Optional, Sequence, Tuple
 
+from .established_solutions import EstablishedSolutionConsideration
 from .risk import DetectionSignals, collect_base_signals, scan_high_stakes
 from .schema import (
     DEFAULT_BLAST_RADIUS_THRESHOLD,
@@ -51,6 +52,11 @@ class PlanningArtifact:
     input_domain_table: List[Tuple[str, str, str]] = field(default_factory=list)
     invariants: List[str] = field(default_factory=list)
     ambiguities: List[AmbiguityResolution] = field(default_factory=list)
+    # Mandatory for non-trivial / established-solution categories: name the
+    # stdlib/known approach, or justify a custom implementation.
+    established_solutions: List[EstablishedSolutionConsideration] = field(
+        default_factory=list
+    )
     approved: bool = False
     skipped: bool = False  # True when triage said planning not required
 
@@ -68,6 +74,7 @@ class PlanningArtifact:
             ],
             "invariants": list(self.invariants),
             "ambiguities": [asdict(a) for a in self.ambiguities],
+            "established_solutions": [asdict(e) for e in self.established_solutions],
         }
 
 
@@ -158,6 +165,15 @@ def triage_for_planning(
     if not reasons and scan_high_stakes(files, symbols):
         reasons.append("high_stakes_hit")
         signals.high_stakes_hit = True
+
+    # Established-solution categories (IP/email/URL/date/UUID/…) — require the
+    # "name the standard or justify custom" plan section before inventing one.
+    from .established_solutions import match_request_categories
+
+    est_cats = match_request_categories(user_text or "")
+    if est_cats:
+        ids = ",".join(c.category_id for c in est_cats[:6])
+        reasons.append(f"established_solution:{ids}")
 
     if not reasons:
         return False, "", signals
@@ -274,6 +290,36 @@ def draft_plan_from_request(
             )
         )
 
+    from .established_solutions import considerations_from_text
+
+    blob_for_est = user_message or ""
+    if checklist:
+        blob_for_est += "\n" + "\n".join(i.text for i in checklist.items)
+    established = considerations_from_text(blob_for_est)
+
+    # Always surface the established-solution question on gated plans so it
+    # cannot be silently skipped under pressure — even when no category matched.
+    if not established:
+        established = [
+            EstablishedSolutionConsideration(
+                category_id="general",
+                problem_category=(
+                    "Any well-known problem (parsing, data structure, concurrency, …)"
+                ),
+                standard_approach="",
+                decision="unspecified",
+                custom_justification="",
+            )
+        ]
+
+    est_invariant = (
+        "For each established-solution category: use the named standard "
+        "approach (stdlib / known algorithm), or record an explicit custom "
+        "justification — do not invent a parser/structure from scratch silently."
+    )
+    if est_invariant not in invariants:
+        invariants.append(est_invariant)
+
     return PlanningArtifact(
         task_id=task_id,
         title=title,
@@ -282,6 +328,7 @@ def draft_plan_from_request(
         input_domain_table=table,
         invariants=invariants[:16],
         ambiguities=ambiguities[:8],
+        established_solutions=established[:8],
         approved=False,
         skipped=False,
     )
@@ -324,6 +371,29 @@ def format_plan_for_user(plan: PlanningArtifact) -> str:
 
     lines.append("")
     lines.append(
+        "Established solutions (required — name the standard approach, "
+        "or justify custom):"
+    )
+    if plan.established_solutions:
+        for e in plan.established_solutions:
+            lines.append(f"  - [{e.category_id}] {e.problem_category}")
+            if e.standard_approach:
+                lines.append(f"      Prefer: {e.standard_approach}")
+            lines.append(
+                "      Decision: use standard (name it) OR custom because: …"
+            )
+            if e.decision and e.decision != "unspecified":
+                lines.append(f"      Recorded: {e.decision}")
+                if e.custom_justification:
+                    lines.append(f"      Justification: {e.custom_justification}")
+    else:
+        lines.append(
+            "  - (none inferred — still ask: is any part a solved stdlib/"
+            "algorithm problem?)"
+        )
+
+    lines.append("")
+    lines.append(
         "Confirm this plan to proceed. Reject to stop before any diff is written."
     )
     return "\n".join(lines)
@@ -355,9 +425,26 @@ def format_plan_for_context(plan: PlanningArtifact) -> str:
     for a in plan.ambiguities:
         lines.append(f"- {a.ambiguity} → {a.resolution}")
     lines.append("")
+    lines.append("## Established solutions (binding)")
+    lines.append(
+        "If the task involves a well-known problem (IP/email/URL/date/UUID "
+        "parsing, heaps/caches, concurrency primitives), use the language "
+        "stdlib or a known algorithm. Inventing a custom parser/structure "
+        "requires an explicit custom justification in this plan."
+    )
+    for e in plan.established_solutions:
+        prefer = e.standard_approach or "(name the standard)"
+        lines.append(
+            f"- [{e.category_id}] {e.problem_category}: prefer `{prefer}` "
+            f"(decision={e.decision or 'unspecified'})"
+        )
+        if e.custom_justification:
+            lines.append(f"  custom justification: {e.custom_justification}")
+    lines.append("")
     lines.append(
         "Implement only what this plan authorizes. "
-        "Detectors will check the diff against these invariants."
+        "Detectors will check the diff against these invariants and against "
+        "the established-solutions taxonomy."
     )
     return "\n".join(lines)
 
