@@ -30,6 +30,7 @@ from .detectors import (
     count_symbol_references,
     detect_api_assumptions,
     detect_blast_radius,
+    detect_dependency_fabrication,
     detect_edge_cases,
     detect_failure_blind_spots,
     detect_fragile_logic,
@@ -242,6 +243,28 @@ class UncertaintyEngine:
                 assumed_apis=sorted(self.ctx.assumed_apis),
                 live_verified_apis=self.ctx.live_verified_apis,
                 mcp_unverifiable=sorted(self.ctx.mcp_unverifiable),
+                **meta,
+            )
+        )
+
+        # Dependency fabrication — local package shadowing a real third-party dep
+        verify_excerpt = ""
+        if self.ctx.last_verification is not None:
+            v = self.ctx.last_verification
+            verify_excerpt = "\n".join(
+                [
+                    getattr(v, "output_excerpt", "") or "",
+                    getattr(v, "error", "") or "",
+                    getattr(v, "smoke_detail", "") or "",
+                ]
+            )
+        nodes.extend(
+            detect_dependency_fabrication(
+                signals,
+                root=root,
+                files_changed=files,
+                execution_log=self.ctx.execution_log or "",
+                verification_excerpt=verify_excerpt,
                 **meta,
             )
         )

@@ -19,6 +19,18 @@ Do what they ask, but no more.
 Do not improve, comment, fix or modify unrelated parts of the code in any way!
 """
 
+    # Always injected — blocks the freezegun-style dependency fabrication failure mode
+    dependency_fabrication_prompt = """CRITICAL — Dependency / import failures:
+If a required third-party package cannot be imported or installed, do NOT create a local
+file or package with the same import name to replace it (for example freezegun/__init__.py
+that only "satisfies imports"). That shadows the real library for the whole test suite.
+Instead: install the real dependency from the project's requirements / PyPI, or STOP,
+report the exact install/import failure verbatim, and wait for human direction.
+Allowed recovery: pip install of a declared dependency; fixing the code/tests under review.
+Forbidden without explicit human approval: fabricating shadow packages, editing unrelated
+conftest/CI to hide import errors, skipping tests to go green.
+"""
+
     example_messages = []
 
     files_content_prefix = """I have *added these files to the chat* so you can go ahead and edit them.

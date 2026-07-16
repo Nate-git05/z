@@ -1275,6 +1275,112 @@ def detect_failure_blind_spots(
     return nodes
 
 
+# ---------------------------------------------------------------------------
+# Dependency fabrication / import shadowing
+# ---------------------------------------------------------------------------
+
+
+def detect_dependency_fabrication(
+    signals: DetectionSignals,
+    *,
+    root: Path,
+    files_changed: Optional[Sequence[str]] = None,
+    execution_log: str = "",
+    verification_excerpt: str = "",
+    task_id: Optional[str] = None,
+    task_title: Optional[str] = None,
+    created_by_session: Optional[str] = None,
+    created_by_user: Optional[str] = None,
+) -> List[UncertaintyNode]:
+    """
+    Flag new top-level packages that shadow a declared or recently-missing
+    third-party dependency (e.g. freezegun/__init__.py no-op stand-in).
+    """
+    try:
+        from aider.z.deps import (
+            collect_declared_dependencies,
+            extract_missing_modules,
+            extract_pip_install_targets,
+            scan_paths_for_fabrication,
+        )
+    except Exception:
+        return []
+
+    root = Path(root)
+    paths = list(files_changed if files_changed is not None else signals.files_changed)
+    blob = f"{execution_log or ''}\n{verification_excerpt or ''}"
+    missing = extract_missing_modules(blob) | extract_pip_install_targets(blob)
+    try:
+        declared = collect_declared_dependencies(root)
+    except Exception:
+        declared = set()
+
+    hits = scan_paths_for_fabrication(
+        paths,
+        root=root,
+        missing_modules=missing,
+        declared=declared,
+    )
+    if not hits:
+        return []
+
+    nodes: List[UncertaintyNode] = []
+    for hit in hits:
+        pkg = hit["package"]
+        reason = hit["reason"]
+        fpath = hit["path"]
+        node = _make_node(
+            title=f"Dependency fabrication — local '{pkg}' shadows a real package",
+            node_type=NodeType.DEPENDENCY_FABRICATION,
+            signals=signals,
+            summary=(
+                f"A new top-level '{pkg}' was added that can shadow the real "
+                "third-party library instead of installing it."
+            ),
+            explanation=(
+                f"{reason}\n"
+                f"Path: {fpath}\n"
+                "This is environment tampering: a no-op or stub package at the "
+                "repo root silently replaces the real dependency for the whole "
+                "test suite. Install the real package or remove the local stand-in."
+            ),
+            why_uncertain=(
+                "The agent may have fabricated a fake dependency after an import "
+                "failure rather than installing the real one."
+            ),
+            what_could_go_wrong=(
+                "Existing tests that rely on real library behavior can pass or fail "
+                "for the wrong reason; the safety net is quietly swapped out."
+            ),
+            suggested_fix=(
+                f"Delete the local '{pkg}' stand-in, install the real dependency "
+                "from the project requirements / PyPI, and re-run the suite."
+            ),
+            suggested_prompt=(
+                f"Do NOT keep a local '{pkg}' package. Remove {fpath} (and the "
+                f"'{pkg}/' tree if present), install the real '{pkg}' dependency, "
+                "and re-run tests. Stop if install fails — report the error verbatim."
+            ),
+            files=[fpath],
+            task_id=task_id,
+            task_title=task_title,
+            created_by_session=created_by_session,
+            created_by_user=created_by_user,
+            status=NodeStatus.NEEDS_HUMAN_REVIEW,
+            extra_signals={
+                "dependency_fabrication": True,
+                "fabricated_package": pkg,
+                "fabrication_reason": reason,
+                "non_forceable_without_ack": True,
+            },
+        )
+        # Force High — never downgrade via noise circuit
+        node.risk_tier = Tier.HIGH
+        node.confidence_tier = Tier.LOW
+        nodes.append(node)
+    return nodes
+
+
 def count_symbol_references(root: Path, symbol: str, exclude_files: Sequence[str] = ()) -> tuple[int, List[str]]:
     """Simple reference/dependency count via text search for the symbol name."""
     if not symbol or len(symbol) < 2:

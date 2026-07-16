@@ -656,6 +656,89 @@ class Coder:
         except (ValueError, OSError, RuntimeError, TypeError):
             return None
 
+    def _blocks_dependency_fabrication(self, path, full_path=None) -> bool:
+        """
+        True if we refused to create this path because it would shadow a real dependency.
+
+        Uses declared manifests + session ModuleNotFoundError / failed-install names.
+        """
+        try:
+            from aider.z.deps import (
+                collect_declared_dependencies,
+                extract_missing_modules,
+                extract_pip_install_targets,
+                is_dependency_fabrication,
+            )
+        except Exception:
+            return False
+
+        root = Path(getattr(self, "root", None) or Path.cwd())
+        try:
+            rel = self.get_rel_fname(full_path or path)
+        except Exception:
+            rel = str(path)
+
+        missing: set[str] = set()
+        # Session execution / verify log
+        try:
+            eng = getattr(self, "uncertainty_engine", None)
+            log = ""
+            if eng is not None and getattr(eng, "ctx", None) is not None:
+                log = getattr(eng.ctx, "execution_log", "") or ""
+                ver = getattr(eng.ctx, "last_verification", None)
+                if ver is not None:
+                    log += "\n" + (getattr(ver, "output_excerpt", "") or "")
+                    log += "\n" + (getattr(ver, "error", "") or "")
+                    log += "\n" + (getattr(ver, "smoke_detail", "") or "")
+            missing |= extract_missing_modules(log)
+            missing |= extract_pip_install_targets(log)
+        except Exception:
+            pass
+        # Also scan recent chat for ModuleNotFoundError
+        try:
+            for msg in (getattr(self, "done_messages", None) or [])[-8:]:
+                content = msg.get("content") if isinstance(msg, dict) else None
+                if isinstance(content, str):
+                    missing |= extract_missing_modules(content)
+        except Exception:
+            pass
+
+        try:
+            declared = collect_declared_dependencies(root)
+        except Exception:
+            declared = set()
+
+        reason = is_dependency_fabrication(
+            rel,
+            root=root,
+            declared=declared,
+            missing_modules=missing,
+        )
+        if not reason:
+            return False
+
+        self.io.tool_error(f"Blocked dependency fabrication: {rel}")
+        self.io.tool_error(reason)
+        self.io.tool_output(
+            "Install the real package (e.g. from the project's requirements) "
+            "or stop and ask a human — do not create a local stand-in."
+        )
+        # Record for uncertainty detector / gate
+        try:
+            eng = getattr(self, "uncertainty_engine", None)
+            if eng is not None and hasattr(eng, "record_execution"):
+                eng.record_execution(
+                    f"BLOCKED dependency fabrication: {rel} ({reason})"
+                )
+            blocked = getattr(self, "_z_blocked_dep_fabrication", None)
+            if blocked is None:
+                self._z_blocked_dep_fabrication = []
+                blocked = self._z_blocked_dep_fabrication
+            blocked.append({"path": rel, "reason": reason})
+        except Exception:
+            pass
+        return True
+
     fences = all_fences
     fence = fences[0]
 
@@ -1460,6 +1543,10 @@ class Coder:
 
     def fmt_system_prompt(self, prompt):
         final_reminders = []
+        # Always-on: never fabricate local stand-ins for real third-party packages
+        dep_rule = getattr(self.gpt_prompts, "dependency_fabrication_prompt", None)
+        if dep_rule:
+            final_reminders.append(dep_rule)
         if self.main_model.lazy:
             final_reminders.append(self.gpt_prompts.lazy_prompt)
         if self.main_model.overeager:
@@ -2654,6 +2741,11 @@ class Coder:
             return
 
         if not Path(full_path).exists():
+            # Mechanical block: do not create top-level packages that shadow
+            # declared / recently-missing third-party dependencies (freezegun case).
+            if self._blocks_dependency_fabrication(path, full_path):
+                return
+
             if not self.io.confirm_ask("Create new file?", subject=path):
                 self.io.tool_output(f"Skipping edits to {path}")
                 return

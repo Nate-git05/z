@@ -181,11 +181,16 @@ def _effective_gate_tier(node: UncertaintyNode) -> Tier:
     Map a node to the gate tier.
 
     - Verification / failing-test / Not Addressed requirements → High
+    - Dependency fabrication → always High (never downgrade)
     - Explicit High risk_tier → High
     - Actionable Medium types → Medium
     - Everything else → Low (no block)
     """
     if node.signals.get("verification_blocked"):
+        return Tier.HIGH
+    if node.type == NodeType.DEPENDENCY_FABRICATION or node.signals.get(
+        "dependency_fabrication"
+    ):
         return Tier.HIGH
     if node.signals.get("tests_passed") is False and node.type == NodeType.MISSING_TEST:
         return Tier.HIGH
@@ -280,7 +285,13 @@ def _reflect_fix_tests(record: VerificationRecord, edited: Sequence[str]) -> str
         f"Exit code: {record.exit_code}\n"
         f"Discovered tests: {record.tests_discovered}\n"
         f"Output (excerpt):\n{excerpt}\n\n"
-        "Fix the implementation or tests, then the suite will be re-run. "
+        "ALLOWED fixes: correct the implementation/tests under review; "
+        "install a real declared dependency (pip install / requirements).\n"
+        "FORBIDDEN without human approval: creating a local package/file with "
+        "the same name as a missing third-party library (e.g. freezegun/__init__.py "
+        "that only satisfies imports); editing unrelated conftest/CI to hide "
+        "import errors; skipping or disabling tests to go green.\n"
+        "If install fails, STOP and report the exact error — do not fabricate a stand-in.\n"
         "Do not claim completion while tests are red."
     )
 
@@ -320,6 +331,20 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
             f"discovered={record.tests_discovered} exit={record.exit_code} "
             f"cmd={record.command}"
         )
+        # Surface ModuleNotFoundError into the session log for fabrication checks
+        from aider.z.deps import extract_missing_modules
+
+        missing = extract_missing_modules(
+            "\n".join(
+                [
+                    record.output_excerpt or "",
+                    record.error or "",
+                    record.smoke_detail or "",
+                ]
+            )
+        )
+        for mod in sorted(missing):
+            engine.record_execution(f"ModuleNotFoundError: No module named '{mod}'")
     except Exception:
         pass
 
@@ -509,15 +534,34 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
             f"Commit blocked: {len(high)} high-risk issue(s) unresolved.\n{subject}\n"
             "High-risk nodes must be fixed and verified (Ignored does not clear them)."
         )
-        if force:
+        fab_nodes = [
+            n
+            for n in high
+            if n.type == NodeType.DEPENDENCY_FABRICATION
+            or n.signals.get("dependency_fabrication")
+        ]
+        if fab_nodes:
+            pkgs = sorted(
+                {
+                    str(n.signals.get("fabricated_package") or "")
+                    for n in fab_nodes
+                    if n.signals.get("fabricated_package")
+                }
+            )
+            io.tool_error(
+                "Dependency Fabrication detected — a local package may be shadowing "
+                "a real third-party library "
+                f"({', '.join(pkgs) or 'see nodes above'}).\n"
+                "Remove the local stand-in and install the real dependency. "
+                "A generic force-commit is not enough for this finding."
+            )
+
+        if force and not fab_nodes:
             io.tool_warning(
                 "FORCE COMMIT: bypassing high-risk block (--force-commit / Z_FORCE_COMMIT). "
                 "Override will be logged on the nodes."
             )
             record_acceptances(store, high, "force_override")
-            # Still require medium ack unless force also clears? Force bypasses high only;
-            # medium still needs explicit ack unless force is set — product says force is
-            # for high-risk bypass. We'll let force also proceed past medium with log.
             if medium:
                 record_acceptances(store, medium, "force_override")
             return GateResult(
@@ -529,14 +573,33 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
                 reason="force override of high-risk blockers",
                 claimed_complete=record.meaningful_pass,
             )
+        if force and fab_nodes:
+            io.tool_error(
+                "FORCE COMMIT refused: Dependency Fabrication cannot be bypassed with "
+                "--force-commit / Z_FORCE_COMMIT alone. Delete the local shadow package "
+                "or give an explicit typed acknowledgment in the interactive prompt."
+            )
 
-        # Interactive explicit override (never default / never yes-always)
-        ok = io.confirm_ask(
-            "OVERRIDE: force commit despite high-risk blockers? This will be logged.",
-            default="n",
-            explicit_yes_required=True,
-            subject=subject,
-        )
+        # Interactive override — dependency fabrication needs a distinct ack
+        if fab_nodes:
+            pkg = str(
+                fab_nodes[0].signals.get("fabricated_package") or "the package"
+            )
+            ok = io.confirm_ask(
+                f"OVERRIDE DEPENDENCY FABRICATION: I accept committing a local "
+                f"'{pkg}' stand-in that shadows the real third-party library. "
+                "This is dangerous and will be logged. Type yes only if intentional.",
+                default="n",
+                explicit_yes_required=True,
+                subject=subject,
+            )
+        else:
+            ok = io.confirm_ask(
+                "OVERRIDE: force commit despite high-risk blockers? This will be logged.",
+                default="n",
+                explicit_yes_required=True,
+                subject=subject,
+            )
         if ok:
             record_acceptances(store, high, "force_override")
             if medium:
@@ -547,7 +610,11 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
                 blocked_high=high,
                 needs_ack_medium=medium,
                 force_override=True,
-                reason="user forced commit past high-risk blockers",
+                reason=(
+                    "user forced commit past dependency fabrication"
+                    if fab_nodes
+                    else "user forced commit past high-risk blockers"
+                ),
                 claimed_complete=False,
             )
         return GateResult(
@@ -555,7 +622,11 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
             verification=record,
             blocked_high=high,
             needs_ack_medium=medium,
-            reason="high-risk blockers",
+            reason=(
+                "dependency fabrication blockers"
+                if fab_nodes
+                else "high-risk blockers"
+            ),
         )
 
     if medium:
