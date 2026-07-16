@@ -31,6 +31,14 @@ Forbidden without explicit human approval: fabricating shadow packages, editing 
 conftest/CI to hide import errors, skipping tests to go green.
 """
 
+    # Soft architectural guidance (Codex #8 core/adapter) — not a hard gate
+    core_adapter_prompt = """Architecture preference — core vs adapter:
+Keep reusable domain/core logic free of process-exit and CLI-only side effects.
+Prefer raising typed errors from libraries; call sys.exit / os._exit only in
+obvious CLI entrypoints (cli.py, __main__.py, main.py, commands). When tempted
+to exit from shared code, return/raise instead and let the adapter decide.
+"""
+
     example_messages = []
 
     files_content_prefix = """I have *added these files to the chat* so you can go ahead and edit them.

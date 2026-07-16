@@ -154,6 +154,8 @@ def apply_uncertainty_budget(
         NodeType.MISSING_TEST,
         NodeType.REQUIREMENT_GAP,
         NodeType.DEPENDENCY_FABRICATION,
+        NodeType.ABSORBED_FAILURE,
+        NodeType.WEAK_TEST,
     }
     positive = [n for n in nodes if getattr(n, "type", None) == NodeType.HIGH_CONFIDENCE]
     blocking = [

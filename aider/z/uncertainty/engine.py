@@ -28,6 +28,7 @@ from .context import (
 from .detectors import (
     PatternSearchResult,
     count_symbol_references,
+    detect_absorbed_failures,
     detect_api_assumptions,
     detect_blast_radius,
     detect_dependency_fabrication,
@@ -40,11 +41,13 @@ from .detectors import (
     detect_pattern_issues,
     detect_requirement_gaps,
     detect_todo_comments,
+    detect_unvalidated_config,
     detect_unverifiable_config,
     extract_config_refs,
     find_relevant_tests,
     scan_todo_markers,
 )
+from .plan import PlanningArtifact
 from .risk import collect_base_signals
 from .schema import UncertaintyNode
 from .store import UncertaintyStore
@@ -80,6 +83,10 @@ class SessionContext:
     model_complete: Optional[object] = None
     # Requirement-to-evidence ledger snapshot from last gap analysis
     requirement_ledger: List[dict] = field(default_factory=list)
+    # Gated planning artifact (None = not triaged this task)
+    plan: Optional[PlanningArtifact] = None
+    plan_required: bool = False
+    plan_approved: bool = False
 
 
 class UncertaintyEngine:
@@ -95,7 +102,86 @@ class UncertaintyEngine:
         self.ctx.checklist = checklist
         self.ctx.current_task_id = checklist.task_id
         self.ctx.current_task_title = checklist.title
+        # Reset planning gate for the new task
+        self.ctx.plan = None
+        self.ctx.plan_required = False
+        self.ctx.plan_approved = False
         return checklist
+
+    def maybe_require_plan(
+        self,
+        user_message: str,
+        *,
+        files: Optional[Sequence[str]] = None,
+        symbols: Optional[Sequence[str]] = None,
+        reference_count: int = 0,
+    ) -> Optional[PlanningArtifact]:
+        """
+        Pre-edit triage: if high-stakes / blast-radius fires, draft a plan
+        artifact. Returns the plan when required; None when the fast path applies.
+        """
+        from .plan import (
+            draft_plan_from_request,
+            merge_plan_invariants_into_checklist,
+            triage_for_planning,
+        )
+
+        files = list(files or [])
+        symbols = list(symbols or [])
+        required, reason, _signals = triage_for_planning(
+            files,
+            symbols=symbols,
+            user_text=user_message or "",
+            reference_count=reference_count,
+        )
+        if not required:
+            skipped = PlanningArtifact(
+                task_id=self.ctx.current_task_id or str(uuid.uuid4()),
+                title=self.ctx.current_task_title or "Task",
+                reason="",
+                skipped=True,
+                approved=True,
+            )
+            self.ctx.plan = skipped
+            self.ctx.plan_required = False
+            self.ctx.plan_approved = True
+            return None
+
+        plan = draft_plan_from_request(
+            user_message or "",
+            title=self.ctx.current_task_title or "",
+            checklist=self.ctx.checklist,
+            reason=reason,
+            files=files,
+        )
+        self.ctx.plan = plan
+        self.ctx.plan_required = True
+        self.ctx.plan_approved = False
+        if self.ctx.checklist:
+            merge_plan_invariants_into_checklist(self.ctx.checklist, plan)
+        self.record_execution(f"planning required: {reason}")
+        return plan
+
+    def approve_plan(self, plan: Optional[PlanningArtifact] = None) -> None:
+        plan = plan or self.ctx.plan
+        if not plan:
+            return
+        plan.approved = True
+        self.ctx.plan = plan
+        self.ctx.plan_approved = True
+        self.ctx.plan_required = bool(not plan.skipped)
+        self.record_user_decision(f"approved plan: {plan.title} ({plan.reason})")
+        if self.ctx.checklist:
+            self.ctx.checklist.confirmed_by_user = True
+
+    def edits_blocked_pending_plan(self) -> bool:
+        """True when high-stakes triage demanded a plan that is not yet approved."""
+        if not self.ctx.plan_required:
+            return False
+        plan = self.ctx.plan
+        if plan is None or plan.skipped:
+            return False
+        return not (plan.approved or self.ctx.plan_approved)
 
     def record_live_api(self, api_name: str) -> None:
         if api_name:
@@ -151,6 +237,10 @@ class UncertaintyEngine:
         files = [self._rel(f) for f in files_changed]
         symbols = list(symbols)
         contents = file_contents or self._read_files(files)
+        # Ensure checklist ledger can bind symbol evidence even when caller
+        # (gate) didn't pass an explicit symbol list.
+        if not symbols and contents:
+            symbols = self._extract_symbols(contents)
 
         # Detect new files
         new_files = []
@@ -330,9 +420,18 @@ class UncertaintyEngine:
             detect_unverifiable_config(signals, config_refs_by_file=config_refs, **meta)
         )
 
-        # Fragile logic + failure blind spots
+        # Fragile logic + failure blind spots + absorbed failures + config validation
         nodes.extend(detect_fragile_logic(signals, file_contents=contents, **meta))
         nodes.extend(detect_failure_blind_spots(signals, file_contents=contents, **meta))
+        nodes.extend(
+            detect_absorbed_failures(
+                signals,
+                file_contents=contents,
+                diff=diff if diff is not None else self.ctx.last_diff,
+                **meta,
+            )
+        )
+        nodes.extend(detect_unvalidated_config(signals, file_contents=contents, **meta))
 
         # Edge case blind spots — structural AST/regex first; model list supplements
         test_blob = ""

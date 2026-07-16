@@ -978,11 +978,7 @@ def reconcile_requirement_with_signals(
         if kind == "process" and re.search(r"(?i)\b(verif|commit\s+gate|uncertainty)\b", text):
             return "Fully Addressed"
 
-    if kind == "quality" and _CONCURRENCY_LANG.search(text):
-        rel = list(relevant_tests or [])
-        if any(re.search(r"(?i)concurr|thread|race|stress", t) for t in rel):
-            return "Fully Addressed"
-        # tests_passed alone is not enough for quality — leave open/partial
+    # quality: never Fully via reconcile alone — needs file+symbol+test ledger bar
 
     return None
 
@@ -1272,6 +1268,234 @@ def detect_failure_blind_spots(
                 extra_signals={"io_hits": len(io_hits)},
             )
         )
+    return nodes
+
+
+# ---------------------------------------------------------------------------
+# Absorbed failure — broad except near new external import/call
+# ---------------------------------------------------------------------------
+
+_IMPORT_OR_EXTERNAL_RE = re.compile(
+    r"(?mi)^\s*(?:import\s+\w+|from\s+\w+\s+import)\b|"
+    r"\b(?:requests\.|httpx\.|subprocess\.|urlopen\(|"
+    r"pip\s+install|__import__\(|importlib\.)"
+)
+
+
+def detect_absorbed_failures(
+    signals: DetectionSignals,
+    *,
+    file_contents: dict[str, str],
+    diff: str = "",
+    task_id: Optional[str] = None,
+    task_title: Optional[str] = None,
+    created_by_session: Optional[str] = None,
+    created_by_user: Optional[str] = None,
+) -> List[UncertaintyNode]:
+    """
+    Broad except Exception / bare except near a new import or external call.
+
+    This is the limp-forward pattern behind dependency fabrication — unexpected
+    failures get swallowed into a generic path instead of surfacing.
+    """
+    from .context import is_scaffold_file
+    from .edges import parse_changed_lines_from_diff
+
+    nodes: List[UncertaintyNode] = []
+    changed = parse_changed_lines_from_diff(diff) if diff else {}
+
+    for fpath, text in (file_contents or {}).items():
+        if is_scaffold_file(fpath) or not text:
+            continue
+        lines = text.splitlines()
+        changed_set = set(changed.get(fpath.replace("\\", "/"), []) or [])
+        # Also try basename-relative keys
+        if not changed_set:
+            for k, v in changed.items():
+                if k.endswith(Path(fpath).name) or Path(k).name == Path(fpath).name:
+                    changed_set = set(v or [])
+                    break
+
+        broad_lines = []
+        external_lines = []
+        for i, line in enumerate(lines, start=1):
+            if _BROAD_EXCEPT_RE.search(line):
+                broad_lines.append(i)
+            if _IMPORT_OR_EXTERNAL_RE.search(line) or _IO_CALL_RE.search(line):
+                external_lines.append(i)
+
+        if not broad_lines or not external_lines:
+            continue
+
+        # Prefer proximity on changed lines; fall back to same-file co-presence
+        # when the broad except or the external call was introduced in this diff.
+        paired = False
+        reason_bits = []
+        for bl in broad_lines:
+            for el in external_lines:
+                if abs(bl - el) <= 40:
+                    introduced = (not changed_set) or (bl in changed_set) or (el in changed_set)
+                    if introduced:
+                        paired = True
+                        reason_bits.append(f"except@L{bl} near external@L{el}")
+                        break
+            if paired:
+                break
+        if not paired:
+            continue
+
+        node = _make_node(
+            title=f"Absorbed failure in {Path(fpath).name}",
+            node_type=NodeType.ABSORBED_FAILURE,
+            signals=signals,
+            summary=(
+                "A broad except may be swallowing unexpected failures near a new "
+                "import or external call — limp-forward instead of fail-loud."
+            ),
+            explanation=(
+                f"{fpath}: {'; '.join(reason_bits)}. "
+                "Catch only expected exception types; let unexpected errors surface "
+                "so install/import/environment failures cannot be papered over."
+            ),
+            why_uncertain=(
+                "Broad exception handlers hide the real failure mode from the human "
+                "and from the verify gate."
+            ),
+            what_could_go_wrong=(
+                "Missing dependencies, API errors, or corrupt state get converted into "
+                "generic exits/fallbacks — same instinct as fabricating a stub package."
+            ),
+            suggested_fix=(
+                "Replace bare/Exception catch with specific types, or re-raise "
+                "unexpected errors after logging."
+            ),
+            suggested_prompt=(
+                f"In {fpath}, narrow the broad except near the new import/external call. "
+                "Do not swallow ModuleNotFoundError / ImportError / unexpected failures."
+            ),
+            files=[fpath],
+            task_id=task_id,
+            task_title=task_title,
+            created_by_session=created_by_session,
+            created_by_user=created_by_user,
+            status=NodeStatus.NEEDS_HUMAN_REVIEW,
+            extra_signals={
+                "absorbed_failure": True,
+                "broad_except_lines": broad_lines[:8],
+                "external_lines": external_lines[:8],
+            },
+        )
+        node.risk_tier = Tier.HIGH
+        node.confidence_tier = Tier.LOW
+        nodes.append(node)
+    return nodes
+
+
+# ---------------------------------------------------------------------------
+# Unvalidated config / constructor parameters
+# ---------------------------------------------------------------------------
+
+_INIT_DEF_RE = re.compile(
+    r"(?m)^(?P<indent>[ \t]*)def\s+__init__\s*\((?P<args>[^)]*)\)\s*:"
+)
+_NUMERIC_PARAM_RE = re.compile(
+    r"\b(?P<name>[a-zA-Z_][a-zA-Z0-9_]*)\s*(?::\s*(?:int|float|bool))?\s*(?:=\s*[^,)\n]+)?"
+)
+_VALIDATE_NEAR_RE = re.compile(
+    r"(?i)\b(raise\s+|ValueError|TypeError|AssertionError|assert\s+|if\s+not\s+"
+    r"|if\s+\w+\s*(?:<|>|<=|>=|==|!=)|validate|clamp|bounds?|range\()\b"
+)
+_CONFIGISH_NAMES = re.compile(
+    r"(?i)\b(timeout|retries?|limit|max_|min_|ttl|threshold|tolerance|"
+    r"capacity|size|count|port|rate|window|batch|workers?|concurrency)\w*\b"
+)
+
+
+def detect_unvalidated_config(
+    signals: DetectionSignals,
+    *,
+    file_contents: dict[str, str],
+    task_id: Optional[str] = None,
+    task_title: Optional[str] = None,
+    created_by_session: Optional[str] = None,
+    created_by_user: Optional[str] = None,
+) -> List[UncertaintyNode]:
+    """
+    Flag constructors that take numeric/config-like parameters with no nearby
+    validation (Codex #8 — fail immediately on bad config).
+    """
+    from .context import is_scaffold_file
+
+    nodes: List[UncertaintyNode] = []
+    for fpath, text in (file_contents or {}).items():
+        if is_scaffold_file(fpath) or not text:
+            continue
+        if not fpath.endswith((".py",)):
+            continue
+        for m in _INIT_DEF_RE.finditer(text):
+            args = m.group("args") or ""
+            # Skip self-only
+            params = [
+                p.strip()
+                for p in args.split(",")
+                if p.strip() and p.strip() not in ("self", "cls", "*", "**")
+            ]
+            configish = [
+                p
+                for p in params
+                if _CONFIGISH_NAMES.search(p)
+                or re.search(r":\s*(int|float)\b", p)
+            ]
+            if not configish:
+                continue
+            # Body: from __init__ to next def at same indent (approx 40 lines)
+            start = m.end()
+            body = text[start : start + 1200]
+            if _VALIDATE_NEAR_RE.search(body):
+                continue
+            names = []
+            for p in configish:
+                nm = re.match(r"\*?(\w+)", p.strip().lstrip("*"))
+                if nm:
+                    names.append(nm.group(1))
+            node = _make_node(
+                title=f"Unvalidated config in {Path(fpath).name}.__init__",
+                node_type=NodeType.UNVALIDATED_CONFIG,
+                signals=signals,
+                summary=(
+                    "Constructor accepts numeric/config parameters with no visible "
+                    "validation — invalid values can limp into runtime."
+                ),
+                explanation=(
+                    f"{fpath} __init__ parameters look config-like "
+                    f"({', '.join(names[:6])}) but the constructor body has no "
+                    "raise/assert/bounds check nearby."
+                ),
+                why_uncertain="Bad config should fail at construction, not later.",
+                what_could_go_wrong=(
+                    "Negative timeouts, NaN tolerances, or out-of-range limits "
+                    "propagate until a distant failure."
+                ),
+                suggested_fix=(
+                    "Validate each public config input in __init__ (type/range) and "
+                    "add a unit test for at least one invalid value."
+                ),
+                suggested_prompt=(
+                    f"In {fpath}, validate __init__ config params "
+                    f"({', '.join(names[:6])}) and reject invalid values immediately."
+                ),
+                files=[fpath],
+                task_id=task_id,
+                task_title=task_title,
+                created_by_session=created_by_session,
+                created_by_user=created_by_user,
+                extra_signals={
+                    "unvalidated_params": names[:10],
+                    "constructor_config": True,
+                },
+            )
+            nodes.append(node)
+            break  # one node per file
     return nodes
 
 
