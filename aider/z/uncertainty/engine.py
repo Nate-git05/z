@@ -35,7 +35,7 @@ from .detectors import (
     detect_edge_cases,
     detect_failure_blind_spots,
     detect_fragile_logic,
-    detect_getattr_shortcuts,
+    detect_failure_absorption,
     detect_high_confidence,
     detect_high_stakes_and_migration,
     detect_missing_or_failing_tests,
@@ -433,8 +433,9 @@ class UncertaintyEngine:
             )
         )
         nodes.extend(detect_unvalidated_config(signals, file_contents=contents, **meta))
+        # Named failure-absorption taxonomy (includes getattr_new_param + peers)
         nodes.extend(
-            detect_getattr_shortcuts(
+            detect_failure_absorption(
                 signals,
                 file_contents=contents,
                 diff=diff if diff is not None else self.ctx.last_diff,

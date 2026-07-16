@@ -605,7 +605,7 @@ def rescore_checklist_with_evidence(
         words = _keywords(item.text)
         status = _status_from_evidence(ev, words)
         kind = ev.kind or getattr(item, "kind", "product")
-        if status == "Not Addressed":
+        if status in ("Not Addressed", "Unverifiable"):
             from .evidence_strategy import missing_message_for
 
             ev.missing = missing_message_for(ev, words)
@@ -700,6 +700,7 @@ def rescore_checklist_with_model(
         "documentation uses README/docs; product needs implementation symbols.\n"
         "If evidence is empty for a product behavior requirement, status must be Not Addressed. "
         "Tests-only evidence for product is at most Partially Addressed.\n"
+        "If current_status is Unverifiable, keep Unverifiable — do not invent Fully/Partial.\n"
         "Your status cannot exceed the mechanical current_status ceiling.\n"
         f"INPUT:\n{json.dumps(payload)}"
     )
@@ -721,6 +722,7 @@ def rescore_checklist_with_model(
                 "Fully Addressed",
                 "Partially Addressed",
                 "Not Addressed",
+                "Unverifiable",
             ):
                 continue
             ev = by_ev.get(item.id)
