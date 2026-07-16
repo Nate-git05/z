@@ -38,6 +38,7 @@ _MEDIUM_GATE_TYPES = {
     NodeType.TODO_COMMENT,
     NodeType.SHARED_LOGIC,
     NodeType.MISSING_TEST,
+    NodeType.UNVALIDATED_CONFIG,
     NodeType.FAILURE_BLIND_SPOT,
     NodeType.FRAGILE_LOGIC,
 }
@@ -191,6 +192,10 @@ def _effective_gate_tier(node: UncertaintyNode) -> Tier:
     if node.type == NodeType.DEPENDENCY_FABRICATION or node.signals.get(
         "dependency_fabrication"
     ):
+        return Tier.HIGH
+    if node.type == NodeType.ABSORBED_FAILURE or node.signals.get("absorbed_failure"):
+        return Tier.HIGH
+    if node.type == NodeType.WEAK_TEST or node.signals.get("mutation_survivors"):
         return Tier.HIGH
     if node.signals.get("tests_passed") is False and node.type == NodeType.MISSING_TEST:
         return Tier.HIGH
@@ -449,6 +454,48 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
             if existing.signals.get("verification_blocked"):
                 store.update_status(existing.id, NodeStatus.RESOLVED)
 
+        # Scoped mutation check (Codex #11) — only after green suite
+        try:
+            from .mutation import mutation_nodes_from_result, run_mutation_check
+            from .risk import collect_base_signals
+
+            rels_for_mut = []
+            for path in edited_list:
+                try:
+                    rels_for_mut.append(coder.get_rel_fname(path))
+                except Exception:
+                    rels_for_mut.append(str(path))
+            mut = run_mutation_check(
+                root,
+                edited=rels_for_mut,
+                relevant_tests=list(relevant or []),
+                test_cmd=record.command or getattr(coder, "test_cmd", None),
+                diff=getattr(engine.ctx, "last_diff", "") or "",
+                max_mutations=3,
+                verbose=bool(getattr(coder, "verbose", False)),
+            )
+            if mut.survivors:
+                sig = collect_base_signals(rels_for_mut)
+                weak = mutation_nodes_from_result(
+                    mut,
+                    signals=sig,
+                    task_id=getattr(engine.ctx, "current_task_id", None),
+                    task_title=getattr(engine.ctx, "current_task_title", None),
+                    created_by_session=getattr(engine.ctx, "session_id", None),
+                )
+                store.add_many(weak)
+                engine.record_execution(
+                    f"mutation check: {len(mut.survivors)} survivor(s) / "
+                    f"{mut.attempted} attempted"
+                )
+                io.tool_warning(
+                    f"Mutation check: {len(mut.survivors)} weakening(s) on new "
+                    "lines still left tests green — Weak Test Suite raised."
+                )
+        except Exception as err:  # noqa: BLE001
+            if getattr(coder, "verbose", False):
+                io.tool_warning(f"Mutation check skipped: {err}")
+
     # --- 2) Human-worry detectors + structured checklist rescore ---
     try:
         content = getattr(coder, "partial_response_content", None) or ""
@@ -461,7 +508,11 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
                 rels.append(coder.get_rel_fname(path))
             except Exception:
                 rels.append(str(path))
-        new_nodes = engine.analyze_edits(rels, tests_passed=coder.test_outcome)
+        new_nodes = engine.analyze_edits(
+            rels,
+            tests_passed=coder.test_outcome,
+            diff=getattr(engine.ctx, "last_diff", None),
+        )
         if new_nodes:
             try:
                 from .ui import print_summary_line

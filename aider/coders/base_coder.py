@@ -1100,6 +1100,9 @@ class Coder:
             user_text = user_message if isinstance(user_message, str) else message
             self._maybe_pull_skills(user_text, checkpoint="turn")
             self._maybe_begin_uncertainty_task(user_text)
+            # High-stakes / blast-radius → human-reviewable plan before any diff
+            if not self._maybe_require_implementation_plan(user_text):
+                return
 
         while message:
             self.reflected_message = None
@@ -1312,6 +1315,106 @@ class Coder:
                 self.io.tool_output("")
         except Exception:
             pass
+
+    def _maybe_require_implementation_plan(self, user_message: str) -> bool:
+        """
+        Priority 3 gated planning: for high-stakes / high-blast-radius tasks,
+        force a reviewable plan before any diff. Returns False if the user
+        rejects the plan (caller should abort the turn).
+        """
+        engine = getattr(self, "uncertainty_engine", None)
+        if not engine or not user_message or not isinstance(user_message, str):
+            return True
+        try:
+            from aider.z.uncertainty.detectors import count_symbol_references
+            from aider.z.uncertainty.plan import (
+                format_plan_for_context,
+                format_plan_for_user,
+            )
+
+            files = []
+            try:
+                files = list(self.get_inchat_relative_files() or [])
+            except Exception:
+                files = []
+
+            # Light pre-edit blast-radius: reference count for symbols in chat files
+            symbols = []
+            reference_count = 0
+            try:
+                contents = {}
+                root = Path(getattr(self, "root", None) or ".")
+                for rel in files[:12]:
+                    path = root / rel
+                    if path.is_file() and str(rel).endswith((".py", ".ts", ".js", ".tsx", ".jsx")):
+                        try:
+                            contents[rel] = path.read_text(encoding="utf-8", errors="ignore")[
+                                :20000
+                            ]
+                        except OSError:
+                            pass
+                symbols = engine._extract_symbols(contents) if contents else []
+                for sym in symbols[:3]:
+                    reference_count = max(
+                        reference_count,
+                        count_symbol_references(root, sym, exclude_files=files),
+                    )
+            except Exception:
+                pass
+
+            plan = engine.maybe_require_plan(
+                user_message,
+                files=files,
+                symbols=symbols,
+                reference_count=reference_count,
+            )
+            if plan is None:
+                return True
+
+            rendered = format_plan_for_user(plan)
+            self.io.tool_output("")
+            self.io.tool_output(rendered)
+            self.io.tool_output("")
+
+            # Interactive: ask. --yes auto-approves so CI/evals keep moving,
+            # but the plan is still injected as binding grounding context.
+            approved = True
+            if getattr(self.io, "yes", None) is not True:
+                approved = bool(
+                    self.io.confirm_ask(
+                        "Proceed with this implementation plan?",
+                        default="y",
+                        subject=plan.title,
+                    )
+                )
+            if not approved:
+                self.io.tool_warning(
+                    "Plan rejected — no edits will be written for this request."
+                )
+                engine.record_user_decision(f"rejected plan: {plan.title}")
+                engine.ctx.plan_approved = False
+                engine.ctx.plan_required = True
+                return False
+
+            engine.approve_plan(plan)
+            block = format_plan_for_context(plan)
+            self.cur_messages += [
+                {"role": "user", "content": block},
+                {
+                    "role": "assistant",
+                    "content": (
+                        "I'll treat that plan as binding: validation contracts, "
+                        "input domains, invariants, and ambiguity resolutions "
+                        "before writing any diff."
+                    ),
+                },
+            ]
+            self.io.tool_output("Plan approved — proceeding with implementation.")
+            return True
+        except Exception as err:
+            if getattr(self, "verbose", False):
+                self.io.tool_warning(f"Planning gate skipped: {err}")
+            return True
 
     def check_and_open_urls(self, exc, friendly_msg=None):
         """Check exception for URLs, offer to open in a browser, with user-friendly error msgs."""
@@ -1547,6 +1650,10 @@ class Coder:
         dep_rule = getattr(self.gpt_prompts, "dependency_fabrication_prompt", None)
         if dep_rule:
             final_reminders.append(dep_rule)
+        # Soft guidance: keep sys.exit / process kill out of reusable core
+        core_rule = getattr(self.gpt_prompts, "core_adapter_prompt", None)
+        if core_rule:
+            final_reminders.append(core_rule)
         if self.main_model.lazy:
             final_reminders.append(self.gpt_prompts.lazy_prompt)
         if self.main_model.overeager:
@@ -2837,6 +2944,20 @@ class Coder:
 
     def apply_updates(self):
         edited = set()
+        # Hard stop: high-stakes plan required but not approved → no diffs
+        engine = getattr(self, "uncertainty_engine", None)
+        if engine is not None:
+            try:
+                if engine.edits_blocked_pending_plan():
+                    msg = (
+                        "Edits blocked: a high-stakes implementation plan is required "
+                        "and has not been approved yet."
+                    )
+                    self.io.tool_error(msg)
+                    self.reflected_message = msg
+                    return edited
+            except Exception:
+                pass
         try:
             edits = self.get_edits()
             edits = self.apply_edits_dry_run(edits)

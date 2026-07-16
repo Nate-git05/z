@@ -94,6 +94,15 @@ def derive_risk_tier(signals: DetectionSignals, node_type: NodeType) -> Tier:
         # Never less than High — local stubs that shadow real deps
         return Tier.HIGH
 
+    if node_type == NodeType.ABSORBED_FAILURE:
+        return Tier.HIGH
+
+    if node_type == NodeType.WEAK_TEST:
+        return Tier.HIGH
+
+    if node_type == NodeType.UNVALIDATED_CONFIG:
+        risk = _max_tier(risk, Tier.MEDIUM)
+
     if node_type == NodeType.HIGH_CONFIDENCE:
         if signals.high_stakes_hit or signals.migration_hit:
             risk = _max_tier(risk, Tier.MEDIUM)

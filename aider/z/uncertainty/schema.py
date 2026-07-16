@@ -42,6 +42,12 @@ class NodeType(str, enum.Enum):
     HIGH_CONFIDENCE = "Evidence of Safety"
     # Agent wrote a local package that shadows a real third-party dependency
     DEPENDENCY_FABRICATION = "Dependency Fabrication"
+    # Broad except absorbs unexpected failures (freezegun-class limp-forward)
+    ABSORBED_FAILURE = "Absorbed Failure"
+    # Mutating the diff's new lines still leaves tests green
+    WEAK_TEST = "Weak Test Suite"
+    # Constructor/config params accepted without visible validation
+    UNVALIDATED_CONFIG = "Unvalidated Config"
 
 
 # Older persisted display strings → current NodeType
@@ -63,6 +69,9 @@ _NODE_TYPE_ALIASES = {
     "Evidence of Safety": NodeType.HIGH_CONFIDENCE,
     "Dependency Fabrication": NodeType.DEPENDENCY_FABRICATION,
     "Environment Tampering": NodeType.DEPENDENCY_FABRICATION,
+    "Absorbed Failure": NodeType.ABSORBED_FAILURE,
+    "Weak Test Suite": NodeType.WEAK_TEST,
+    "Unvalidated Config": NodeType.UNVALIDATED_CONFIG,
 }
 
 

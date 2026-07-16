@@ -78,6 +78,24 @@ class ItemEvidence:
             n.startswith("doc:") for n in self.evidence_notes
         )
 
+    @property
+    def has_hard_product_evidence(self) -> bool:
+        """
+        Codex coding-quality bar: Fully Addressed for product/quality requires
+        a real file + symbol + test — not keyword vibes alone.
+        """
+        return bool(self.file_hits) and bool(self.symbol_hits) and bool(self.test_hits)
+
+    def missing_hard_evidence_parts(self) -> List[str]:
+        missing = []
+        if not self.file_hits:
+            missing.append("file")
+        if not self.symbol_hits:
+            missing.append("symbol")
+        if not self.test_hits:
+            missing.append("test")
+        return missing
+
 
 # Tooling / agent process (never search product source for these)
 _PROCESS_RE = re.compile(
@@ -549,7 +567,8 @@ def _status_from_evidence(ev: ItemEvidence, words: List[str]) -> str:
         return "Not Addressed"
 
     if kind == "quality":
-        if ev.test_hits and ev.has_code_evidence:
+        # Same hard bar as product: file + symbol + behavioral test
+        if ev.has_hard_product_evidence:
             return "Fully Addressed"
         if ev.test_hits or ev.has_code_evidence:
             return "Partially Addressed"
@@ -560,10 +579,11 @@ def _status_from_evidence(ev: ItemEvidence, words: List[str]) -> str:
             return "Fully Addressed"
         return "Not Addressed"
 
+    # product (default) — Fully only with mechanical file+symbol+test evidence
+    if ev.has_hard_product_evidence:
+        return "Fully Addressed"
     if not words:
-        if ev.has_code_evidence:
-            return "Partially Addressed"
-        if ev.has_test_only_evidence:
+        if ev.has_code_evidence or ev.has_test_only_evidence:
             return "Partially Addressed"
         return "Not Addressed"
     distinctive = set(ev.keyword_hits) | {
@@ -572,11 +592,7 @@ def _status_from_evidence(ev: ItemEvidence, words: List[str]) -> str:
     hit_ratio = len(distinctive) / max(len(words), 1)
     if ev.has_test_only_evidence:
         return "Partially Addressed" if hit_ratio >= 0.25 or ev.test_hits else "Not Addressed"
-    if ev.has_code_evidence and hit_ratio >= 0.5:
-        return "Fully Addressed"
-    if hit_ratio >= 0.6 and ev.has_code_evidence:
-        return "Fully Addressed"
-    if hit_ratio >= 0.25 or ev.has_code_evidence:
+    if hit_ratio >= 0.25 or ev.has_code_evidence or ev.test_hits:
         return "Partially Addressed"
     return "Not Addressed"
 
@@ -612,18 +628,28 @@ def rescore_checklist_with_evidence(
                     f"No documentation file/section evidence for: {item.text}"
                 )
             elif kind == "quality":
+                parts = ev.missing_hard_evidence_parts()
                 ev.missing = (
-                    f"Missing quality evidence (stress/concurrency test or review): "
-                    f"{item.text}"
+                    f"Quality requirement needs file+symbol+test evidence "
+                    f"(missing: {', '.join(parts) or 'all'}): {item.text}"
                 )
             elif kind == "external_assumption":
                 ev.missing = f"External assumption unverified: {item.text}"
             else:
+                parts = ev.missing_hard_evidence_parts()
                 ev.missing = (
-                    f"No implementation evidence (symbols/files) for: {item.text}"
+                    f"No complete evidence (need file+symbol+test; missing: "
+                    f"{', '.join(parts) or 'all'}) for: {item.text}"
                 )
         elif status == "Partially Addressed":
-            if kind == "quality" and ev.has_code_evidence and not ev.test_hits:
+            parts = ev.missing_hard_evidence_parts()
+            if kind in ("product", "quality") and parts:
+                ev.missing = (
+                    f"Only partial evidence for: {item.text}. "
+                    f"Missing: {', '.join(parts)}. "
+                    f"Present: {', '.join(ev.evidence_strings()[:6]) or '(none)'}"
+                )
+            elif kind == "quality" and ev.has_code_evidence and not ev.test_hits:
                 ev.missing = (
                     f"Implementation exists but no race/stress test covering: {item.text}"
                 )
@@ -740,15 +766,17 @@ def rescore_checklist_with_model(
                     status = "Fully Addressed"
                 elif not ev.has_doc_evidence:
                     status = "Not Addressed"
-            elif ev and kind == "product":
-                if (
+            elif ev and kind in ("product", "quality"):
+                grounded = _status_from_evidence(ev, _keywords(item.text))
+                # Mechanical file+symbol+test bar beats model Fully claims
+                if status == "Fully Addressed" and grounded != "Fully Addressed":
+                    status = grounded
+                elif (
                     not ev.has_code_evidence
                     and not ev.test_hits
                     and not ev.keyword_hits
                 ):
                     status = "Not Addressed"
-                elif ev.has_test_only_evidence and status == "Fully Addressed":
-                    status = "Partially Addressed"
             item.status = status
             if ev is not None:
                 ev.missing = (row.get("missing") or ev.missing or "").strip()
