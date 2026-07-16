@@ -297,6 +297,28 @@ def _looks_doc_path(path: str) -> bool:
     )
 
 
+def path_looks_docs_artifact(path: str) -> bool:
+    """
+    Mechanical docs_touched signal: README* / CHANGELOG* / HISTORY* / docs/**.
+
+    Stricter than _looks_doc_path (which also matches any .md) so editing a
+    random markdown note does not satisfy a documentation requirement.
+    """
+    p = (path or "").replace("\\", "/").lower()
+    base = Path(p).name
+    if base.startswith("readme"):
+        return True
+    if "changelog" in base or base.startswith("history") or base == "changes.md":
+        return True
+    if p == "docs" or p.startswith("docs/") or "/docs/" in p:
+        return True
+    return False
+
+
+def files_touch_docs(files_changed: Sequence[str]) -> bool:
+    return any(path_looks_docs_artifact(f) for f in (files_changed or []))
+
+
 def _doc_corpus(
     files_changed: Sequence[str],
     file_contents: dict[str, str],
@@ -432,21 +454,38 @@ def bind_evidence(
             continue
 
         if kind == "documentation":
-            for f in doc_files:
+            # Concrete docs_touched bar: only docs edited this turn count.
+            # Pre-existing README content must not silently satisfy the requirement.
+            touched_docs = [f for f in files_changed if path_looks_docs_artifact(f)]
+            touched_blob = "\n".join(
+                (contents.get(f) or "").lower()[:8000] for f in touched_docs
+            )
+            for f in touched_docs:
                 ev.file_hits.append(f)
             for w in words:
-                if w in doc_blob or w in corpus_files:
+                if w in touched_blob:
                     ev.keyword_hits.append(w)
-            # README / docs existence with overlapping semantics
-            if doc_files and (
-                any(w in doc_blob for w in words)
-                or re.search(r"(?i)\b(api|allow|usage|semantics|example)\b", doc_blob)
+            if touched_docs and (
+                any(w in touched_blob for w in words)
+                or re.search(
+                    r"(?i)\b(api|allow|usage|semantics|example|redact|changelog)\b",
+                    touched_blob,
+                )
             ):
-                ev.evidence_notes.append(f"doc:{doc_files[0]}")
-            elif doc_files and re.search(r"(?i)readme|document|docs?", text_l):
-                # Explicit "document in README" + README present
-                ev.evidence_notes.append(f"doc:{doc_files[0]}")
+                ev.evidence_notes.append(f"doc:{touched_docs[0]}")
+                ev.evidence_notes.append("docs_touched:true")
+            elif touched_docs and re.search(
+                r"(?i)readme|document|docs?|changelog", text_l
+            ):
+                ev.evidence_notes.append(f"doc:{touched_docs[0]}")
+                ev.evidence_notes.append("docs_touched:true")
                 ev.keyword_hits.append("readme")
+            else:
+                ev.evidence_notes.append("docs_touched:false")
+                ev.missing = (
+                    ev.missing
+                    or "No README/CHANGELOG/docs/** file was edited this turn"
+                )
             ev.file_hits = list(dict.fromkeys(ev.file_hits))
             ev.keyword_hits = list(dict.fromkeys(ev.keyword_hits))
             out.append(ev)

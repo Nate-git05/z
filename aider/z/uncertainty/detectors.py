@@ -75,6 +75,7 @@ def _make_node(
         "blast_radius_threshold": signals.blast_radius_threshold,
         "tests_relevant_exist": signals.tests_relevant_exist,
         "tests_passed": signals.tests_passed,
+        "docs_touched": signals.docs_touched,
         "live_api_verified": signals.live_api_verified,
         "pattern_match_found": signals.pattern_match_found,
         "conflicting_patterns": signals.conflicting_patterns,
@@ -210,6 +211,13 @@ def detect_missing_or_failing_tests(
                         why_uncertain="Failing suite is a concrete negative correctness signal.",
                         what_could_go_wrong="Shipping with red tests breaks known contracts.",
                         suggested_fix="Fix failing tests until the suite passes.",
+                        suggested_prompt=(
+                            "The test suite failed. Trace each failure to its real cause "
+                            "(often a test helper/fixture missing a new field). Fix the "
+                            "helper or the implementation — do NOT add "
+                            "getattr(obj, 'new_param', default) in production code just "
+                            "to absorb AttributeError from outdated tests."
+                        ),
                         task_id=task_id,
                         task_title=task_title,
                         created_by_session=created_by_session,
@@ -274,7 +282,10 @@ def detect_missing_or_failing_tests(
                 suggested_tests=list(relevant_tests[:5]),
                 suggested_prompt=(
                     "The relevant tests failed after the last edit. Inspect and fix the "
-                    f"failures in: {', '.join(relevant_tests[:5])}."
+                    f"failures in: {', '.join(relevant_tests[:5])}. "
+                    "Trace the failure to its actual cause (e.g. a test helper that needs "
+                    "the new constructor field). Do not paper over with "
+                    "getattr(..., default) in production code."
                 ),
                 task_id=task_id,
                 task_title=task_title,
@@ -965,7 +976,8 @@ def reconcile_requirement_with_signals(
     Cross-check checklist status against concrete session signals.
 
     Returns a corrected status when signals contradict an open gap, else None.
-    This is the cheap mechanical fix for "Run the tests" + tests_passed=True.
+    This is the cheap mechanical fix for "Run the tests" + tests_passed=True
+    and "update README/CHANGELOG" + docs_touched=True/False.
     """
     text = item.text or ""
     kind = (getattr(item, "kind", None) or "product").lower()
@@ -977,6 +989,14 @@ def reconcile_requirement_with_signals(
             return "Fully Addressed"
         if kind == "process" and re.search(r"(?i)\b(verif|commit\s+gate|uncertainty)\b", text):
             return "Fully Addressed"
+
+    # Documentation: concrete docs_touched (README*/CHANGELOG*/docs/** edited)
+    if kind == "documentation":
+        if signals.docs_touched is True:
+            return "Fully Addressed"
+        if signals.docs_touched is False:
+            # Pre-existing README must not silently clear a docs requirement
+            return "Not Addressed"
 
     # quality: never Fully via reconcile alone — needs file+symbol+test ledger bar
 
@@ -1496,6 +1516,164 @@ def detect_unvalidated_config(
             )
             nodes.append(node)
             break  # one node per file
+    return nodes
+
+
+# ---------------------------------------------------------------------------
+# Permissive getattr shortcut — paper over a newly introduced param
+# ---------------------------------------------------------------------------
+
+_GETATTR_DEFAULT_RE = re.compile(
+    r"""getattr\s*\(\s*[^,\n]+,\s*['\"]([A-Za-z_][A-Za-z0-9_]*)['\"]\s*,"""
+)
+_NEW_PARAM_IN_DIFF_RE = re.compile(
+    r"(?m)^\+"  # added line in unified diff
+    r".*?(?:"
+    r"\b([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(?:bool|int|float|str|Optional|None)|"  # typed field
+    r"\b([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:True|False|None|\d+|['\"])|"  # defaulted kw
+    r"add_argument\s*\(\s*['\"]--([A-Za-z0-9-]+)['\"]|"  # argparse
+    r"['\"]--([A-Za-z0-9-]+)['\"]"  # click/typer style
+    r")"
+)
+_INIT_SIG_PARAM_RE = re.compile(
+    r"(?m)^\+\s*(?:def\s+__init__\s*\((?P<args>[^)]*)\)|"
+    r"([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*[^=,\n]+)?\s*=\s*[^=,\n]+,?\s*$)"
+)
+
+
+def _normalize_param_name(name: str) -> str:
+    return (name or "").strip().lstrip("-").replace("-", "_").lower()
+
+
+def _new_params_from_diff(diff: str) -> Set[str]:
+    """Collect constructor / argparse parameter names introduced in this diff."""
+    names: Set[str] = set()
+    if not diff:
+        return names
+    for m in _NEW_PARAM_IN_DIFF_RE.finditer(diff):
+        for g in m.groups():
+            if g:
+                names.add(_normalize_param_name(g))
+    # Also pull __init__ signature additions more carefully
+    for m in re.finditer(r"(?m)^\+.*def\s+__init__\s*\(([^)]*)\)", diff):
+        args = m.group(1) or ""
+        for part in args.split(","):
+            part = part.strip()
+            if not part or part in ("self", "cls", "*", "**"):
+                continue
+            if part.startswith("*"):
+                part = part.lstrip("*")
+            name = re.split(r"[:\=]", part, maxsplit=1)[0].strip()
+            if name.isidentifier():
+                names.add(_normalize_param_name(name))
+    # Filter noise
+    return {
+        n
+        for n in names
+        if n
+        and len(n) > 1
+        and n
+        not in {
+            "self",
+            "cls",
+            "true",
+            "false",
+            "none",
+            "optional",
+            "bool",
+            "int",
+            "float",
+            "str",
+            "return",
+            "args",
+            "kwargs",
+        }
+    }
+
+
+def detect_getattr_shortcuts(
+    signals: DetectionSignals,
+    *,
+    file_contents: dict[str, str],
+    diff: str = "",
+    task_id: Optional[str] = None,
+    task_title: Optional[str] = None,
+    created_by_session: Optional[str] = None,
+    created_by_user: Optional[str] = None,
+) -> List[UncertaintyNode]:
+    """
+    Flag getattr(x, "name", default) where "name" is a constructor/CLI param
+    newly introduced in this same diff — the logveil-style shortcut that
+    papers over a broken test helper instead of fixing the real cause.
+    """
+    from .context import is_scaffold_file
+
+    new_params = _new_params_from_diff(diff)
+    if not new_params:
+        return []
+
+    nodes: List[UncertaintyNode] = []
+    for fpath, text in (file_contents or {}).items():
+        if is_scaffold_file(fpath) or not text:
+            continue
+        # Prefer production code — skipping pure test files still allows
+        # catching getattr in cli.py / library code.
+        rel = fpath.replace("\\", "/")
+        if any(p in rel for p in ("/tests/", "test_", "_test.py", "conftest.py")):
+            continue
+        hits = []
+        for m in _GETATTR_DEFAULT_RE.finditer(text):
+            attr = _normalize_param_name(m.group(1))
+            if attr in new_params:
+                hits.append(attr)
+        if not hits:
+            continue
+        uniq = sorted(set(hits))
+        node = _make_node(
+            title=f"Permissive getattr for newly added param in {Path(fpath).name}",
+            node_type=NodeType.GETATTR_SHORTCUT,
+            signals=signals,
+            summary=(
+                "Production code uses getattr(..., default) for a parameter "
+                "this same diff just introduced — likely papering over a red test."
+            ),
+            explanation=(
+                f"{fpath}: getattr fallback for {', '.join(uniq)}. "
+                "Those names appear as new constructor/CLI parameters in the diff. "
+                "Fix the outdated test helper/fixture instead of weakening the contract."
+            ),
+            why_uncertain=(
+                "A permissive default hides AttributeError from callers that should "
+                "provide the new field (often a hand-built test args() namespace)."
+            ),
+            what_could_go_wrong=(
+                "The real bug (stale test helper / incomplete call site) stays; "
+                "production silently accepts missing fields forever."
+            ),
+            suggested_fix=(
+                "Remove the getattr default; update call sites and test helpers to "
+                "pass the new parameter explicitly."
+            ),
+            suggested_prompt=(
+                f"In {fpath}, remove getattr(..., default) for newly added "
+                f"param(s) {', '.join(uniq)}. Update the test helper / call sites "
+                "to include the field — do not absorb AttributeError in production."
+            ),
+            files=[fpath],
+            task_id=task_id,
+            task_title=task_title,
+            created_by_session=created_by_session,
+            created_by_user=created_by_user,
+            status=NodeStatus.NEEDS_HUMAN_REVIEW,
+            extra_signals={
+                "getattr_shortcut": True,
+                "getattr_attrs": uniq,
+                "new_params_in_diff": sorted(new_params)[:20],
+            },
+        )
+        node.risk_tier = Tier.HIGH
+        node.confidence_tier = Tier.LOW
+        nodes.append(node)
     return nodes
 
 

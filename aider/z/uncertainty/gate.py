@@ -195,6 +195,8 @@ def _effective_gate_tier(node: UncertaintyNode) -> Tier:
         return Tier.HIGH
     if node.type == NodeType.ABSORBED_FAILURE or node.signals.get("absorbed_failure"):
         return Tier.HIGH
+    if node.type == NodeType.GETATTR_SHORTCUT or node.signals.get("getattr_shortcut"):
+        return Tier.HIGH
     if node.type == NodeType.WEAK_TEST or node.signals.get("mutation_survivors"):
         return Tier.HIGH
     if node.signals.get("tests_passed") is False and node.type == NodeType.MISSING_TEST:
@@ -292,10 +294,17 @@ def _reflect_fix_tests(record: VerificationRecord, edited: Sequence[str]) -> str
         f"Output (excerpt):\n{excerpt}\n\n"
         "ALLOWED fixes: correct the implementation/tests under review; "
         "install a real declared dependency (pip install / requirements).\n"
+        "Trace each failure to its actual cause before changing production code. "
+        "If a test helper/fixture/args() namespace is missing a newly added field, "
+        "update that helper — do not paper over it in production with "
+        "getattr(obj, 'new_field', default) / permissive defaults just to turn "
+        "the suite green. getattr(..., default) is only for deliberate "
+        "backward-compatibility, never a shortcut around a red test.\n"
         "FORBIDDEN without human approval: creating a local package/file with "
         "the same name as a missing third-party library (e.g. freezegun/__init__.py "
         "that only satisfies imports); editing unrelated conftest/CI to hide "
-        "import errors; skipping or disabling tests to go green.\n"
+        "import errors; skipping or disabling tests to go green; "
+        "getattr/hasattr fallbacks for constructor params you just introduced.\n"
         "If install fails, STOP and report the exact error — do not fabricate a stand-in.\n"
         "Do not claim completion while tests are red."
     )
