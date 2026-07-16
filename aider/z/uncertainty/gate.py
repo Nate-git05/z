@@ -329,6 +329,33 @@ def _reflect_fix_tests(record: VerificationRecord, edited: Sequence[str]) -> str
     )
 
 
+def _reflect_fix_compiler(record: VerificationRecord, edited: Sequence[str]) -> str:
+    """Distinct reflect path: compiler/type errors are not 'tweak the tests'."""
+    excerpt = (record.output_excerpt or record.error or "")[-1800:]
+    files = ", ".join(list(edited)[:6])
+    kind = record.failure_kind or getattr(record.state, "value", "TYPECHECK")
+    return (
+        "Z verification gate: COMPILER / TYPECHECK failed "
+        f"({kind}){f' for {files}' if files else ''}.\n"
+        f"Command: {record.command}\n"
+        f"Exit code: {record.exit_code}\n"
+        f"Output (excerpt):\n{excerpt}\n\n"
+        "This is NOT a generic test failure. Do NOT burn retries on unrelated "
+        "import-path / encoding / test-harness edits.\n\n"
+        "REQUIRED next step:\n"
+        "1. Read each error as a precise instruction "
+        "(e.g. Property 'worktree' does not exist on type 'Context').\n"
+        "2. Open the REAL type/interface declaration in this repo (or the pinned "
+        "dependency version) and re-read its declared members/API.\n"
+        "3. Change the implementation to match ground truth — remove invented "
+        "fields/methods, or use the actual API that exists on this pin.\n\n"
+        "FORBIDDEN: guessing plausible field names; switching to a different "
+        "Effect/stdlib API from training priors without checking the pinned "
+        "version; patching around the error without re-reading the type.\n"
+        "Do not claim completion while the typechecker is red."
+    )
+
+
 def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
     """
     Run real verification + uncertainty analysis + tiered commit policy.
@@ -387,27 +414,99 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
 
     # Branch on structured VerifyState / suite discovery — NOT on empty
     # find_relevant_tests(). "2 failed, 7 passed" must never become "no tests".
+    from .verify import COMPILER_VERIFY_STATES
+
     state = record.state or VerifyState.NOT_RUN
     discovered = record.tests_discovered
+    needs_compiler_fix = state in COMPILER_VERIFY_STATES or bool(
+        getattr(record, "is_compiler_failure", False)
+    )
     needs_generate = (
-        state in (VerifyState.NO_TESTS, VerifyState.RUNNER_MISSING, VerifyState.NOT_RUN)
-        or (not record.ran)
-        or record.zero_tests
-        or (discovered is not None and discovered == 0)
+        not needs_compiler_fix
+        and (
+            state
+            in (VerifyState.NO_TESTS, VerifyState.RUNNER_MISSING, VerifyState.NOT_RUN)
+            or (not record.ran)
+            or record.zero_tests
+            or (discovered is not None and discovered == 0)
+        )
     )
     needs_fix = (
-        state in (VerifyState.TESTS_FAILED, VerifyState.COLLECTION_FAILED)
-        or (
-            record.ran
-            and not record.meaningful_pass
-            and (discovered or 0) > 0
+        not needs_compiler_fix
+        and (
+            state in (VerifyState.TESTS_FAILED, VerifyState.COLLECTION_FAILED)
+            or (
+                record.ran
+                and not record.meaningful_pass
+                and (discovered or 0) > 0
+            )
         )
     )
     # Prefer fix when we know tests existed and failed
     if needs_fix and (discovered or 0) > 0:
         needs_generate = False
 
-    if needs_generate and not record.meaningful_pass:
+    if needs_compiler_fix and not record.meaningful_pass:
+        kind = record.failure_kind or state.value
+        node = _upsert_verification_node(
+            store,
+            title=f"Compiler/typecheck failed ({kind}) — commit blocked",
+            summary=(
+                "Commit blocked: package typecheck/build reported errors. "
+                "Re-read the real type definitions — do not guess field names."
+            ),
+            explanation=(
+                f"State: {state.value}\n"
+                f"Failure kind: {kind}\n"
+                f"Command: {record.command}\n"
+                f"Exit: {record.exit_code}\n"
+                f"Prechecks: {record.prechecks!r}\n"
+                f"{record.output_excerpt[-1500:]}"
+            ),
+            files=edited_list,
+            record=record,
+            task_id=getattr(engine.ctx, "current_task_id", None),
+            task_title=getattr(engine.ctx, "current_task_title", None),
+        )
+        node.signals["compiler_errors"] = True
+        node.signals["failure_kind"] = kind
+        store.save_local()
+        coder._z_gate_hold_dirty = True
+        if not force and fix_attempts < MAX_TEST_FIX_ATTEMPTS:
+            coder._z_verify_fix_attempts = fix_attempts + 1
+            io.tool_warning(
+                f"Verification: {state.value} — compiler/type error; "
+                "re-read declarations before editing."
+            )
+            return GateResult(
+                allow_commit=False,
+                reflect_message=_reflect_fix_compiler(record, edited_list),
+                verification=record,
+                blocked_high=[node],
+                reason="compiler/typecheck failed — reflect to fix types",
+            )
+        if fix_attempts >= MAX_TEST_FIX_ATTEMPTS and not force:
+            node.title = (
+                f"Auto-fix exhausted — typecheck still failing after "
+                f"{fix_attempts} attempts"
+            )
+            node.signals["auto_fix_exhausted"] = True
+            node.signals["fix_attempts"] = fix_attempts
+            store.save_local()
+            reason = (
+                f"Auto-fix exhausted after {fix_attempts} attempts; "
+                "typecheck still failing. Re-read the real types.\n"
+                f"{_last_failure_excerpt(record)}"
+            )
+            io.tool_error(f"Commit blocked by Z verification gate. {reason}")
+            return GateResult(
+                allow_commit=False,
+                verification=record,
+                blocked_high=[node],
+                reason=reason,
+            )
+
+    elif needs_generate and not record.meaningful_pass:
         node = _upsert_verification_node(
             store,
             title="Untested Path — cannot verify",
@@ -851,6 +950,10 @@ def report_auto_fix_exhaustion(
                 "fix failing",
                 "tests failed",
                 "attempt to fix test",
+                "compiler / typecheck",
+                "typecheck failed",
+                "property '",
+                "does not exist on type",
             )
         ):
             tests_still_failing = True
