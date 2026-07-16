@@ -230,7 +230,7 @@ code.mono,
   letter-spacing: -0.03em;
   margin: 0 0 1.15rem;
   color: var(--text);
-  max-width: 18ch;
+  max-width: 16ch;
 }
 
 .lp-hero h1 .muted { color: var(--muted); }
@@ -292,7 +292,7 @@ code.mono,
 
 .term-body {
   padding: 1.1rem 1.15rem 1.35rem;
-  min-height: 270px;
+  min-height: 320px;
   color: var(--muted);
   white-space: pre-wrap;
   word-break: break-word;

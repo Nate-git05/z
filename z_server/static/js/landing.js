@@ -6,17 +6,19 @@
 
   // ---- Terminal demo (self-contained, no backend) ----
   var LINES = [
-    { html: '<span class="prompt">z&gt;</span> <span class="cmd">add stripe billing</span>' },
+    { html: '<span class="prompt">z&gt;</span> <span class="cmd">add stripe billing + tests</span>' },
+    { html: '<span class="dim">checklist · product · verification · process</span>' },
     { html: '<span class="dim">… editing checkout, webhook, migration</span>' },
     { html: "" },
-    { html: '<span class="hi">Uncertainty tree</span> <span class="dim">(sort=risk)</span>' },
-    { html: '<span class="dim">Add Stripe Billing / Backend</span>' },
-    { html: '  1. Assumed response shape for stripe  <span class="tag">API Assumption</span>  <span class="hi">risk=High</span>' },
-    { html: '  2. Database schema / migration change  <span class="tag">Migration Risk</span>  <span class="hi">risk=Medium</span>' },
-    { html: '<span class="dim">Add Stripe Billing / Tests</span>' },
-    { html: '  3. No relevant tests found  <span class="tag">Missing Test</span>  <span class="hi">risk=Medium</span>' },
+    { html: '<span class="ok">verify</span>  TESTS_PASSED  <span class="dim">discovered=7  exit=0</span>' },
+    { html: '<span class="ok">process</span>  do-not-commit-until-verified  <span class="dim">satisfied</span>' },
     { html: "" },
-    { html: '<span class="ok">3 nodes · /uncertainties to review</span>' },
+    { html: '<span class="hi">Uncertainty tree</span> <span class="dim">(sort=risk · budget=3)</span>' },
+    { html: '  1. Assumed Stripe response shape  <span class="tag">API Assumption</span>  <span class="hi">High</span>' },
+    { html: '  2. Schema change — data impact?  <span class="tag">Migration Risk</span>  <span class="hi">Medium</span>' },
+    { html: '  3. else branch on empty cart  <span class="tag">Edge Case</span>  <span class="hi">Medium</span>' },
+    { html: "" },
+    { html: '<span class="ok">3 blockers · /uncertainties · gate holds commit</span>' },
   ];
 
   function runTerminalDemo() {
