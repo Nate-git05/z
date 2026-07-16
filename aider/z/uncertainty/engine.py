@@ -37,6 +37,7 @@ from .detectors import (
     detect_fragile_logic,
     detect_failure_absorption,
     detect_high_confidence,
+    detect_missing_sibling_companions,
     detect_high_stakes_and_migration,
     detect_missing_or_failing_tests,
     detect_pattern_issues,
@@ -361,6 +362,18 @@ class UncertaintyEngine:
         )
 
         # Patterns / new files (context-aware noise)
+        from .sibling_traits import new_files_from_diff
+
+        diff_text = diff if diff is not None else self.ctx.last_diff
+        diff_new = new_files_from_diff(diff_text or "")
+        # Track newly introduced paths so sibling-companion checks can run even
+        # when the file already has same-dir pattern matches.
+        for nf in diff_new:
+            if nf not in self.ctx.new_files_this_turn:
+                self.ctx.new_files_this_turn.append(nf)
+            if nf not in new_files:
+                new_files.append(nf)
+
         candidate_new = new_files or [
             f
             for f in files
@@ -391,6 +404,29 @@ class UncertaintyEngine:
                         **meta,
                     )
                 )
+
+        # Sibling companion / registry trait — for brand-new files that match
+        # a family (scrapy middleware registration class of miss). Only truly
+        # new paths, so edits to existing family members stay quiet.
+        companion_candidates = filter_scaffold_files(
+            list(dict.fromkeys([*diff_new, *self.ctx.new_files_this_turn]))
+        )
+        for nf in companion_candidates:
+            if nf not in self.ctx.pattern_results:
+                self.ctx.pattern_results[nf] = self._search_patterns(nf)
+        if companion_candidates and maturity != "greenfield":
+            nodes.extend(
+                detect_missing_sibling_companions(
+                    signals,
+                    root=root,
+                    new_files=companion_candidates,
+                    pattern_results=self.ctx.pattern_results,
+                    diff=diff_text or "",
+                    files_changed=files,
+                    file_contents=contents,
+                    **meta,
+                )
+            )
 
         # Integration ripple (blast radius)
         if maturity != "greenfield":

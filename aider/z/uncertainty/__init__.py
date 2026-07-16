@@ -25,6 +25,7 @@ from .evidence_strategy import (
     verifier_for,
 )
 from .absorption_taxonomy import ABSORPTION_TAXONOMY, scan_failure_absorption
+from .sibling_traits import find_sibling_companion_gaps
 from .gate import GateResult, prepare_commit, report_auto_fix_exhaustion
 from .verify import VerificationRecord, verify_edits
 from .auto_act import default_prompt_for_node, plan_auto_act
@@ -58,6 +59,7 @@ __all__ = [
     "verifier_for",
     "ABSORPTION_TAXONOMY",
     "scan_failure_absorption",
+    "find_sibling_companion_gaps",
     "GateResult",
     "prepare_commit",
     "report_auto_fix_exhaustion",
