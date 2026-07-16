@@ -30,6 +30,8 @@ from .established_solutions import (
     ESTABLISHED_SOLUTIONS,
     scan_invention_in_diff,
 )
+from .package_checks import discover_package_checks, find_nearest_package_json
+from .type_members import check_local_type_members
 from .gate import GateResult, prepare_commit, report_auto_fix_exhaustion
 from .verify import VerificationRecord, verify_edits
 from .auto_act import default_prompt_for_node, plan_auto_act
@@ -66,6 +68,9 @@ __all__ = [
     "find_sibling_companion_gaps",
     "ESTABLISHED_SOLUTIONS",
     "scan_invention_in_diff",
+    "discover_package_checks",
+    "find_nearest_package_json",
+    "check_local_type_members",
     "GateResult",
     "prepare_commit",
     "report_auto_fix_exhaustion",

@@ -59,6 +59,22 @@ class VerifyState(str, enum.Enum):
     RUNNER_MISSING = "RUNNER_MISSING"
     TIMED_OUT = "TIMED_OUT"
     NOT_RUN = "NOT_RUN"
+    # Package-scoped / compiler failures — distinct from generic test failures
+    TYPECHECK_FAILED = "TYPECHECK_FAILED"
+    BUILD_FAILED = "BUILD_FAILED"
+    LINT_FAILED = "LINT_FAILED"
+    TYPE_MEMBER_FAILED = "TYPE_MEMBER_FAILED"
+
+
+# States that mean "re-read the type / fix the compile error", not "tweak tests"
+COMPILER_VERIFY_STATES = frozenset(
+    {
+        VerifyState.TYPECHECK_FAILED,
+        VerifyState.BUILD_FAILED,
+        VerifyState.LINT_FAILED,
+        VerifyState.TYPE_MEMBER_FAILED,
+    }
+)
 
 
 @dataclass
@@ -80,6 +96,9 @@ class VerificationRecord:
     smoke_ok: Optional[bool] = None
     smoke_detail: str = ""
     error: str = ""
+    # Package-scoped prechecks (typecheck/build/lint) run before tests
+    prechecks: List[dict] = field(default_factory=list)
+    failure_kind: str = ""  # test | typecheck | build | lint | type_member | root_guard
     at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
@@ -90,8 +109,19 @@ class VerificationRecord:
         return d
 
     @property
+    def is_compiler_failure(self) -> bool:
+        return self.state in COMPILER_VERIFY_STATES or self.failure_kind in (
+            "typecheck",
+            "build",
+            "lint",
+            "type_member",
+        )
+
+    @property
     def meaningful_pass(self) -> bool:
         """True only when tests ran, discovered >0, and exited 0."""
+        if self.is_compiler_failure:
+            return False
         return (
             self.ran
             and self.state == VerifyState.TESTS_PASSED
@@ -251,15 +281,17 @@ def run_test_suite(
     *,
     verbose: bool = False,
     error_print=None,
+    cwd: Optional[Path] = None,
 ) -> VerificationRecord:
     """Execute the test command and build a VerificationRecord."""
     record = VerificationRecord(ran=True, command=command)
+    workdir = str(Path(cwd) if cwd is not None else root)
     try:
         exit_code, output = run_cmd(
             command,
             verbose=verbose,
             error_print=error_print,
-            cwd=str(root),
+            cwd=workdir,
         )
     except Exception as err:  # noqa: BLE001
         record.exit_code = 1
@@ -400,6 +432,16 @@ def run_smoke_imports(
     return True, f"imported: {', '.join(modules)}"
 
 
+def _state_for_precheck_kind(kind: str) -> VerifyState:
+    if kind == "typecheck":
+        return VerifyState.TYPECHECK_FAILED
+    if kind == "build":
+        return VerifyState.BUILD_FAILED
+    if kind == "lint":
+        return VerifyState.LINT_FAILED
+    return VerifyState.TYPECHECK_FAILED
+
+
 def verify_edits(
     root: Path,
     edited: Sequence[str],
@@ -409,15 +451,97 @@ def verify_edits(
     verbose: bool = False,
     error_print=None,
     skip_smoke: bool = False,
+    skip_package_prechecks: bool = False,
+    skip_type_members: bool = False,
 ) -> Tuple[VerificationRecord, List[str]]:
     """
     Full verification pass for a set of edited files.
+
+    Order (fail fast):
+      1. Local type-member ground truth (cheap, no subprocess)
+      2. Nearest-package typecheck/build/lint
+      3. Package-local or root test suite
+      4. Smoke imports / CLI
 
     Returns (record, relevant_test_files).
     """
     root = Path(root)
     relevant = find_relevant_tests(root, edited, symbols)
-    cmd = normalize_test_cmd(test_cmd) or detect_test_command(root)
+
+    # --- 1) Local type-member check (repo ground truth) ---------------------
+    if not skip_type_members:
+        try:
+            from .type_members import check_local_type_members
+
+            tm = check_local_type_members(root, edited)
+            if not tm.passed and tm.issues:
+                excerpt = "\n".join(i.format() for i in tm.issues[:12])
+                record = VerificationRecord(
+                    ran=True,
+                    command="local-type-member-check",
+                    exit_code=1,
+                    passed=False,
+                    state=VerifyState.TYPE_MEMBER_FAILED,
+                    failure_kind="type_member",
+                    output_excerpt=excerpt,
+                    error=(
+                        f"{len(tm.issues)} local type-member mismatch(es) — "
+                        "re-read the real type declaration before inventing fields."
+                    ),
+                    prechecks=[
+                        {
+                            "kind": "type_member",
+                            "passed": False,
+                            "issues": len(tm.issues),
+                            "types_indexed": tm.types_indexed,
+                        }
+                    ],
+                )
+                return record, relevant
+        except Exception:  # noqa: BLE001
+            pass
+
+    # --- 2) Package-scoped typecheck/build/lint before any tests ------------
+    package_test: Optional[Tuple[str, str]] = None
+    precheck_dicts: List[dict] = []
+    if not skip_package_prechecks:
+        try:
+            from .package_checks import run_package_prechecks
+
+            results, package_test = run_package_prechecks(
+                root, edited, verbose=verbose, error_print=error_print
+            )
+            precheck_dicts = [c.to_dict() for c in results]
+            for check in results:
+                if check.passed:
+                    continue
+                record = VerificationRecord(
+                    ran=True,
+                    command=check.command,
+                    exit_code=check.exit_code,
+                    passed=False,
+                    state=_state_for_precheck_kind(check.kind),
+                    failure_kind=check.kind,
+                    output_excerpt=check.output_excerpt,
+                    error=check.error
+                    or (
+                        f"{check.kind} failed in "
+                        f"{check.package_rel or '.'} — fix compiler errors before tests."
+                    ),
+                    prechecks=precheck_dicts,
+                )
+                return record, relevant
+        except Exception:  # noqa: BLE001
+            package_test = None
+
+    # --- 3) Test suite (prefer package-local test over root npm test) -------
+    cmd = normalize_test_cmd(test_cmd)
+    test_cwd: Optional[Path] = None
+    if not cmd and package_test:
+        test_cwd = Path(package_test[0])
+        cmd = package_test[1]
+    if not cmd:
+        cmd = detect_test_command(root)
 
     if not cmd:
         record = VerificationRecord(
@@ -427,10 +551,31 @@ def verify_edits(
             passed=False,
             state=VerifyState.RUNNER_MISSING,
             error="No test command detected and --test-cmd unset",
+            prechecks=precheck_dicts,
         )
         return record, relevant
 
-    record = run_test_suite(root, cmd, verbose=verbose, error_print=error_print)
+    record = run_test_suite(
+        root, cmd, verbose=verbose, error_print=error_print, cwd=test_cwd
+    )
+    record.prechecks = precheck_dicts
+    record.failure_kind = "test"
+
+    # Root monorepo guard: don't treat "don't run npm test from root" as a
+    # normal test failure — surface as runner/routing problem.
+    from .package_checks import looks_like_compiler_output, looks_like_root_test_guard
+
+    if (
+        not record.passed
+        and looks_like_root_test_guard(record.output_excerpt or "")
+        and not looks_like_compiler_output(record.output_excerpt or "")
+    ):
+        record.failure_kind = "root_guard"
+        record.error = (
+            record.error
+            or "Root test command looks like a monorepo guard — "
+            "run package-local typecheck/tests near the edited files."
+        )
 
     # If suite reported discovery but find_relevant_tests was empty, still use suite count
     if record.tests_discovered is None and relevant and record.exit_code == 0:
