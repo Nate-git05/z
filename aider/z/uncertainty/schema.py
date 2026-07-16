@@ -2,6 +2,11 @@
 
 Confidence and risk are separate, derived from concrete signals — never
 model self-rated percentages.
+
+Fail closed (see evidence_strategy.py): Fully Addressed requires a registered
+kind's checkable predicate. Unknown kinds and model self-reports cannot raise
+status above mechanical evidence — do not grow the system only by enumerating
+new detectors after each miss.
 """
 
 from __future__ import annotations

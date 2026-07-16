@@ -330,8 +330,10 @@ class ChecklistTest(unittest.TestCase):
             cl, "Added stripe checkout and email receipts in billing.py"
         )
         addressed = [i.status for i in statuses.items]
-        self.assertIn("Fully Addressed", addressed)
-        self.assertTrue(any(s != "Fully Addressed" for s in addressed))
+        # Lexical summary must never grant Fully — fail closed (Partial at most)
+        self.assertNotIn("Fully Addressed", addressed)
+        self.assertIn("Partially Addressed", addressed)
+        self.assertTrue(any(s == "Not Addressed" for s in addressed))
 
 
 class EngineIntegrationTest(unittest.TestCase):
