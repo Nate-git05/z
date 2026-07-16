@@ -912,11 +912,17 @@ class InputOutput:
                     except Exception:
                         interactive = False
                     if not interactive:
-                        q_short = question.split(" (Y)es")[0].strip() if " (Y)es" in question else question.strip()
+                        q_short = (
+                            question.split(" (Y)es")[0].strip()
+                            if " (Y)es" in question
+                            else question.strip()
+                        )
                         self.tool_error(
-                            f"Cannot confirm '{q_short}' — no interactive terminal "
-                            "(EOF on stdin). Pass --yes-always to auto-approve "
-                            "prompts, or run Z in an interactive terminal."
+                            f"blocked: needs human approval — cannot confirm "
+                            f"'{q_short}' (no interactive terminal / EOF on stdin). "
+                            "Re-run in a TTY and answer Yes, or use a safe "
+                            "auto-approved path (e.g. pip install of a package "
+                            "already declared in the project manifest)."
                         )
                         hist = f"{question.strip()} n  # eof/non-interactive"
                         self.append_chat_history(hist, linebreak=True, blockquote=True)

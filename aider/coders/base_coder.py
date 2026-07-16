@@ -3116,24 +3116,48 @@ class Coder:
             1 for cmd in commands if cmd.strip() and not cmd.strip().startswith("#")
         )
         prompt = "Run shell command?" if command_count == 1 else "Run shell commands?"
-        # Do not use explicit_yes_required here: --yes-always must be able to
-        # approve suggested installs (e.g. pip install after refusing dependency
-        # fabrication). Gate/commit prompts still use explicit_yes_required so
-        # --yes-always cannot bypass those.
-        if not self.io.confirm_ask(
+        skipped = "\n".join(
+            c for c in commands if c.strip() and not c.strip().startswith("#")
+        )
+
+        # Narrow safe-list only: pip/npm install of packages already declared in
+        # the project's own manifests. Reuses collect_declared_dependencies —
+        # do NOT blanket-approve shell under --yes-always (security).
+        auto_approved = False
+        try:
+            from aider.z.deps import commands_are_safe_declared_installs
+
+            root = Path(getattr(self, "root", None) or ".")
+            if commands_are_safe_declared_installs(commands, root):
+                auto_approved = True
+                self.io.tool_output(
+                    "Auto-approving install of declared project dependencies "
+                    "(no new packages; fulfilling an existing manifest entry)."
+                )
+        except Exception:
+            auto_approved = False
+
+        if not auto_approved and not self.io.confirm_ask(
             prompt,
             subject="\n".join(commands),
+            explicit_yes_required=True,
             group=group,
             allow_never=True,
         ):
-            skipped = "\n".join(c for c in commands if c.strip() and not c.strip().startswith("#"))
-            self.io.tool_error(
-                "Shell command not run — confirmation declined or unavailable. "
-                "Run interactively and answer Yes, or pass --yes-always to "
-                "auto-approve suggested shell commands "
-                "(needed for pip/npm install recovery).\n"
-                f"Skipped:\n{skipped}"
+            msg = (
+                f"blocked: needs human approval to run:\n{skipped}\n"
+                "Installs of packages already listed in the project's "
+                "requirements/package.json are auto-approved; all other shell "
+                "commands require an interactive Yes."
             )
+            self.io.tool_error(msg)
+            engine = getattr(self, "uncertainty_engine", None)
+            if engine is not None:
+                try:
+                    engine.record_execution(msg)
+                    self._emit_shell_approval_block_node(skipped)
+                except Exception:
+                    pass
             return
 
         accumulated_output = ""
@@ -3150,10 +3174,56 @@ class Coder:
             if output:
                 accumulated_output += f"Output from {command}\n{output}\n"
 
-        if accumulated_output.strip() and self.io.confirm_ask(
-            "Add command output to the chat?", allow_never=True
-        ):
+        # Auto-approved declared installs: always fold output into chat so the
+        # recovery path can continue without a second unanswerable prompt.
+        add_output = bool(accumulated_output.strip()) and (
+            auto_approved
+            or self.io.confirm_ask("Add command output to the chat?", allow_never=True)
+        )
+        if add_output and accumulated_output.strip():
             num_lines = len(accumulated_output.strip().splitlines())
             line_plural = "line" if num_lines == 1 else "lines"
             self.io.tool_output(f"Added {num_lines} {line_plural} of output to the chat.")
             return accumulated_output
+
+    def _emit_shell_approval_block_node(self, skipped_commands: str) -> None:
+        """Surface a blocked shell confirm as a visible uncertainty finding."""
+        engine = getattr(self, "uncertainty_engine", None)
+        if engine is None:
+            return
+        from aider.z.uncertainty.detectors import _make_node
+        from aider.z.uncertainty.risk import collect_base_signals
+        from aider.z.uncertainty.schema import NodeStatus, NodeType, Tier
+
+        sig = collect_base_signals([])
+        node = _make_node(
+            title="Shell command needs human approval",
+            node_type=NodeType.FAILURE_BLIND_SPOT,
+            signals=sig,
+            summary="blocked: needs human approval to run a shell command.",
+            explanation=(
+                "A suggested shell command could not be auto-approved. Only "
+                "installs of packages already declared in the project manifest "
+                "are auto-approved; everything else requires an interactive Yes.\n"
+                f"Command(s):\n{skipped_commands}"
+            ),
+            why_uncertain="Non-interactive run cannot answer shell confirmation.",
+            what_could_go_wrong=(
+                "The task may look finished while a required install/command never ran."
+            ),
+            suggested_fix=(
+                "Re-run interactively and approve the command, or add the package "
+                "to the project manifest if it should be auto-installable."
+            ),
+            suggested_prompt=(
+                f"blocked: needs human approval to run:\n{skipped_commands}"
+            ),
+            status=NodeStatus.NEEDS_HUMAN_REVIEW,
+            extra_signals={
+                "shell_approval_blocked": True,
+                "blocked_commands": skipped_commands,
+            },
+        )
+        node.risk_tier = Tier.MEDIUM
+        node.confidence_tier = Tier.LOW
+        engine.store.add(node)
