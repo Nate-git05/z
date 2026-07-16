@@ -2,6 +2,11 @@
 
 Confidence and risk are separate, derived from concrete signals — never
 model self-rated percentages.
+
+Fail closed (see evidence_strategy.py): every requirement kind maps to a
+registered verifier or an explicit absence marker. Absence → status
+"Unverifiable" (informational), never a silent pass. Model self-reports
+cannot raise status above mechanical evidence.
 """
 
 from __future__ import annotations
@@ -50,6 +55,8 @@ class NodeType(str, enum.Enum):
     UNVALIDATED_CONFIG = "Unvalidated Config"
     # getattr(x, "new_param", default) papers over a param just introduced in this diff
     GETATTR_SHORTCUT = "Permissive getattr Shortcut"
+    # Named failure-absorption taxonomy hit (non-getattr shapes; see absorption_taxonomy)
+    FAILURE_ABSORPTION = "Failure Absorption"
 
 
 # Older persisted display strings → current NodeType
@@ -75,6 +82,7 @@ _NODE_TYPE_ALIASES = {
     "Weak Test Suite": NodeType.WEAK_TEST,
     "Unvalidated Config": NodeType.UNVALIDATED_CONFIG,
     "Permissive getattr Shortcut": NodeType.GETATTR_SHORTCUT,
+    "Failure Absorption": NodeType.FAILURE_ABSORPTION,
 }
 
 

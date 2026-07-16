@@ -465,21 +465,19 @@ def bind_evidence(
             for w in words:
                 if w in touched_blob:
                     ev.keyword_hits.append(w)
-            if touched_docs and (
-                any(w in touched_blob for w in words)
-                or re.search(
-                    r"(?i)\b(api|allow|usage|semantics|example|redact|changelog)\b",
-                    touched_blob,
-                )
-            ):
-                ev.evidence_notes.append(f"doc:{touched_docs[0]}")
+            if touched_docs:
                 ev.evidence_notes.append("docs_touched:true")
-            elif touched_docs and re.search(
-                r"(?i)readme|document|docs?|changelog", text_l
-            ):
                 ev.evidence_notes.append(f"doc:{touched_docs[0]}")
-                ev.evidence_notes.append("docs_touched:true")
-                ev.keyword_hits.append("readme")
+                if (
+                    any(w in touched_blob for w in words)
+                    or re.search(
+                        r"(?i)\b(api|allow|usage|semantics|example|redact|changelog)\b",
+                        touched_blob,
+                    )
+                    or re.search(r"(?i)readme|document|docs?|changelog", text_l)
+                ):
+                    if re.search(r"(?i)readme|document|docs?|changelog", text_l):
+                        ev.keyword_hits.append("readme")
             else:
                 ev.evidence_notes.append("docs_touched:false")
                 ev.missing = (
@@ -579,61 +577,15 @@ def bind_evidence(
 
 
 def _status_from_evidence(ev: ItemEvidence, words: List[str]) -> str:
-    kind = ev.kind or "product"
+    """
+    Mechanical status via fail-closed evidence strategies.
 
-    if kind == "process":
-        if ev.has_process_evidence:
-            return "Fully Addressed"
-        return "Not Addressed"
+    Fully Addressed only when a registered kind's checkable predicate holds.
+    Unknown kinds never fall through to product keyword vibes.
+    """
+    from .evidence_strategy import status_from_strategy
 
-    if kind == "verification":
-        if ev.verification_ok is True:
-            return "Fully Addressed"
-        if ev.verification_ok is False:
-            return "Partially Addressed"
-        return "Not Addressed"
-
-    if kind == "decision":
-        if ev.decision_hits or ev.has_process_evidence:
-            return "Fully Addressed"
-        return "Not Addressed"
-
-    if kind == "documentation":
-        if ev.has_doc_evidence and (ev.keyword_hits or ev.evidence_notes):
-            return "Fully Addressed"
-        if ev.has_doc_evidence:
-            return "Partially Addressed"
-        return "Not Addressed"
-
-    if kind == "quality":
-        # Same hard bar as product: file + symbol + behavioral test
-        if ev.has_hard_product_evidence:
-            return "Fully Addressed"
-        if ev.test_hits or ev.has_code_evidence:
-            return "Partially Addressed"
-        return "Not Addressed"
-
-    if kind == "external_assumption":
-        if ev.log_hits:
-            return "Fully Addressed"
-        return "Not Addressed"
-
-    # product (default) — Fully only with mechanical file+symbol+test evidence
-    if ev.has_hard_product_evidence:
-        return "Fully Addressed"
-    if not words:
-        if ev.has_code_evidence or ev.has_test_only_evidence:
-            return "Partially Addressed"
-        return "Not Addressed"
-    distinctive = set(ev.keyword_hits) | {
-        w for w in words if any(w in t.lower() for t in ev.test_hits)
-    }
-    hit_ratio = len(distinctive) / max(len(words), 1)
-    if ev.has_test_only_evidence:
-        return "Partially Addressed" if hit_ratio >= 0.25 or ev.test_hits else "Not Addressed"
-    if hit_ratio >= 0.25 or ev.has_code_evidence or ev.test_hits:
-        return "Partially Addressed"
-    return "Not Addressed"
+    return status_from_strategy(ev, words)
 
 
 def rescore_checklist_with_evidence(
@@ -653,33 +605,10 @@ def rescore_checklist_with_evidence(
         words = _keywords(item.text)
         status = _status_from_evidence(ev, words)
         kind = ev.kind or getattr(item, "kind", "product")
-        if status == "Not Addressed":
-            if kind == "process":
-                ev.missing = (
-                    f"No session/execution evidence for process requirement: {item.text}"
-                )
-            elif kind == "verification":
-                ev.missing = f"Verification not yet satisfied for: {item.text}"
-            elif kind == "decision":
-                ev.missing = f"User decision still needed: {item.text}"
-            elif kind == "documentation":
-                ev.missing = (
-                    f"No documentation file/section evidence for: {item.text}"
-                )
-            elif kind == "quality":
-                parts = ev.missing_hard_evidence_parts()
-                ev.missing = (
-                    f"Quality requirement needs file+symbol+test evidence "
-                    f"(missing: {', '.join(parts) or 'all'}): {item.text}"
-                )
-            elif kind == "external_assumption":
-                ev.missing = f"External assumption unverified: {item.text}"
-            else:
-                parts = ev.missing_hard_evidence_parts()
-                ev.missing = (
-                    f"No complete evidence (need file+symbol+test; missing: "
-                    f"{', '.join(parts) or 'all'}) for: {item.text}"
-                )
+        if status in ("Not Addressed", "Unverifiable"):
+            from .evidence_strategy import missing_message_for
+
+            ev.missing = missing_message_for(ev, words)
         elif status == "Partially Addressed":
             parts = ev.missing_hard_evidence_parts()
             if kind in ("product", "quality") and parts:
@@ -706,19 +635,20 @@ def infer_gap_statuses_from_summary(
     implementation_summary: str,
 ) -> TaskChecklist:
     """
-    Backward-compatible lexical fallback when evidence binding is unavailable.
+    Lexical fallback when evidence binding is unavailable.
+
+    Fail closed: summary vibes may mark Partial at most — never Fully Addressed.
     Prefer rescore_checklist_with_evidence in the main pipeline.
     """
     summary = (implementation_summary or "").lower()
     for item in checklist.items:
         words = _keywords(item.text)
         if not words:
+            item.status = "Not Addressed"
             continue
         hits = sum(1 for w in words if w in summary)
         ratio = hits / max(len(words), 1)
-        if ratio >= 0.6:
-            item.status = "Fully Addressed"
-        elif ratio >= 0.25:
+        if ratio >= 0.25:
             item.status = "Partially Addressed"
         else:
             item.status = "Not Addressed"
@@ -732,11 +662,14 @@ def rescore_checklist_with_model(
     model_complete: Any = None,
 ) -> TaskChecklist:
     """
-    Optional structured Claude pass. `model_complete` is a callable(prompt)->str.
+    Optional structured model pass. `model_complete` is a callable(prompt)->str.
 
-    Falls back to evidence-based rescore when no model or parse failure.
-    Deterministic evidence wins over model judgment on contradictions.
+    Fail closed: mechanical evidence status is the ceiling. The model may annotate
+    `missing` / notes but cannot raise a requirement above what checkable signals
+    support — and cannot talk down a mechanical Fully Addressed.
     """
+    from .evidence_strategy import combine_model_and_mechanical
+
     # Always start from evidence rules
     rescore_checklist_with_evidence(checklist, evidence)
     if not callable(model_complete) or not checklist.items:
@@ -767,6 +700,8 @@ def rescore_checklist_with_model(
         "documentation uses README/docs; product needs implementation symbols.\n"
         "If evidence is empty for a product behavior requirement, status must be Not Addressed. "
         "Tests-only evidence for product is at most Partially Addressed.\n"
+        "If current_status is Unverifiable, keep Unverifiable — do not invent Fully/Partial.\n"
+        "Your status cannot exceed the mechanical current_status ceiling.\n"
         f"INPUT:\n{json.dumps(payload)}"
     )
     try:
@@ -782,43 +717,28 @@ def rescore_checklist_with_model(
             item = next((i for i in checklist.items if i.id == row.get("id")), None)
             if not item:
                 continue
-            status = row.get("status") or item.status
-            if status not in (
+            model_status = row.get("status") or item.status
+            if model_status not in (
                 "Fully Addressed",
                 "Partially Addressed",
                 "Not Addressed",
+                "Unverifiable",
             ):
                 continue
             ev = by_ev.get(item.id)
-            kind = (ev.kind if ev else getattr(item, "kind", "product")) or "product"
-
-            # Contradiction / grounding overrides — evidence beats model
-            if ev and kind in ("process", "verification", "decision"):
-                grounded = _status_from_evidence(ev, _keywords(item.text))
-                if grounded == "Fully Addressed":
-                    status = "Fully Addressed"
-                elif status == "Fully Addressed" and grounded != "Fully Addressed":
-                    status = grounded
-            elif ev and kind == "documentation":
-                grounded = _status_from_evidence(ev, _keywords(item.text))
-                if grounded == "Fully Addressed":
-                    status = "Fully Addressed"
-                elif not ev.has_doc_evidence:
-                    status = "Not Addressed"
-            elif ev and kind in ("product", "quality"):
-                grounded = _status_from_evidence(ev, _keywords(item.text))
-                # Mechanical file+symbol+test bar beats model Fully claims
-                if status == "Fully Addressed" and grounded != "Fully Addressed":
-                    status = grounded
-                elif (
-                    not ev.has_code_evidence
-                    and not ev.test_hits
-                    and not ev.keyword_hits
-                ):
-                    status = "Not Addressed"
-            item.status = status
+            mechanical = item.status
             if ev is not None:
-                ev.missing = (row.get("missing") or ev.missing or "").strip()
+                mechanical = _status_from_evidence(ev, _keywords(item.text))
+            final, _ceilinged = combine_model_and_mechanical(
+                mechanical, model_status, ev=ev
+            )
+            item.status = final
+            if ev is not None:
+                model_missing = (row.get("missing") or "").strip()
+                if model_missing and final != "Fully Addressed":
+                    ev.missing = model_missing
+                elif not ev.missing:
+                    ev.missing = model_missing
     except (json.JSONDecodeError, TypeError, ValueError, AttributeError):
         pass
     return checklist

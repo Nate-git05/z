@@ -976,11 +976,17 @@ def reconcile_requirement_with_signals(
     Cross-check checklist status against concrete session signals.
 
     Returns a corrected status when signals contradict an open gap, else None.
-    This is the cheap mechanical fix for "Run the tests" + tests_passed=True
-    and "update README/CHANGELOG" + docs_touched=True/False.
+    Kinds with an explicit absence-of-verifier are never silently cleared —
+    Unverifiable stays Unverifiable until a real check is registered.
     """
+    from .evidence_strategy import verifier_for
+
     text = item.text or ""
     kind = (getattr(item, "kind", None) or "product").lower()
+    v = verifier_for(kind)
+    if not v.has_verifier:
+        # Exhaustive registry: no check → never reconcile to Fully/Partial
+        return None
 
     if signals.tests_passed is True:
         if kind == "verification" or _TEST_RUN_LANG.search(text):
@@ -1026,6 +1032,8 @@ def detect_requirement_gaps(
     except Exception:
         noisy = False
 
+    from .evidence_strategy import hard_block_kind
+
     for item in checklist.items:
         reconciled = reconcile_requirement_with_signals(
             item, signals, relevant_tests=relevant_tests
@@ -1040,41 +1048,71 @@ def detect_requirement_gaps(
         detail = detail_by_id.get(item.id) or {}
         missing = detail.get("missing") or f"Complete: {item.text}"
         evidence = detail.get("evidence") or []
-        # Process gaps are informational — never invent product features
+        unverifiable = item.status == "Unverifiable"
+        if unverifiable:
+            summary = (
+                f"Unverifiable — no check exists for this category yet (kind={kind})."
+            )
+            why = (
+                "This requirement kind has an explicit absence-of-verifier in the "
+                "registry. We are not claiming it passed — we honestly don't know."
+            )
+            what_wrong = (
+                "Treating an unchecked category as done can hide real gaps; "
+                "this flag is informational until a trusted verifier ships."
+            )
+            prompt_extra = (
+                "Do not invent product work to clear this. A verifier for this "
+                "kind is not registered yet — leave as Unverifiable / ask the human."
+            )
+        else:
+            summary = f"We didn’t finish what was asked — marked {item.status}."
+            why = (
+                f"Missing evidence: {missing}"
+                if missing
+                else "Sub-requirement was not marked Fully Addressed after implementation."
+            )
+            what_wrong = "User intent remains partially unmet; follow-up work will be needed."
+            prompt_extra = (
+                "This is a process/tooling requirement — do not add product commands; "
+                "satisfy it via verification/session evidence only."
+                if kind in ("process", "verification", "decision")
+                else (
+                    "Update documentation only — do not invent product features."
+                    if kind == "documentation"
+                    else "Implement only that gap, then stop."
+                )
+            )
         node = _make_node(
-            title=f"Requirement gap: {item.text[:80]}",
+            title=(
+                f"Unverifiable requirement: {item.text[:80]}"
+                if unverifiable
+                else f"Requirement gap: {item.text[:80]}"
+            ),
             node_type=NodeType.REQUIREMENT_GAP,
             signals=signals,
-            summary=f"We didn’t finish what was asked — marked {item.status}.",
+            summary=summary,
             explanation=(
                 f"Asked for: {item.text}\n"
                 f"Kind: {kind}\n"
                 f"Delivery status: {item.status}\n"
                 f"Missing: {missing}\n"
                 f"Evidence: {', '.join(evidence) if evidence else '(none)'}\n"
-                "Compared the structured checklist against bound evidence "
-                "(code for product; session/verify for process; README for docs)."
+                + (
+                    "Registry maps this kind to an absence-of-verifier marker."
+                    if unverifiable
+                    else (
+                        "Compared the structured checklist against bound evidence "
+                        "(code for product; session/verify for process; README for docs)."
+                    )
+                )
             ),
-            why_uncertain=(
-                f"Missing evidence: {missing}"
-                if missing
-                else "Sub-requirement was not marked Fully Addressed after implementation."
-            ),
-            what_could_go_wrong="User intent remains partially unmet; follow-up work will be needed.",
+            why_uncertain=why,
+            what_could_go_wrong=what_wrong,
             suggested_fix=missing,
             suggested_prompt=(
                 f"The requirement '{item.text}' is marked {item.status}. "
-                f"Missing: {missing}. "
-                + (
-                    "This is a process/tooling requirement — do not add product commands; "
-                    "satisfy it via verification/session evidence only."
-                    if kind in ("process", "verification", "decision")
-                    else (
-                        "Update documentation only — do not invent product features."
-                        if kind == "documentation"
-                        else "Implement only that gap, then stop."
-                    )
-                )
+                f"Missing: {missing}. {prompt_extra}"
             ),
             task_id=task_id or checklist.task_id,
             task_title=task_title or checklist.title,
@@ -1088,21 +1126,21 @@ def detect_requirement_gaps(
                 "missing": missing,
                 "evidence": list(evidence),
                 "detector_noisy": noisy,
+                "unverifiable": unverifiable,
             },
         )
-        # Align stored risk with gate tier for Not Addressed product gaps
-        if item.status == "Not Addressed" and kind == "product":
-            node.risk_tier = Tier.LOW if noisy else Tier.HIGH
+        # Unverifiable is always Low/informational (rollout: avoid boy-who-cried-wolf)
+        if unverifiable or noisy:
+            node.risk_tier = Tier.LOW
+        elif item.status == "Not Addressed" and hard_block_kind(kind):
+            node.risk_tier = Tier.HIGH
         elif kind in ("process", "decision", "verification"):
-            # Never High-block on process/verification wording — ask/review only
             node.risk_tier = Tier.LOW
             node.status = NodeStatus.OPEN
-        elif kind == "documentation":
-            node.risk_tier = Tier.LOW if noisy else Tier.MEDIUM
-        elif kind == "quality":
-            node.risk_tier = Tier.LOW if noisy else Tier.MEDIUM
-        elif noisy:
-            node.risk_tier = Tier.LOW
+        elif kind in ("documentation", "quality"):
+            node.risk_tier = Tier.MEDIUM
+        else:
+            node.risk_tier = Tier.MEDIUM
         if noisy:
             node.summary = (
                 node.summary
@@ -1520,7 +1558,7 @@ def detect_unvalidated_config(
 
 
 # ---------------------------------------------------------------------------
-# Permissive getattr shortcut — paper over a newly introduced param
+# Failure-absorption taxonomy scanner (named shapes; data-extensible)
 # ---------------------------------------------------------------------------
 
 _GETATTR_DEFAULT_RE = re.compile(
@@ -1534,10 +1572,6 @@ _NEW_PARAM_IN_DIFF_RE = re.compile(
     r"add_argument\s*\(\s*['\"]--([A-Za-z0-9-]+)['\"]|"  # argparse
     r"['\"]--([A-Za-z0-9-]+)['\"]"  # click/typer style
     r")"
-)
-_INIT_SIG_PARAM_RE = re.compile(
-    r"(?m)^\+\s*(?:def\s+__init__\s*\((?P<args>[^)]*)\)|"
-    r"([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*[^=,\n]+)?\s*=\s*[^=,\n]+,?\s*$)"
 )
 
 
@@ -1566,7 +1600,6 @@ def _new_params_from_diff(diff: str) -> Set[str]:
             name = re.split(r"[:\=]", part, maxsplit=1)[0].strip()
             if name.isidentifier():
                 names.add(_normalize_param_name(name))
-    # Filter noise
     return {
         n
         for n in names
@@ -1591,7 +1624,16 @@ def _new_params_from_diff(diff: str) -> Set[str]:
     }
 
 
-def detect_getattr_shortcuts(
+def _tier_from_severity(severity: str) -> Tier:
+    s = (severity or "Medium").strip().lower()
+    if s == "high":
+        return Tier.HIGH
+    if s == "low":
+        return Tier.LOW
+    return Tier.MEDIUM
+
+
+def detect_failure_absorption(
     signals: DetectionSignals,
     *,
     file_contents: dict[str, str],
@@ -1602,79 +1644,176 @@ def detect_getattr_shortcuts(
     created_by_user: Optional[str] = None,
 ) -> List[UncertaintyNode]:
     """
-    Flag getattr(x, "name", default) where "name" is a constructor/CLI param
-    newly introduced in this same diff — the logveil-style shortcut that
-    papers over a broken test helper instead of fixing the real cause.
+    Scan the diff against the named failure-absorption taxonomy.
+
+    Adding a new absorption shape is a data row in ABSORPTION_TAXONOMY — not a
+    new ad-hoc detector function. Trusted patterns (hard_block=True) may
+    High-block; newer rows ship as Low/Medium informational until promoted.
     """
+    from .absorption_taxonomy import ABSORPTION_TAXONOMY, scan_failure_absorption
     from .context import is_scaffold_file
 
-    new_params = _new_params_from_diff(diff)
-    if not new_params:
-        return []
-
     nodes: List[UncertaintyNode] = []
-    for fpath, text in (file_contents or {}).items():
-        if is_scaffold_file(fpath) or not text:
+    new_params = _new_params_from_diff(diff)
+    pattern_by_id = {p.pattern_id: p for p in ABSORPTION_TAXONOMY}
+
+    # --- getattr_new_param_default: refine with new-params cross-check --------
+    # Still uses file_contents so we catch getattr even when the helper line
+    # moved outside the smallest diff hunk; only fires for params this diff added.
+    if new_params:
+        for fpath, text in (file_contents or {}).items():
+            if is_scaffold_file(fpath) or not text:
+                continue
+            rel = fpath.replace("\\", "/")
+            if any(p in rel for p in ("/tests/", "test_", "_test.py", "conftest.py")):
+                continue
+            hits = []
+            for m in _GETATTR_DEFAULT_RE.finditer(text):
+                attr = _normalize_param_name(m.group(1))
+                if attr in new_params:
+                    hits.append(attr)
+            if not hits:
+                continue
+            uniq = sorted(set(hits))
+            pat = pattern_by_id.get("getattr_new_param_default")
+            node = _make_node(
+                title=f"Permissive getattr for newly added param in {Path(fpath).name}",
+                node_type=NodeType.GETATTR_SHORTCUT,
+                signals=signals,
+                summary=(
+                    "Production code uses getattr(..., default) for a parameter "
+                    "this same diff just introduced — likely papering over a red test."
+                ),
+                explanation=(
+                    f"{fpath}: getattr fallback for {', '.join(uniq)}. "
+                    "Those names appear as new constructor/CLI parameters in the diff. "
+                    "Fix the outdated test helper/fixture instead of weakening the contract. "
+                    f"[taxonomy:{pat.pattern_id if pat else 'getattr_new_param_default'}]"
+                ),
+                why_uncertain=(
+                    "A permissive default hides AttributeError from callers that should "
+                    "provide the new field (often a hand-built test args() namespace)."
+                ),
+                what_could_go_wrong=(
+                    "The real bug (stale test helper / incomplete call site) stays; "
+                    "production silently accepts missing fields forever."
+                ),
+                suggested_fix=(
+                    "Remove the getattr default; update call sites and test helpers to "
+                    "pass the new parameter explicitly."
+                ),
+                suggested_prompt=(
+                    f"In {fpath}, remove getattr(..., default) for newly added "
+                    f"param(s) {', '.join(uniq)}. Update the test helper / call sites "
+                    "to include the field — do not absorb AttributeError in production."
+                ),
+                files=[fpath],
+                task_id=task_id,
+                task_title=task_title,
+                created_by_session=created_by_session,
+                created_by_user=created_by_user,
+                status=NodeStatus.NEEDS_HUMAN_REVIEW,
+                extra_signals={
+                    "getattr_shortcut": True,
+                    "failure_absorption": True,
+                    "absorption_pattern_id": "getattr_new_param_default",
+                    "absorption_hard_block": True,
+                    "getattr_attrs": uniq,
+                    "new_params_in_diff": sorted(new_params)[:20],
+                },
+            )
+            node.risk_tier = Tier.HIGH
+            node.confidence_tier = Tier.LOW
+            nodes.append(node)
+
+    # --- Remaining taxonomy rows: general diff scanner -----------------------
+    tax_hits = scan_failure_absorption(
+        diff or "",
+        pattern_ids=[
+            p.pattern_id
+            for p in ABSORPTION_TAXONOMY
+            if p.pattern_id != "getattr_new_param_default"
+        ],
+    )
+    seen_keys: Set[str] = set()
+    for hit in tax_hits:
+        key = f"{hit.pattern_id}:{hit.evidence}"
+        if key in seen_keys:
             continue
-        # Prefer production code — skipping pure test files still allows
-        # catching getattr in cli.py / library code.
-        rel = fpath.replace("\\", "/")
-        if any(p in rel for p in ("/tests/", "test_", "_test.py", "conftest.py")):
-            continue
-        hits = []
-        for m in _GETATTR_DEFAULT_RE.finditer(text):
-            attr = _normalize_param_name(m.group(1))
-            if attr in new_params:
-                hits.append(attr)
-        if not hits:
-            continue
-        uniq = sorted(set(hits))
+        seen_keys.add(key)
+        pat = pattern_by_id.get(hit.pattern_id)
+        hard = bool(pat.hard_block) if pat else False
+        tier = _tier_from_severity(hit.severity)
         node = _make_node(
-            title=f"Permissive getattr for newly added param in {Path(fpath).name}",
-            node_type=NodeType.GETATTR_SHORTCUT,
+            title=f"{hit.title}: {hit.line[:60]}",
+            node_type=NodeType.FAILURE_ABSORPTION,
             signals=signals,
             summary=(
-                "Production code uses getattr(..., default) for a parameter "
-                "this same diff just introduced — likely papering over a red test."
+                f"Failure-absorption pattern '{hit.pattern_id}' in the diff — "
+                f"{hit.description}"
             ),
             explanation=(
-                f"{fpath}: getattr fallback for {', '.join(uniq)}. "
-                "Those names appear as new constructor/CLI parameters in the diff. "
-                "Fix the outdated test helper/fixture instead of weakening the contract."
+                f"Taxonomy hit `{hit.pattern_id}`: {hit.evidence}\n"
+                f"{hit.description}\n"
+                "Adding new absorption shapes is a taxonomy data change, not a "
+                "new detector function."
             ),
-            why_uncertain=(
-                "A permissive default hides AttributeError from callers that should "
-                "provide the new field (often a hand-built test args() namespace)."
-            ),
+            why_uncertain=hit.description,
             what_could_go_wrong=(
-                "The real bug (stale test helper / incomplete call site) stays; "
-                "production silently accepts missing fields forever."
+                "Failures get absorbed into a silent default instead of being fixed "
+                "or reported — the same instinct as permissive getattr shortcuts."
             ),
             suggested_fix=(
-                "Remove the getattr default; update call sites and test helpers to "
-                "pass the new parameter explicitly."
+                "Remove the silent absorption; surface the error or wire the value "
+                "through explicitly."
             ),
             suggested_prompt=(
-                f"In {fpath}, remove getattr(..., default) for newly added "
-                f"param(s) {', '.join(uniq)}. Update the test helper / call sites "
-                "to include the field — do not absorb AttributeError in production."
+                f"The diff matches failure-absorption pattern '{hit.pattern_id}' "
+                f"({hit.evidence}). Remove the silent fallback; fix the real cause."
             ),
-            files=[fpath],
+            files=list(signals.files_changed[:5]),
             task_id=task_id,
             task_title=task_title,
             created_by_session=created_by_session,
             created_by_user=created_by_user,
-            status=NodeStatus.NEEDS_HUMAN_REVIEW,
+            status=(
+                NodeStatus.NEEDS_HUMAN_REVIEW if hard else NodeStatus.OPEN
+            ),
             extra_signals={
-                "getattr_shortcut": True,
-                "getattr_attrs": uniq,
-                "new_params_in_diff": sorted(new_params)[:20],
+                "failure_absorption": True,
+                "absorption_pattern_id": hit.pattern_id,
+                "absorption_hard_block": hard,
+                "absorption_evidence": hit.evidence,
             },
         )
-        node.risk_tier = Tier.HIGH
+        node.risk_tier = tier
         node.confidence_tier = Tier.LOW
         nodes.append(node)
+
     return nodes
+
+
+def detect_getattr_shortcuts(
+    signals: DetectionSignals,
+    *,
+    file_contents: dict[str, str],
+    diff: str = "",
+    task_id: Optional[str] = None,
+    task_title: Optional[str] = None,
+    created_by_session: Optional[str] = None,
+    created_by_user: Optional[str] = None,
+) -> List[UncertaintyNode]:
+    """Back-compat wrapper — getattr row of the failure-absorption taxonomy."""
+    nodes = detect_failure_absorption(
+        signals,
+        file_contents=file_contents,
+        diff=diff,
+        task_id=task_id,
+        task_title=task_title,
+        created_by_session=created_by_session,
+        created_by_user=created_by_user,
+    )
+    return [n for n in nodes if n.type == NodeType.GETATTR_SHORTCUT]
 
 
 # ---------------------------------------------------------------------------

@@ -108,6 +108,10 @@ def derive_risk_tier(signals: DetectionSignals, node_type: NodeType) -> Tier:
     if node_type == NodeType.GETATTR_SHORTCUT:
         return Tier.HIGH
 
+    # Default Medium for taxonomy hits; detector overrides risk_tier per pattern.
+    if node_type == NodeType.FAILURE_ABSORPTION:
+        return Tier.MEDIUM
+
     if node_type == NodeType.HIGH_CONFIDENCE:
         if signals.high_stakes_hit or signals.migration_hit:
             risk = _max_tier(risk, Tier.MEDIUM)

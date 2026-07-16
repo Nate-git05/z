@@ -41,6 +41,7 @@ _MEDIUM_GATE_TYPES = {
     NodeType.UNVALIDATED_CONFIG,
     NodeType.FAILURE_BLIND_SPOT,
     NodeType.FRAGILE_LOGIC,
+    NodeType.FAILURE_ABSORPTION,
 }
 
 
@@ -197,6 +198,13 @@ def _effective_gate_tier(node: UncertaintyNode) -> Tier:
         return Tier.HIGH
     if node.type == NodeType.GETATTR_SHORTCUT or node.signals.get("getattr_shortcut"):
         return Tier.HIGH
+    # Taxonomy hits: hard-block only when the named pattern is marked trusted
+    if node.type == NodeType.FAILURE_ABSORPTION or node.signals.get("failure_absorption"):
+        if node.signals.get("absorption_hard_block"):
+            return Tier.HIGH
+        if (node.risk_tier or Tier.LOW) == Tier.MEDIUM:
+            return Tier.MEDIUM
+        return Tier.LOW
     if node.type == NodeType.WEAK_TEST or node.signals.get("mutation_survivors"):
         return Tier.HIGH
     if node.signals.get("auto_fix_exhausted"):
@@ -204,21 +212,28 @@ def _effective_gate_tier(node: UncertaintyNode) -> Tier:
     if node.signals.get("tests_passed") is False and node.type == NodeType.MISSING_TEST:
         return Tier.HIGH
     if node.type == NodeType.REQUIREMENT_GAP:
+        from .evidence_strategy import hard_block_kind
+
         req_status = node.signals.get("requirement_status") or ""
         req_kind = (node.signals.get("requirement_kind") or "product").lower()
-        # Process/decision/verification gaps must not hard-block commits
-        if req_kind in ("process", "decision", "verification"):
+        # Unverifiable = honest "no check yet" — Low/informational, never hard-block
+        if req_status == "Unverifiable" or node.signals.get("unverifiable"):
             return Tier.LOW
         # Noise circuit: chronically unresolved detector — never hard-block
         if node.signals.get("detector_noisy"):
             return Tier.LOW
-        # Documentation gaps are reviewable, not commit-blockers by default
-        if req_kind == "documentation":
-            return Tier.LOW if req_status != "Not Addressed" else Tier.MEDIUM
+        # Process/decision/verification wording gaps stay informational Low
+        if req_kind in ("process", "decision", "verification"):
+            return Tier.LOW
         if req_status == "Not Addressed":
-            return Tier.HIGH
+            # Only kinds with a trusted verifier promote to hard-block
+            if hard_block_kind(req_kind):
+                return Tier.HIGH
+            # Reviewable Medium (docs/quality) until that verifier is promoted
+            return Tier.MEDIUM
         if req_status == "Partially Addressed":
             return Tier.MEDIUM
+        return Tier.LOW
     if node.risk_tier == Tier.HIGH:
         return Tier.HIGH
     if node.risk_tier == Tier.MEDIUM and node.type in _MEDIUM_GATE_TYPES:
