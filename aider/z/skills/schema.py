@@ -86,6 +86,12 @@ class Skill:
     quality_state: str = "verified"
     grounded_at: Optional[str] = None
     content_hash: Optional[str] = None  # hash of grounding pack at capture
+    # Repo isolation: bind skill to the project that produced it.
+    # repo_key = resolved project root; empty + shared=True → apply anywhere.
+    # Captures/generates stamp the current root so project A skills do not
+    # auto-apply (and rewrite files) in project B.
+    repo_key: str = ""
+    shared: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -124,6 +130,8 @@ class Skill:
             "path": self.path,
             "scope": self.scope,
             "source": self.source,
+            "repo_key": self.repo_key or "",
+            "shared": bool(self.shared),
             "created_at": self.created_at,
         }
 
@@ -151,6 +159,8 @@ class Skill:
             "needs_review": bool(self.needs_review),
             "quality_state": self.quality_state or "verified",
             "source": self.source,
+            "repo_key": self.repo_key or "",
+            "shared": bool(self.shared),
         }
 
     @classmethod
@@ -189,6 +199,8 @@ class Skill:
             quality_state=_quality_state_from_data(data),
             grounded_at=data.get("grounded_at"),
             content_hash=data.get("content_hash"),
+            repo_key=str(data.get("repo_key") or "").strip(),
+            shared=bool(data.get("shared")),
         )
 
 
@@ -216,6 +228,8 @@ class SkillIndexEntry:
     source_files: List[str] = field(default_factory=list)
     needs_review: bool = False
     quality_state: str = "verified"
+    repo_key: str = ""
+    shared: bool = False
 
     def match_text(self) -> str:
         bits = [

@@ -24,6 +24,70 @@ from .schema import (
     Skill,
 )
 
+
+def normalize_repo_key(root: Optional[Path | str]) -> str:
+    """Stable absolute path string for comparing skill.repo_key to the live project."""
+    if root is None:
+        return ""
+    try:
+        return str(Path(root).resolve())
+    except (OSError, RuntimeError, ValueError):
+        return str(root)
+
+
+def skill_matches_repo(skill: Skill, root: Optional[Path | str]) -> tuple[bool, str]:
+    """
+    Whether a skill may auto-apply in `root`.
+
+    - shared / repo_key="*" → yes (explicitly global)
+    - repo_key set → only when it matches the current resolved root
+    - legacy (no repo_key): if source_files are set and none exist under
+      the current root, treat as foreign and skip (stops A→B contamination
+      for older captures that never stamped repo_key)
+    """
+    if getattr(skill, "shared", False):
+        return True, "shared skill"
+    key = (getattr(skill, "repo_key", None) or "").strip()
+    if key in ("*", "global", "any"):
+        return True, "global repo_key"
+    current = normalize_repo_key(root)
+    if key:
+        if not current:
+            return False, "skill bound to another repo (no current root)"
+        if key == current:
+            return True, "repo_key match"
+        # Also allow if one resolves to the other (symlink / trailing slash)
+        try:
+            if Path(key).resolve() == Path(current).resolve():
+                return True, "repo_key match"
+        except (OSError, RuntimeError, ValueError):
+            pass
+        return False, "skill bound to a different project"
+
+    # Legacy skills without repo_key — foreign source_files ⇒ skip
+    sources = list(getattr(skill, "source_files", None) or [])
+    if sources and current:
+        root_path = Path(current)
+        hits = 0
+        for rel in sources:
+            rel_s = str(rel).strip().lstrip("./")
+            if not rel_s:
+                continue
+            # Absolute path from another machine/project
+            p = Path(rel_s)
+            if p.is_absolute():
+                try:
+                    p.relative_to(root_path)
+                    if p.is_file():
+                        hits += 1
+                except ValueError:
+                    continue
+            elif (root_path / rel_s).is_file():
+                hits += 1
+        if hits == 0:
+            return False, "legacy skill source_files missing here (foreign project)"
+    return True, "unscoped legacy skill"
+
 # Verbs that mean "bootstrap something new"
 _SCAFFOLD_TASK_RE = re.compile(
     r"(?i)\b(create|init|initialize|scaffold|bootstrap|new\s+project|"
@@ -264,6 +328,11 @@ def route_skill(
 
     if sid and sid in injected:
         return RouteDecision(skill, False, "already injected this session", score)
+
+    # Cross-project isolation — never pull project A's playbook into B
+    ok_repo, repo_reason = skill_matches_repo(skill, signals.root)
+    if not ok_repo:
+        return RouteDecision(skill, False, repo_reason, score)
 
     # Captured / quarantined skills never auto-apply until verified.
     qstate = (getattr(skill, "quality_state", None) or "").strip().lower()

@@ -49,6 +49,8 @@ def _dump_frontmatter(skill: Skill) -> str:
         "created_at": skill.created_at,
         "updated_at": skill.updated_at,
         "scope": skill.scope,
+        "repo_key": skill.repo_key or "",
+        "shared": bool(skill.shared),
     }
     if skill.grounded_at:
         meta["grounded_at"] = skill.grounded_at
@@ -131,6 +133,8 @@ def skill_from_markdown(text: str, *, filename: Optional[str] = None) -> Skill:
         ),
         grounded_at=meta.get("grounded_at"),
         content_hash=meta.get("content_hash"),
+        repo_key=str(meta.get("repo_key") or "").strip(),
+        shared=bool(meta.get("shared")),
     )
 
 

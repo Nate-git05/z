@@ -627,10 +627,34 @@ class Coder:
         if key in self.abs_root_path_cache:
             return self.abs_root_path_cache[key]
 
-        res = Path(self.root) / path
-        res = utils.safe_abs_path(res)
+        # Never let an absolute path escape the project root (pathlib would
+        # otherwise ignore self.root when `path` is absolute).
+        under = self.path_under_root(path)
+        if under is not None:
+            self.abs_root_path_cache[key] = under
+            return under
+
+        # Escape attempt / unresolvable — keep result under root by basename
+        root = Path(utils.safe_abs_path(self.root))
+        res = utils.safe_abs_path(root / Path(path).name)
         self.abs_root_path_cache[key] = res
         return res
+
+    def path_under_root(self, path):
+        """Return resolved absolute path if it lies under coder.root, else None."""
+        try:
+            root = Path(utils.safe_abs_path(self.root))
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return None
+        try:
+            candidate = Path(path)
+            if not candidate.is_absolute():
+                candidate = root / candidate
+            resolved = Path(utils.safe_abs_path(candidate))
+            resolved.relative_to(root)
+            return str(resolved)
+        except (ValueError, OSError, RuntimeError, TypeError):
+            return None
 
     fences = all_fences
     fence = fences[0]
@@ -1174,6 +1198,7 @@ class Coder:
                 model_name=model_name,
                 grounding_pack=pack if pack.files or pack.diff else None,
                 uncertainty_engine=getattr(self, "uncertainty_engine", None),
+                repo_root=root,
             )
             if created and skill:
                 offer_view_new_skill(self.io, skill)
@@ -2608,7 +2633,13 @@ class Coder:
         self.need_commit_before_edits.add(path)
 
     def allowed_to_edit(self, path):
-        full_path = self.abs_root_path(path)
+        full_path = self.path_under_root(path)
+        if full_path is None:
+            self.io.tool_warning(
+                f"Skipping edits outside project root: {path}"
+            )
+            return
+
         if self.repo:
             need_to_add = not self.repo.path_in_repo(path)
         else:
