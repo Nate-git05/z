@@ -28,6 +28,8 @@ class DetectionSignals:
     migration_hit: bool = False
     tests_relevant_exist: Optional[bool] = None  # None = unknown
     tests_passed: Optional[bool] = None
+    # Mechanical: files_changed includes README*/CHANGELOG*/docs/**
+    docs_touched: Optional[bool] = None
     live_api_verified: Optional[bool] = None  # None = N/A, False = assumed
     pattern_match_found: Optional[bool] = None
     conflicting_patterns: bool = False
@@ -103,6 +105,9 @@ def derive_risk_tier(signals: DetectionSignals, node_type: NodeType) -> Tier:
     if node_type == NodeType.UNVALIDATED_CONFIG:
         risk = _max_tier(risk, Tier.MEDIUM)
 
+    if node_type == NodeType.GETATTR_SHORTCUT:
+        return Tier.HIGH
+
     if node_type == NodeType.HIGH_CONFIDENCE:
         if signals.high_stakes_hit or signals.migration_hit:
             risk = _max_tier(risk, Tier.MEDIUM)
@@ -177,6 +182,8 @@ def collect_base_signals(
     *,
     blast_radius_threshold: int = 5,
 ) -> DetectionSignals:
+    from .checklist import files_touch_docs
+
     files = list(files_changed)
     symbols = list(symbols_changed)
     return DetectionSignals(
@@ -184,5 +191,6 @@ def collect_base_signals(
         symbols_changed=symbols,
         high_stakes_hit=scan_high_stakes(files, symbols),
         migration_hit=any(path_looks_migration(f) for f in files),
+        docs_touched=files_touch_docs(files),
         blast_radius_threshold=blast_radius_threshold,
     )

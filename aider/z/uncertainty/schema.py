@@ -48,6 +48,8 @@ class NodeType(str, enum.Enum):
     WEAK_TEST = "Weak Test Suite"
     # Constructor/config params accepted without visible validation
     UNVALIDATED_CONFIG = "Unvalidated Config"
+    # getattr(x, "new_param", default) papers over a param just introduced in this diff
+    GETATTR_SHORTCUT = "Permissive getattr Shortcut"
 
 
 # Older persisted display strings → current NodeType
@@ -72,6 +74,7 @@ _NODE_TYPE_ALIASES = {
     "Absorbed Failure": NodeType.ABSORBED_FAILURE,
     "Weak Test Suite": NodeType.WEAK_TEST,
     "Unvalidated Config": NodeType.UNVALIDATED_CONFIG,
+    "Permissive getattr Shortcut": NodeType.GETATTR_SHORTCUT,
 }
 
 

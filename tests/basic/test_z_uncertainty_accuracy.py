@@ -177,7 +177,7 @@ class RequirementGapSignalWiringTest(unittest.TestCase):
         nodes = detect_requirement_gaps(sig, checklist=checklist)
         self.assertEqual(nodes, [])
 
-    def test_documentation_satisfied_when_readme_present(self):
+    def test_documentation_satisfied_when_readme_edited(self):
         checklist = TaskChecklist(
             task_id="t1",
             title="Docs",
@@ -189,9 +189,24 @@ class RequirementGapSignalWiringTest(unittest.TestCase):
                 )
             ],
         )
-        evidence = bind_evidence(
+        # Pre-existing README alone must NOT satisfy — docs must be touched
+        evidence_untouched = bind_evidence(
             checklist,
             files_changed=["flowguard/rate_limiter.py"],
+            file_contents={
+                "flowguard/rate_limiter.py": "def allow(key):\n    return True\n",
+                "README.md": "# FlowGuard\n\n## API\n\n`allow(key)` returns whether a request is permitted.\n",
+            },
+            symbols=["allow"],
+            test_files=[],
+        )
+        rescore_checklist_with_evidence(checklist, evidence_untouched)
+        self.assertEqual(checklist.items[0].status, "Not Addressed")
+
+        checklist.items[0].status = "Not Addressed"
+        evidence = bind_evidence(
+            checklist,
+            files_changed=["flowguard/rate_limiter.py", "README.md"],
             file_contents={
                 "flowguard/rate_limiter.py": "def allow(key):\n    return True\n",
                 "README.md": "# FlowGuard\n\n## API\n\n`allow(key)` returns whether a request is permitted.\n",
