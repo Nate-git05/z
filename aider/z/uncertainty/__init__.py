@@ -26,6 +26,10 @@ from .evidence_strategy import (
 )
 from .absorption_taxonomy import ABSORPTION_TAXONOMY, scan_failure_absorption
 from .sibling_traits import find_sibling_companion_gaps
+from .established_solutions import (
+    ESTABLISHED_SOLUTIONS,
+    scan_invention_in_diff,
+)
 from .gate import GateResult, prepare_commit, report_auto_fix_exhaustion
 from .verify import VerificationRecord, verify_edits
 from .auto_act import default_prompt_for_node, plan_auto_act
@@ -60,6 +64,8 @@ __all__ = [
     "ABSORPTION_TAXONOMY",
     "scan_failure_absorption",
     "find_sibling_companion_gaps",
+    "ESTABLISHED_SOLUTIONS",
+    "scan_invention_in_diff",
     "GateResult",
     "prepare_commit",
     "report_auto_fix_exhaustion",

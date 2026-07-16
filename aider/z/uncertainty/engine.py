@@ -35,6 +35,7 @@ from .detectors import (
     detect_edge_cases,
     detect_failure_blind_spots,
     detect_fragile_logic,
+    detect_established_solution_gaps,
     detect_failure_absorption,
     detect_high_confidence,
     detect_missing_sibling_companions,
@@ -475,6 +476,16 @@ class UncertaintyEngine:
                 signals,
                 file_contents=contents,
                 diff=diff if diff is not None else self.ctx.last_diff,
+                **meta,
+            )
+        )
+        # Established solutions — inventing IP/email/URL/date/UUID/… parsers
+        # without plan evidence or a stdlib import
+        nodes.extend(
+            detect_established_solution_gaps(
+                signals,
+                diff=diff if diff is not None else self.ctx.last_diff,
+                plan=self.ctx.plan,
                 **meta,
             )
         )
