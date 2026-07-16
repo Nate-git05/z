@@ -199,6 +199,8 @@ def _effective_gate_tier(node: UncertaintyNode) -> Tier:
         return Tier.HIGH
     if node.type == NodeType.WEAK_TEST or node.signals.get("mutation_survivors"):
         return Tier.HIGH
+    if node.signals.get("auto_fix_exhausted"):
+        return Tier.HIGH
     if node.signals.get("tests_passed") is False and node.type == NodeType.MISSING_TEST:
         return Tier.HIGH
     if node.type == NodeType.REQUIREMENT_GAP:
@@ -455,6 +457,37 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
                 verification=record,
                 blocked_high=[node],
                 reason="tests failed — reflect to fix",
+            )
+
+        # Gate-level fix retries exhausted — hard-block unless force override.
+        # (Force still goes through the shared high-risk override path below.)
+        if fix_attempts >= MAX_TEST_FIX_ATTEMPTS and not force:
+            node.title = (
+                f"Auto-fix exhausted — still failing after {fix_attempts} attempts"
+            )
+            node.summary = (
+                "Commit blocked: auto-fix retries exhausted and the suite is still red. "
+                "A human needs to look."
+            )
+            node.signals["auto_fix_exhausted"] = True
+            node.signals["fix_attempts"] = fix_attempts
+            failure = _last_failure_excerpt(record)
+            node.explanation = (
+                f"{node.explanation}\n\nAuto-fix exhausted after {fix_attempts} "
+                f"gate retry attempt(s).\n{failure}"
+            )
+            store.save_local()
+            reason = (
+                f"Auto-fix exhausted after {fix_attempts} attempts; "
+                "tests still failing. A human needs to look.\n"
+                f"{failure}"
+            )
+            io.tool_error(f"Commit blocked by Z verification gate. {reason}")
+            return GateResult(
+                allow_commit=False,
+                verification=record,
+                blocked_high=[node],
+                reason=reason,
             )
 
     else:
@@ -737,6 +770,176 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
         reason="verification passed; no blocking uncertainties",
         claimed_complete=True,
     )
+
+
+def _last_failure_excerpt(record: Optional[VerificationRecord], reflect_message: str = "") -> str:
+    """Pull the most useful failure text for a human (test name + assertion diff)."""
+    parts: List[str] = []
+    if record is not None:
+        if record.command:
+            parts.append(f"Command: {record.command}")
+        if record.exit_code is not None:
+            parts.append(f"Exit code: {record.exit_code}")
+        if record.tests_failed is not None or record.tests_discovered is not None:
+            parts.append(
+                f"Tests: failed={record.tests_failed} / "
+                f"passed={record.tests_passed} / discovered={record.tests_discovered}"
+            )
+        excerpt = (record.output_excerpt or record.error or "").strip()
+        if excerpt:
+            parts.append("Last failure (verbatim):\n" + excerpt[-1800:])
+    reflect = (reflect_message or "").strip()
+    if reflect and "Output (excerpt)" in reflect:
+        # Prefer the structured reflect body when verification record is thin
+        if not record or not (record.output_excerpt or record.error):
+            parts.append("Pending fix prompt (excerpt):\n" + reflect[-1800:])
+    elif reflect and not parts:
+        parts.append("Pending reflection (excerpt):\n" + reflect[-1200:])
+    return "\n".join(parts) if parts else "(no failure excerpt captured)"
+
+
+def report_auto_fix_exhaustion(
+    coder,
+    *,
+    max_reflections: int,
+    pending_reflect: str = "",
+) -> Optional[UncertaintyNode]:
+    """
+    Reflection-loop cap with tests still red — surface like every other gate stop.
+
+    Previously this path only printed "Only N reflections allowed, stopping." and
+    left a broken working tree with no uncertainty node / commit-blocked message.
+    """
+    io = getattr(coder, "io", None)
+    engine = getattr(coder, "uncertainty_engine", None)
+    store = getattr(coder, "uncertainty_store", None)
+    record = getattr(coder, "last_verification", None)
+    if record is None and engine is not None:
+        record = getattr(engine.ctx, "last_verification", None)
+
+    tests_still_failing = False
+    if record is not None:
+        tests_still_failing = bool(record.ran and not record.meaningful_pass)
+    if getattr(coder, "test_outcome", None) is False:
+        tests_still_failing = True
+    pending = pending_reflect or getattr(coder, "reflected_message", None) or ""
+    if not tests_still_failing and pending:
+        # Heuristic: verify-gate / auto-test reflect still queued
+        low = pending.lower()
+        if any(
+            s in low
+            for s in (
+                "test suite failed",
+                "verification gate",
+                "fix failing",
+                "tests failed",
+                "attempt to fix test",
+            )
+        ):
+            tests_still_failing = True
+
+    if not tests_still_failing:
+        if io is not None:
+            io.tool_warning(
+                f"Only {max_reflections} reflections allowed, stopping."
+            )
+        return None
+
+    failure = _last_failure_excerpt(
+        record if isinstance(record, VerificationRecord) else None,
+        pending,
+    )
+    edited = list(getattr(coder, "aider_edited_files", None) or [])
+    files = [str(f) for f in edited[:12]]
+
+    node = None
+    if store is not None:
+        # Prefer a real VerificationRecord; synthesize a stub if missing
+        if not isinstance(record, VerificationRecord):
+            record = VerificationRecord(
+                ran=True,
+                passed=False,
+                state=VerifyState.TESTS_FAILED,
+                output_excerpt=failure[-1500:],
+                error="auto-fix exhausted with tests still failing",
+            )
+        node = _upsert_verification_node(
+            store,
+            title=(
+                f"Auto-fix exhausted — still failing after "
+                f"{max_reflections} attempts"
+            ),
+            summary=(
+                f"Commit blocked: auto-fix hit the reflection cap "
+                f"({max_reflections}) and the suite is still red. "
+                "A human needs to look."
+            ),
+            explanation=(
+                f"Reflection loop exhausted after {max_reflections} attempts "
+                "without a meaningful test pass. The working tree may contain a "
+                "partial/broken fix from the last retry.\n\n"
+                f"{failure}"
+            ),
+            files=files,
+            record=record,
+            task_id=getattr(getattr(engine, "ctx", None), "current_task_id", None),
+            task_title=getattr(getattr(engine, "ctx", None), "current_task_title", None),
+        )
+        node.signals["auto_fix_exhausted"] = True
+        node.signals["reflection_cap"] = max_reflections
+        node.why_uncertain = (
+            "Auto-fix retries were exhausted; remaining failures need a human."
+        )
+        node.what_could_go_wrong = (
+            "Silent stop leaves regressions (e.g. weakened validation) in the "
+            "working tree with no commit and no visible uncertainty finding."
+        )
+        node.suggested_fix = (
+            "Inspect the last failing assertion, restore any accidental "
+            "regressions from auto-fix retries, and re-run the suite."
+        )
+        node.suggested_prompt = (
+            f"Auto-fix exhausted after {max_reflections} attempts. "
+            "Do not claim completion. Fix the remaining failure below, "
+            "or stop and ask a human.\n\n"
+            f"{failure}"
+        )
+        store.save_local()
+        if engine is not None:
+            try:
+                engine.record_execution(
+                    f"auto-fix exhausted after {max_reflections} reflections; "
+                    "tests still failing"
+                )
+            except Exception:
+                pass
+
+    detail = (
+        f"Auto-fix exhausted after {max_reflections} attempts; "
+        "tests still failing. A human needs to look.\n"
+        f"{failure}"
+    )
+    blocked_msg = f"Commit blocked by Z verification gate. {detail}"
+    if io is not None:
+        io.tool_error(
+            f"Only {max_reflections} reflections allowed, stopping — "
+            "auto-fix exhausted with tests still failing."
+        )
+        io.tool_error(blocked_msg)
+        if node is not None:
+            io.tool_error(
+                f"High-risk issue raised: {node.title}\n"
+                f"  {node.summary}"
+            )
+    move_back = getattr(coder, "move_back_cur_messages", None)
+    if callable(move_back):
+        try:
+            move_back(blocked_msg)
+        except Exception:
+            pass
+    # Hold dirty-commits — tree is not verified
+    coder._z_gate_hold_dirty = True
+    return node
 
 
 def bind_acceptances_to_commit(

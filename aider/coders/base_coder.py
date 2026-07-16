@@ -1112,7 +1112,27 @@ class Coder:
                 break
 
             if self.num_reflections >= self.max_reflections:
-                self.io.tool_warning(f"Only {self.max_reflections} reflections allowed, stopping.")
+                # Control-flow fix: do not silently drop a still-failing auto-fix
+                # loop — raise the same commit-blocked / uncertainty reporting
+                # every other stop path already uses (logveil IPv4 re-run).
+                pending = self.reflected_message
+                try:
+                    from aider.z.uncertainty.gate import report_auto_fix_exhaustion
+
+                    report_auto_fix_exhaustion(
+                        self,
+                        max_reflections=self.max_reflections,
+                        pending_reflect=pending if isinstance(pending, str) else "",
+                    )
+                except Exception:
+                    self.io.tool_warning(
+                        f"Only {self.max_reflections} reflections allowed, stopping."
+                    )
+                    self.io.tool_error(
+                        "Commit blocked: reflection loop exhausted with pending "
+                        "work still unresolved. A human needs to look."
+                    )
+                self.reflected_message = None
                 return
 
             self.num_reflections += 1
