@@ -57,6 +57,9 @@ class NodeType(str, enum.Enum):
     GETATTR_SHORTCUT = "Permissive getattr Shortcut"
     # Named failure-absorption taxonomy hit (non-getattr shapes; see absorption_taxonomy)
     FAILURE_ABSORPTION = "Failure Absorption"
+    # New file matches a family, but siblings share a registry/__all__/index trait
+    # the new file's diff did not update (see sibling_traits.py)
+    PATTERN_COMPANION_GAP = "Missing Sibling Registration"
 
 
 # Older persisted display strings → current NodeType
@@ -83,6 +86,7 @@ _NODE_TYPE_ALIASES = {
     "Unvalidated Config": NodeType.UNVALIDATED_CONFIG,
     "Permissive getattr Shortcut": NodeType.GETATTR_SHORTCUT,
     "Failure Absorption": NodeType.FAILURE_ABSORPTION,
+    "Missing Sibling Registration": NodeType.PATTERN_COMPANION_GAP,
 }
 
 

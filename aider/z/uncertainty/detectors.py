@@ -585,6 +585,110 @@ def detect_pattern_issues(
     return nodes
 
 
+def detect_missing_sibling_companions(
+    signals: DetectionSignals,
+    *,
+    root: Path,
+    new_files: Sequence[str],
+    pattern_results: dict[str, PatternSearchResult],
+    diff: str = "",
+    files_changed: Optional[Sequence[str]] = None,
+    file_contents: Optional[dict[str, str]] = None,
+    task_id: Optional[str] = None,
+    task_title: Optional[str] = None,
+    created_by_session: Optional[str] = None,
+    created_by_user: Optional[str] = None,
+) -> List[UncertaintyNode]:
+    """
+    When a new file matches an existing family, check whether siblings share a
+    companion trait (registry dict, ``__all__``, package exports, …) that the
+    new file's diff did not update.
+
+    Mechanical comparison against files on disk — not framework-specific.
+    """
+    from .context import is_scaffold_file
+    from .sibling_traits import find_sibling_companion_gaps
+
+    nodes: List[UncertaintyNode] = []
+    seen_keys: Set[str] = set()
+
+    for nf in new_files:
+        nf = (nf or "").replace("\\", "/")
+        if not nf or is_scaffold_file(nf):
+            continue
+        result = pattern_results.get(nf) or PatternSearchResult()
+        if not result.matches:
+            continue
+        gaps = find_sibling_companion_gaps(
+            Path(root),
+            new_file=nf,
+            sibling_matches=result.matches,
+            diff=diff or "",
+            files_changed=files_changed or signals.files_changed,
+            file_contents=file_contents,
+        )
+        for gap in gaps:
+            key = f"{gap.new_file}|{gap.companion_file}"
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            sib_preview = ", ".join(Path(s).name for s in gap.sibling_files[:5])
+            node = _make_node(
+                title=(
+                    f"Missing sibling registration for {Path(nf).name} "
+                    f"in {Path(gap.companion_file).name}"
+                ),
+                node_type=NodeType.PATTERN_COMPANION_GAP,
+                signals=signals,
+                summary=(
+                    f"Sibling files like {sib_preview} are registered in "
+                    f"{gap.companion_file}, but this new file is not."
+                ),
+                explanation=(
+                    f"New file {nf} matches an existing family. "
+                    f"{gap.evidence} "
+                    "This is a project convention (registry / exports / index), "
+                    "not a code import edge — so relevance-based maps often miss it."
+                ),
+                why_uncertain=(
+                    "Peers in this family share a companion registration trait; "
+                    "the new file's diff does not update that companion."
+                ),
+                what_could_go_wrong=(
+                    "The feature ships as dead code — correct implementation, but "
+                    "never discovered/loaded the way users of this codebase expect."
+                ),
+                suggested_fix=(
+                    f"Register {Path(nf).stem} in {gap.companion_file} the same way "
+                    f"siblings do (ids seen for peers: "
+                    f"{', '.join(gap.sibling_ids_found[:6])})."
+                ),
+                suggested_prompt=(
+                    f"New file {nf} follows the same pattern as {sib_preview}, but "
+                    f"those siblings also appear in {gap.companion_file} and this "
+                    f"one does not. Add the matching {gap.trait_kind} entry for "
+                    f"{', '.join(gap.missing_ids[:3])} — do not invent a new "
+                    "registration style."
+                ),
+                files=[nf, gap.companion_file, *list(gap.sibling_files)[:4]],
+                task_id=task_id,
+                task_title=task_title,
+                created_by_session=created_by_session,
+                created_by_user=created_by_user,
+                extra_signals={
+                    "pattern_companion_gap": True,
+                    "companion_file": gap.companion_file,
+                    "companion_trait": gap.trait_kind,
+                    "sibling_files": list(gap.sibling_files),
+                    "missing_ids": list(gap.missing_ids),
+                },
+            )
+            node.risk_tier = Tier.MEDIUM
+            node.confidence_tier = Tier.LOW
+            nodes.append(node)
+    return nodes
+
+
 # ---------------------------------------------------------------------------
 # Blast radius
 # ---------------------------------------------------------------------------
