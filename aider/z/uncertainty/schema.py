@@ -40,6 +40,8 @@ class NodeType(str, enum.Enum):
     REQUIREMENT_GAP = "Requirement Gap"
     # Positive signal — informational only
     HIGH_CONFIDENCE = "Evidence of Safety"
+    # Agent wrote a local package that shadows a real third-party dependency
+    DEPENDENCY_FABRICATION = "Dependency Fabrication"
 
 
 # Older persisted display strings → current NodeType
@@ -59,6 +61,8 @@ _NODE_TYPE_ALIASES = {
     "Pattern Misfit": NodeType.PATTERN_INCONSISTENCY,
     "Integration Ripple": NodeType.SHARED_LOGIC,
     "Evidence of Safety": NodeType.HIGH_CONFIDENCE,
+    "Dependency Fabrication": NodeType.DEPENDENCY_FABRICATION,
+    "Environment Tampering": NodeType.DEPENDENCY_FABRICATION,
 }
 
 

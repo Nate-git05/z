@@ -150,7 +150,11 @@ def apply_uncertainty_budget(
     if not nodes:
         return []
 
-    reserved_types = {NodeType.MISSING_TEST, NodeType.REQUIREMENT_GAP}
+    reserved_types = {
+        NodeType.MISSING_TEST,
+        NodeType.REQUIREMENT_GAP,
+        NodeType.DEPENDENCY_FABRICATION,
+    }
     positive = [n for n in nodes if getattr(n, "type", None) == NodeType.HIGH_CONFIDENCE]
     blocking = [
         n
