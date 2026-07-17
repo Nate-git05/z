@@ -921,6 +921,8 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
             record_acceptances(store, high, "force_override")
             if medium:
                 record_acceptances(store, medium, "force_override")
+            # Human-approved commit — clear sticky hold so skill capture can fire
+            coder._z_gate_hold_dirty = False
             return GateResult(
                 allow_commit=True,
                 verification=record,
@@ -961,6 +963,7 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
             record_acceptances(store, high, "force_override")
             if medium:
                 record_acceptances(store, medium, "force_override")
+            coder._z_gate_hold_dirty = False
             return GateResult(
                 allow_commit=True,
                 verification=record,
@@ -1006,6 +1009,7 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
                 reason="medium-risk not acknowledged",
             )
         record_acceptances(store, medium, "medium_ack")
+        coder._z_gate_hold_dirty = False
         return GateResult(
             allow_commit=True,
             verification=record,

@@ -211,6 +211,7 @@ def save_skill_from_task(
     grounding_pack: Optional[GroundingPack] = None,
     uncertainty_engine=None,
     repo_root: Optional[Path | str] = None,
+    prefer_bug_pattern: bool = False,
 ) -> Tuple[Optional[Skill], bool]:
     """
     Capture a skill after a completed task, grounded in diff/file evidence.
@@ -220,14 +221,20 @@ def save_skill_from_task(
     node is attached when an engine is available.
     Caller handles the "want to see metadata?" prompt.
     """
-    io.tool_output("Generating skill from changed files…")
+    label = (
+        "Generating bug-pattern skill from the fix…"
+        if prefer_bug_pattern
+        else "Generating skill from changed files…"
+    )
+    io.tool_output(label)
     skill, err, ground = generate_skill(
         topic,
         model_name=model_name,
         context=context,
         created_by=_created_by(),
         grounding_pack=grounding_pack,
-        two_phase=bool(grounding_pack),
+        two_phase=bool(grounding_pack) and not prefer_bug_pattern,
+        prefer_bug_pattern=prefer_bug_pattern,
     )
     if err or not skill:
         io.tool_error(err or "Skill generation failed.")

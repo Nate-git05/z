@@ -391,12 +391,34 @@ class Commands:
                             {n.id for n in accepted},
                             str(commit_hash),
                         )
+                    # Manual /commit is a primary completion path on blocked turns —
+                    # offer skill capture here (auto path alone was going silent).
+                    if res:
+                        try:
+                            msg = (
+                                (args.strip() if args else None)
+                                or getattr(self.coder, "last_aider_commit_message", None)
+                                or "manual commit after completed work"
+                            )
+                            self.coder._maybe_suggest_skill(str(msg))
+                        except Exception:
+                            pass
                     return
             except Exception as err:  # noqa: BLE001
                 self.io.tool_warning(f"Verify gate skipped on /commit: {err}")
 
         commit_message = args.strip() if args else None
-        self.coder.repo.commit(message=commit_message, coder=self.coder)
+        res = self.coder.repo.commit(message=commit_message, coder=self.coder)
+        if res:
+            try:
+                msg = (
+                    (args.strip() if args else None)
+                    or getattr(self.coder, "last_aider_commit_message", None)
+                    or "manual commit after completed work"
+                )
+                self.coder._maybe_suggest_skill(str(msg))
+            except Exception:
+                pass
 
     def cmd_lint(self, args="", fnames=None):
         "Lint and fix in-chat files or all dirty files if none in chat"

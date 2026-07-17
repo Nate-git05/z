@@ -17,8 +17,9 @@ from .router import (
     collect_repo_signals,
     mark_skill_satisfied,
     route_skills,
+    task_is_bugfix_intent,
 )
-from .schema import Skill, SkillIndexEntry
+from .schema import SKILL_KIND_BUG_PATTERN, Skill, SkillIndexEntry
 from .store import LocalSkillStore
 from .vector import get_skill_vector_index, upsert_skill_vector
 
@@ -155,10 +156,15 @@ def retrieve_skill_candidates(
     threshold: float = 0.40,
     limit: int = 5,
     max_distance: float = 0.55,
+    kind: Optional[str] = None,
+    pool: Optional[str] = None,
 ) -> List[Tuple[Skill, float]]:
     """
     First-stage retrieval only (Chroma / keywords). Does not inject.
     Returns (skill, score) with higher score = better.
+
+    For bug-fix tasks, pass ``kind="bug_pattern"`` / ``pool="bug_pattern"``
+    to search that logical pool inside the same Chroma collection.
     """
     matches: list[tuple[SkillIndexEntry, float]] = []
 
@@ -167,18 +173,41 @@ def retrieve_skill_candidates(
         if vindex.available and vindex.count() > 0:
             # Tighter than the old 0.85 — router still filters further
             # query() returns (entry, score) with score = 1 - cosine distance
-            matches = list(vindex.query(task, k=limit, max_distance=max_distance))
+            matches = list(
+                vindex.query(
+                    task,
+                    k=limit,
+                    max_distance=max_distance,
+                    kind=kind,
+                    pool=pool,
+                    boost_bug_text=task if (kind == SKILL_KIND_BUG_PATTERN or pool == "bug_pattern") else None,
+                )
+            )
     except Exception:
         matches = []
 
     if not matches:
-        matches = match_skills(task, _SESSION_INDEX, threshold=threshold, limit=limit)
+        kw = match_skills(task, _SESSION_INDEX, threshold=threshold, limit=limit * 2)
+        if kind:
+            kw = [(e, s) for e, s in kw if (e.kind or "") == kind]
+        matches = kw[:limit]
 
     out: List[Tuple[Skill, float]] = []
     for entry, score in matches:
         skill = resolve_full_skill(entry)
         if not skill:
             continue
+        # Copy bug_pattern fields from index entry when the on-disk skill is thin
+        if entry.symptom_description and not skill.symptom_description:
+            skill.symptom_description = entry.symptom_description
+        if entry.root_cause_category and not skill.root_cause_category:
+            skill.root_cause_category = entry.root_cause_category
+        if entry.fix_technique and not skill.fix_technique:
+            skill.fix_technique = entry.fix_technique
+        if entry.verification_method and not skill.verification_method:
+            skill.verification_method = entry.verification_method
+        if entry.language and not skill.language:
+            skill.language = entry.language
         out.append((skill, float(score)))
         if len(out) >= limit:
             break
@@ -239,7 +268,29 @@ def pull_skills_for_checkpoint(
     except Exception:
         pass
 
-    candidates = retrieve_skill_candidates(task, limit=max(limit, 5))
+    bugfix = task_is_bugfix_intent(task)
+    if bugfix:
+        # Search the bug_pattern pool first, then fall back to feature skills
+        pattern_cands = retrieve_skill_candidates(
+            task,
+            limit=max(limit, 3),
+            kind=SKILL_KIND_BUG_PATTERN,
+            pool="bug_pattern",
+        )
+        feature_cands = retrieve_skill_candidates(task, limit=max(limit, 3))
+        # Dedup by id, patterns first
+        seen: set[str] = set()
+        candidates: List[Tuple[Skill, float]] = []
+        for skill, score in pattern_cands + feature_cands:
+            sid = skill.id or ""
+            if sid and sid in seen:
+                continue
+            if sid:
+                seen.add(sid)
+            candidates.append((skill, score))
+    else:
+        candidates = retrieve_skill_candidates(task, limit=max(limit, 5))
+
     approved, decisions = route_skills(
         task,
         candidates,
@@ -273,9 +324,54 @@ def note_scaffold_progress(root: Optional[Path] = None) -> None:
             mark_skill_satisfied(root_path, entry.id)
 
 
+def format_bug_pattern_hypothesis(skill: Skill, *, repo_language: str = "") -> str:
+    """Labeled hypothesis — not an auto-applied playbook."""
+    from .bug_concepts import language_note
+
+    lang = (
+        (skill.language or "").strip().lower()
+        or ((skill.languages or [""])[0] if skill.languages else "")
+        or (repo_language or "").strip().lower()
+    )
+    note = language_note(skill.root_cause_category, lang) if skill.root_cause_category else None
+    symptom = skill.symptom_description or skill.description or skill.title
+    lines = [
+        "### Previously-solved bug hypothesis (not auto-applied)",
+        f"This resembles a previously-solved bug: {symptom}",
+    ]
+    if skill.root_cause_category:
+        lines.append(f"→ root_cause_category: `{skill.root_cause_category}`")
+    if skill.root_cause_explanation:
+        lines.append(f"Diagnosis: {skill.root_cause_explanation}")
+    if skill.fix_technique:
+        lines.append(f"Fix technique: {skill.fix_technique}")
+    if skill.verification_method:
+        lines.append(f"Verification then: {skill.verification_method}")
+    if note:
+        lines.append(f"In this language ({lang or 'unknown'}): {note}")
+    lines.append(
+        "Treat this as a strong starting hypothesis to accelerate diagnosis — "
+        "verify against the current codebase before applying."
+    )
+    return "\n".join(lines)
+
+
 def format_skills_for_context(skills: Sequence[Skill], *, checkpoint: str = "turn") -> str:
     if not skills:
         return ""
+    patterns = [s for s in skills if (s.kind or "") == SKILL_KIND_BUG_PATTERN]
+    others = [s for s in skills if (s.kind or "") != SKILL_KIND_BUG_PATTERN]
+    parts: List[str] = []
+    if patterns:
+        parts.append(
+            "Bug-pattern matches for this task (hypotheses — do not auto-apply):"
+        )
+        parts.append("")
+        for s in patterns:
+            parts.append(format_bug_pattern_hypothesis(s))
+            parts.append("")
+    if not others:
+        return "\n".join(parts).strip() + "\n"
     if checkpoint == "reflect":
         header = (
             "A new step in the workflow needs these reusable skills. "
@@ -285,8 +381,9 @@ def format_skills_for_context(skills: Sequence[Skill], *, checkpoint: str = "tur
         header = (
             "The following reusable skills matched this task. Follow them where relevant:"
         )
-    parts = [header, ""]
-    for s in skills:
+    parts.append(header)
+    parts.append("")
+    for s in others:
         kind = s.kind or "playbook"
         parts.append(f"### Skill: {s.title} [{kind}]")
         if s.description:
@@ -322,6 +419,16 @@ def format_skill_metadata(skill: Skill) -> str:
             else f"  repo: {meta.get('repo_key') or '(unscoped legacy)'}"
         ),
     ]
+    if (meta.get("kind") or "") == SKILL_KIND_BUG_PATTERN:
+        lines.extend(
+            [
+                f"  symptom: {meta.get('symptom_description') or '(none)'}",
+                f"  root_cause_category: {meta.get('root_cause_category') or '(none)'}",
+                f"  fix_technique: {meta.get('fix_technique') or '(none)'}",
+                f"  verification: {meta.get('verification_method') or '(none)'}",
+                f"  language: {meta.get('language') or '(none)'}",
+            ]
+        )
     return "\n".join(lines)
 
 

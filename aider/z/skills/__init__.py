@@ -1,9 +1,21 @@
 """Z skills — reusable, auto-discovered instruction files (ChromaDB retrieval)."""
 
+from .bug_concepts import BUG_CONCEPTS, language_note, taxonomy_category_ids
 from .generate import generate_skill
-from .schema import Skill, SkillIndexEntry
-from .router import route_skills, collect_repo_signals
+from .schema import (
+    SKILL_KIND_BUG_PATTERN,
+    SKILL_KIND_PLAYBOOK,
+    SKILL_KIND_SCAFFOLD,
+    Skill,
+    SkillIndexEntry,
+)
+from .router import (
+    collect_repo_signals,
+    route_skills,
+    task_is_bugfix_intent,
+)
 from .session import (
+    format_bug_pattern_hypothesis,
     format_skill_metadata,
     format_skills_for_context,
     get_session_skill_index,
@@ -18,6 +30,14 @@ from .vector import SkillVectorIndex, get_skill_vector_index
 __all__ = [
     "Skill",
     "SkillIndexEntry",
+    "SKILL_KIND_SCAFFOLD",
+    "SKILL_KIND_PLAYBOOK",
+    "SKILL_KIND_BUG_PATTERN",
+    "BUG_CONCEPTS",
+    "taxonomy_category_ids",
+    "language_note",
+    "task_is_bugfix_intent",
+    "format_bug_pattern_hypothesis",
     "LocalSkillStore",
     "SkillVectorIndex",
     "skills_dir",

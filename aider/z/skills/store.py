@@ -51,6 +51,12 @@ def _dump_frontmatter(skill: Skill) -> str:
         "scope": skill.scope,
         "repo_key": skill.repo_key or "",
         "shared": bool(skill.shared),
+        "symptom_description": skill.symptom_description or "",
+        "root_cause_category": skill.root_cause_category or "",
+        "root_cause_explanation": skill.root_cause_explanation or "",
+        "fix_technique": skill.fix_technique or "",
+        "verification_method": skill.verification_method or "",
+        "language": skill.language or "",
     }
     if skill.grounded_at:
         meta["grounded_at"] = skill.grounded_at
@@ -90,16 +96,22 @@ def skill_from_markdown(text: str, *, filename: Optional[str] = None) -> Skill:
         meta["title"] = first.lstrip("# ").strip() or "Untitled skill"
         meta["description"] = ""
 
+    from .schema import VALID_SKILL_KINDS
+
     kind = (meta.get("kind") or "playbook")
     if isinstance(kind, str):
         kind = kind.strip().lower()
     else:
         kind = "playbook"
-    if kind not in ("scaffold", "playbook"):
+    if kind not in VALID_SKILL_KINDS:
         kind = "playbook"
     apply_once = meta.get("apply_once")
     if apply_once is None:
         apply_once = kind == "scaffold"
+    language = (meta.get("language") or "").strip().lower()
+    languages = _as_str_list(meta.get("languages"))
+    if language and language not in languages:
+        languages = [language] + list(languages)
     return Skill(
         id=str(meta.get("id") or ""),
         title=meta.get("title") or "Untitled skill",
@@ -118,7 +130,7 @@ def skill_from_markdown(text: str, *, filename: Optional[str] = None) -> Skill:
         triggers=_as_str_list(meta.get("triggers")),
         source=meta.get("source") or "generate",
         kind=kind,
-        languages=_as_str_list(meta.get("languages")),
+        languages=languages,
         artifacts=_as_str_list(meta.get("artifacts")),
         apply_once=bool(apply_once),
         capability=str(meta.get("capability") or "").strip(),
@@ -135,6 +147,12 @@ def skill_from_markdown(text: str, *, filename: Optional[str] = None) -> Skill:
         content_hash=meta.get("content_hash"),
         repo_key=str(meta.get("repo_key") or "").strip(),
         shared=bool(meta.get("shared")),
+        symptom_description=str(meta.get("symptom_description") or "").strip(),
+        root_cause_category=str(meta.get("root_cause_category") or "").strip(),
+        root_cause_explanation=str(meta.get("root_cause_explanation") or "").strip(),
+        fix_technique=str(meta.get("fix_technique") or "").strip(),
+        verification_method=str(meta.get("verification_method") or "").strip(),
+        language=language or (languages[0] if languages else ""),
     )
 
 

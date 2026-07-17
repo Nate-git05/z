@@ -14,7 +14,12 @@ from .grounding import (
     format_grounding_pack,
 )
 from .infer import apply_inferred_metadata
-from .schema import Skill, _as_str_list
+from .schema import (
+    SKILL_KIND_BUG_PATTERN,
+    VALID_SKILL_KINDS,
+    Skill,
+    _as_str_list,
+)
 
 # Raised from the old 6000-char cap so grounding packs (diff + files) fit.
 DEFAULT_CONTEXT_BUDGET = 28000
@@ -40,6 +45,36 @@ Respond with ONLY a JSON object (no markdown fences) with keys:
   "kind": "scaffold" for one-shot project bootstrap, or "playbook" for ongoing reusable guidance
   "languages": optional array like ["go","python","typescript"]
   "artifacts": optional array of files/dirs that mean the scaffold is done (e.g. ["go.mod","main.go"])
+"""
+
+BUG_PATTERN_SYSTEM = """You generate a reusable BUG-PATTERN skill from a real, grounded fix.
+
+This is NOT a feature playbook. Capture a transferable diagnosis:
+  symptom (abstract) → root-cause category → fix technique → how it was verified.
+
+HARD RULES:
+- symptom_description must be abstract enough to transfer across codebases/languages.
+  Do NOT name the specific repo; describe how the bug *presented*.
+- root_cause_category MUST be one of the curated taxonomy ids provided below.
+- root_cause_explanation must be grounded in the actual diff evidence — not speculation.
+- fix_technique describes the general technique abstractly (transferable).
+- verification_method says what actually confirmed the fix (e.g. ThreadSanitizer
+  before/after), not "tests passed".
+- Do NOT invent APIs or symbols absent from the evidence.
+
+Respond with ONLY a JSON object (no markdown fences) with keys:
+  "title": short title (max ~80 chars)
+  "description": one sentence when this pattern applies
+  "content": markdown with Symptom / Root cause / Fix technique / Verification sections
+  "kind": "bug_pattern"
+  "symptom_description": abstract transferable symptom text (THIS is what gets embedded)
+  "root_cause_category": one curated taxonomy id from the list below
+  "root_cause_explanation": grounded diagnosis tied to the real diff
+  "fix_technique": abstract transferable fix technique
+  "verification_method": what confirmed the fix
+  "language": coarse language filter (cpp|c|go|rust|python|java|javascript|typescript)
+  "tags": optional keywords
+  "triggers": optional activation phrases
 """
 
 EXTRACT_SYSTEM = """You extract facts from coding-task evidence for a skill document.
@@ -155,9 +190,26 @@ def _skill_from_data(
     )
     # Optional router fields from model
     if data.get("kind"):
-        skill.kind = str(data.get("kind")).strip().lower() or skill.kind
+        kind = str(data.get("kind")).strip().lower() or skill.kind
+        if kind in VALID_SKILL_KINDS:
+            skill.kind = kind
     skill.languages = _as_str_list(data.get("languages")) or skill.languages
     skill.artifacts = _as_str_list(data.get("artifacts")) or skill.artifacts
+    # bug_pattern fields
+    skill.symptom_description = (data.get("symptom_description") or "").strip()
+    skill.root_cause_category = (data.get("root_cause_category") or "").strip()
+    skill.root_cause_explanation = (data.get("root_cause_explanation") or "").strip()
+    skill.fix_technique = (data.get("fix_technique") or "").strip()
+    skill.verification_method = (data.get("verification_method") or "").strip()
+    language = (data.get("language") or "").strip().lower()
+    if language:
+        skill.language = language
+        if language not in (skill.languages or []):
+            skill.languages = [language] + list(skill.languages or [])
+    if skill.kind == SKILL_KIND_BUG_PATTERN and skill.symptom_description:
+        # Prefer symptom as the human-facing description when model omitted it
+        if not skill.description or skill.description == topic:
+            skill.description = skill.symptom_description[:400]
     return skill
 
 
@@ -179,12 +231,16 @@ def generate_skill(
     grounding_pack: Optional[GroundingPack] = None,
     two_phase: bool = True,
     context_budget: int = DEFAULT_CONTEXT_BUDGET,
+    prefer_bug_pattern: bool = False,
 ) -> Tuple[Optional[Skill], Optional[str], Optional[GroundingResult]]:
     """
     Ask the connected model to write a skill for `topic`.
 
     When `grounding_pack` is provided, uses a two-phase extract→write flow and
     runs a grounding check. Returns (skill, error_message, grounding_result).
+
+    ``prefer_bug_pattern`` selects the bug-pattern JSON schema (symptom → cause →
+    fix → verification) instead of a feature playbook/scaffold.
     """
     topic = (topic or "").strip()
     if not topic:
@@ -203,27 +259,43 @@ def generate_skill(
         pack_text = context[:context_budget]
 
     extract = None
-    if pack is not None and two_phase and pack_text:
+    if pack is not None and two_phase and pack_text and not prefer_bug_pattern:
         extract = _extract_phase(model, pack_text, topic)
 
-    user_content = f"Create a skill covering:\n{topic}\n"
-    if extract:
-        user_content += (
-            "\nUse ONLY this extracted fact sheet (do not invent symbols):\n"
-            + json.dumps(extract, indent=2)[:8000]
-            + "\n"
-        )
-        # Still attach a short evidence appendix for file paths / snippets
-        user_content += "\nEvidence appendix (for citations only):\n"
-        user_content += pack_text[: min(12000, context_budget)] + "\n"
-    elif pack_text:
-        user_content += (
-            "\nGROUNDING EVIDENCE — document only what appears below; "
-            "do not invent APIs:\n"
-            f"{pack_text}\n"
-        )
+    if prefer_bug_pattern:
+        from .bug_concepts import taxonomy_category_ids
 
-    raw, err = _call_model(model, SKILL_SYSTEM, user_content)
+        cats = ", ".join(taxonomy_category_ids())
+        user_content = (
+            f"Create a bug_pattern skill from this completed fix:\n{topic}\n\n"
+            f"Curated root_cause_category ids (pick ONE):\n{cats}\n"
+        )
+        if pack_text:
+            user_content += (
+                "\nGROUNDING EVIDENCE — diagnosis MUST match the real diff:\n"
+                f"{pack_text}\n"
+            )
+        system = BUG_PATTERN_SYSTEM
+    else:
+        user_content = f"Create a skill covering:\n{topic}\n"
+        if extract:
+            user_content += (
+                "\nUse ONLY this extracted fact sheet (do not invent symbols):\n"
+                + json.dumps(extract, indent=2)[:8000]
+                + "\n"
+            )
+            # Still attach a short evidence appendix for file paths / snippets
+            user_content += "\nEvidence appendix (for citations only):\n"
+            user_content += pack_text[: min(12000, context_budget)] + "\n"
+        elif pack_text:
+            user_content += (
+                "\nGROUNDING EVIDENCE — document only what appears below; "
+                "do not invent APIs:\n"
+                f"{pack_text}\n"
+            )
+        system = SKILL_SYSTEM
+
+    raw, err = _call_model(model, system, user_content)
     if err:
         return None, err, None
 
@@ -242,12 +314,19 @@ def generate_skill(
     if extract and extract.get("capability") and not skill.capability:
         skill.capability = str(extract.get("capability")).strip()[:120]
 
+    if prefer_bug_pattern:
+        skill.kind = SKILL_KIND_BUG_PATTERN
     apply_inferred_metadata(skill, source="generate")
 
     grounding_result: Optional[GroundingResult] = None
     if pack is not None:
         check_text = f"{skill.title}\n{skill.description}\n{skill.content}"
-        grounding_result = check_grounding(check_text, pack)
+        if skill.kind == SKILL_KIND_BUG_PATTERN:
+            from .grounding import check_bug_pattern_grounding
+
+            grounding_result = check_bug_pattern_grounding(skill, pack)
+        else:
+            grounding_result = check_grounding(check_text, pack)
         _apply_pack_metadata(skill, pack, grounding_result)
         if not grounding_result.ok:
             # One regenerate attempt with explicit missing-symbol feedback
@@ -271,9 +350,16 @@ def generate_skill(
                 if skill2:
                     if extract and extract.get("capability") and not skill2.capability:
                         skill2.capability = str(extract.get("capability")).strip()[:120]
+                    if prefer_bug_pattern:
+                        skill2.kind = SKILL_KIND_BUG_PATTERN
                     apply_inferred_metadata(skill2, source="generate")
                     check_text2 = f"{skill2.title}\n{skill2.description}\n{skill2.content}"
-                    result2 = check_grounding(check_text2, pack)
+                    if skill2.kind == SKILL_KIND_BUG_PATTERN:
+                        from .grounding import check_bug_pattern_grounding
+
+                        result2 = check_bug_pattern_grounding(skill2, pack)
+                    else:
+                        result2 = check_grounding(check_text2, pack)
                     _apply_pack_metadata(skill2, pack, result2)
                     skill = skill2
                     grounding_result = result2
