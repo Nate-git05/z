@@ -539,6 +539,7 @@ class UncertaintyEngine:
                 user_decisions=self.ctx.user_decisions,
                 verification=self.ctx.last_verification,
                 tests_passed=tests_passed,
+                last_diff=diff if diff is not None else (self.ctx.last_diff or ""),
             )
             model_complete = getattr(self.ctx, "model_complete", None)
             if callable(model_complete):

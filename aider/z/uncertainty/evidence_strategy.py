@@ -36,6 +36,8 @@ ALL_REQUIREMENT_KINDS: FrozenSet[str] = frozenset(
         "process",
         "decision",
         "external_assumption",
+        # Named investigative hints inside bug-fix tasks ("also check X")
+        "investigation",
     }
 )
 
@@ -150,6 +152,27 @@ def _status_decision(ev, words: Sequence[str] = ()) -> str:
     return STATUS_FULLY if _fully_decision(ev, words) else STATUS_NOT
 
 
+def _investigation_disposition(ev) -> Optional[str]:
+    for n in getattr(ev, "evidence_notes", None) or []:
+        if str(n).startswith("disposition:"):
+            return str(n).split(":", 1)[-1]
+    return None
+
+
+def _fully_investigation(ev, words: Sequence[str] = ()) -> bool:
+    """Fully only with an explicit checked_* disposition (not model say-so)."""
+    return _investigation_disposition(ev) in ("checked_fixed", "checked_ruled_out")
+
+
+def _status_investigation(ev, words: Sequence[str] = ()) -> str:
+    disp = _investigation_disposition(ev)
+    if disp in ("checked_fixed", "checked_ruled_out"):
+        return STATUS_FULLY
+    if disp == "partial_inspect":
+        return STATUS_PARTIAL
+    return STATUS_NOT
+
+
 # Exhaustive registry — every ALL_REQUIREMENT_KINDS entry must appear.
 # external_assumption: explicit absence until live-API verification is trustworthy.
 KIND_VERIFIERS: Dict[str, KindVerifier] = {
@@ -211,6 +234,18 @@ KIND_VERIFIERS: Dict[str, KindVerifier] = {
         description=(
             "No trusted mechanical verifier yet. Requirements of this kind "
             "are Unverifiable (informational) until live-API verification ships."
+        ),
+    ),
+    "investigation": KindVerifier(
+        kind="investigation",
+        signal_name="diff_touch_or_session_inspect",
+        allows_fully=_fully_investigation,
+        status_fn=_status_investigation,
+        hard_block_on_gap=True,
+        description=(
+            "Named investigative hint must be checked_fixed (diff touches "
+            "named symbols) or checked_ruled_out (session inspect/grep "
+            "evidence) — silently skipping hard-blocks like product gaps."
         ),
     ),
 }
@@ -340,6 +375,17 @@ def missing_message_for(ev, words: Sequence[str] = ()) -> str:
         return f"User decision still needed: {text}"
     if v.kind == "documentation":
         return f"No README/CHANGELOG/docs/** edited this turn for: {text}"
+    if v.kind == "investigation":
+        targets = []
+        for n in getattr(ev, "evidence_notes", None) or []:
+            if str(n).startswith("targets:"):
+                targets.append(str(n).split(":", 1)[-1])
+        target_s = targets[0] if targets else "(named area)"
+        return (
+            f"Investigation not checked — no diff touch and no session "
+            f"inspect/grep evidence for {target_s}. Disposition required: "
+            f"checked_fixed | checked_ruled_out. Asked: {text}"
+        )
     if v.kind == "quality":
         parts = []
         if hasattr(ev, "missing_hard_evidence_parts"):
