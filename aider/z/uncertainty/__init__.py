@@ -32,6 +32,8 @@ from .established_solutions import (
 )
 from .package_checks import discover_package_checks, find_nearest_package_json
 from .type_members import check_local_type_members
+from .detectors import classify_relevant_tests, find_relevant_tests
+from .verify import build_relevant_test_command
 from .gate import GateResult, prepare_commit, report_auto_fix_exhaustion
 from .verify import VerificationRecord, verify_edits
 from .auto_act import default_prompt_for_node, plan_auto_act
@@ -71,6 +73,9 @@ __all__ = [
     "discover_package_checks",
     "find_nearest_package_json",
     "check_local_type_members",
+    "classify_relevant_tests",
+    "find_relevant_tests",
+    "build_relevant_test_command",
     "GateResult",
     "prepare_commit",
     "report_auto_fix_exhaustion",

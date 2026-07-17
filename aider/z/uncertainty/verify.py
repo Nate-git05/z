@@ -20,7 +20,7 @@ from typing import List, Optional, Sequence, Tuple
 
 from aider.run_cmd import run_cmd
 
-from .detectors import find_relevant_tests
+from .detectors import classify_relevant_tests, find_relevant_tests
 
 
 def _python_exe() -> str:
@@ -98,7 +98,15 @@ class VerificationRecord:
     error: str = ""
     # Package-scoped prechecks (typecheck/build/lint) run before tests
     prechecks: List[dict] = field(default_factory=list)
-    failure_kind: str = ""  # test | typecheck | build | lint | type_member | root_guard
+    failure_kind: str = ""  # test | typecheck | build | lint | type_member | root_guard | relevant_tests
+    # Mandatory relevant-test discovery / execution (pre-existing cannot be skipped)
+    relevant_tests: List[str] = field(default_factory=list)
+    relevant_preexisting: List[str] = field(default_factory=list)
+    relevant_newly_written: List[str] = field(default_factory=list)
+    relevant_command: Optional[str] = None
+    relevant_ran: bool = False
+    relevant_passed: Optional[bool] = None
+    relevant_output_excerpt: str = ""
     at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
@@ -119,9 +127,13 @@ class VerificationRecord:
 
     @property
     def meaningful_pass(self) -> bool:
-        """True only when tests ran, discovered >0, and exited 0."""
+        """True only when suite + mandatory pre-existing relevant tests passed."""
         if self.is_compiler_failure:
             return False
+        if self.relevant_preexisting:
+            # New tests alone cannot substitute — pre-existing must have run green
+            if not self.relevant_ran or self.relevant_passed is not True:
+                return False
         return (
             self.ran
             and self.state == VerifyState.TESTS_PASSED
@@ -194,6 +206,45 @@ def normalize_test_cmd(test_cmd) -> Optional[str]:
         parts = [str(p) for p in test_cmd if p]
         return " ".join(parts) if parts else None
     return str(test_cmd).strip() or None
+
+
+def build_relevant_test_command(
+    base_cmd: Optional[str],
+    test_files: Sequence[str],
+) -> Optional[str]:
+    """
+    Build a command that executes specific discovered test files.
+
+    Returns None when the runner cannot target files (fail closed upstream).
+    """
+    files = [f for f in test_files if f]
+    if not files:
+        return None
+    joined = " ".join(files[:20])
+    cmd = (base_cmd or "").strip()
+    py = _python_exe()
+    if "pytest" in cmd:
+        # Strip trailing path args if any; append discovered files
+        return f"{cmd} {joined}".strip()
+    if "unittest" in cmd:
+        mods = []
+        for f in files[:20]:
+            p = Path(f)
+            if p.suffix == ".py":
+                mods.append(".".join(p.with_suffix("").parts))
+            else:
+                mods.append(f)
+        if not mods:
+            return None
+        return f"{py} -m unittest {' '.join(mods)}"
+    if not cmd:
+        # Default to pytest file args when available as a convention
+        return f"{py} -m pytest -q {joined}"
+    # npm/bun package tests often can't take file lists reliably
+    if any(x in cmd for x in ("npm ", "bun ", "pnpm ", "yarn ")):
+        return None
+    # Unknown runner — try appending paths (harmless for many CLIs)
+    return f"{cmd} {joined}".strip()
 
 
 def parse_counts(output: str) -> dict:
@@ -448,11 +499,13 @@ def verify_edits(
     *,
     test_cmd=None,
     symbols: Sequence[str] = (),
+    new_files: Sequence[str] = (),
     verbose: bool = False,
     error_print=None,
     skip_smoke: bool = False,
     skip_package_prechecks: bool = False,
     skip_type_members: bool = False,
+    skip_relevant_execution: bool = False,
 ) -> Tuple[VerificationRecord, List[str]]:
     """
     Full verification pass for a set of edited files.
@@ -461,12 +514,16 @@ def verify_edits(
       1. Local type-member ground truth (cheap, no subprocess)
       2. Nearest-package typecheck/build/lint
       3. Package-local or root test suite
-      4. Smoke imports / CLI
+      4. Mandatory pre-existing relevant tests (cannot be substituted by new tests)
+      5. Smoke imports / CLI
 
     Returns (record, relevant_test_files).
     """
     root = Path(root)
     relevant = find_relevant_tests(root, edited, symbols)
+    preexisting, newly_written = classify_relevant_tests(
+        relevant, edited, new_files=new_files
+    )
 
     # --- 1) Local type-member check (repo ground truth) ---------------------
     if not skip_type_members:
@@ -496,6 +553,9 @@ def verify_edits(
                             "types_indexed": tm.types_indexed,
                         }
                     ],
+                    relevant_tests=list(relevant),
+                    relevant_preexisting=list(preexisting),
+                    relevant_newly_written=list(newly_written),
                 )
                 return record, relevant
         except Exception:  # noqa: BLE001
@@ -529,6 +589,9 @@ def verify_edits(
                         f"{check.package_rel or '.'} — fix compiler errors before tests."
                     ),
                     prechecks=precheck_dicts,
+                    relevant_tests=list(relevant),
+                    relevant_preexisting=list(preexisting),
+                    relevant_newly_written=list(newly_written),
                 )
                 return record, relevant
         except Exception:  # noqa: BLE001
@@ -552,6 +615,9 @@ def verify_edits(
             state=VerifyState.RUNNER_MISSING,
             error="No test command detected and --test-cmd unset",
             prechecks=precheck_dicts,
+            relevant_tests=list(relevant),
+            relevant_preexisting=list(preexisting),
+            relevant_newly_written=list(newly_written),
         )
         return record, relevant
 
@@ -560,6 +626,9 @@ def verify_edits(
     )
     record.prechecks = precheck_dicts
     record.failure_kind = "test"
+    record.relevant_tests = list(relevant)
+    record.relevant_preexisting = list(preexisting)
+    record.relevant_newly_written = list(newly_written)
 
     # Root monorepo guard: don't treat "don't run npm test from root" as a
     # normal test failure — surface as runner/routing problem.
@@ -577,12 +646,84 @@ def verify_edits(
             "run package-local typecheck/tests near the edited files."
         )
 
-    # If suite reported discovery but find_relevant_tests was empty, still use suite count
-    if record.tests_discovered is None and relevant and record.exit_code == 0:
-        if not record.zero_tests and not _ZERO_TEST_RE.search(record.output_excerpt or ""):
-            record.tests_discovered = len(relevant)
-            record.passed = True
-            record.state = VerifyState.TESTS_PASSED
+    # --- 4) Mandatory: execute pre-existing relevant tests -----------------
+    # Writing new tests in another directory must not skip the established ones.
+    if (
+        not skip_relevant_execution
+        and preexisting
+        and record.state
+        not in (
+            VerifyState.RUNNER_MISSING,
+            VerifyState.TIMED_OUT,
+            *COMPILER_VERIFY_STATES,
+        )
+        and record.failure_kind != "root_guard"
+    ):
+        rel_cmd = build_relevant_test_command(cmd, preexisting)
+        record.relevant_command = rel_cmd
+        if not rel_cmd:
+            record.relevant_ran = False
+            record.relevant_passed = False
+            record.passed = False
+            record.state = VerifyState.TESTS_FAILED
+            record.failure_kind = "relevant_tests"
+            record.error = (
+                "Found pre-existing relevant test file(s) but cannot build a "
+                "targeted command for this runner — will not mark verification "
+                f"complete without running: {', '.join(preexisting[:8])}"
+            )
+        else:
+            # Always run the targeted command — even if the broad suite was green
+            # (suite may have been scoped / missed nested paths).
+            rel_record = run_test_suite(
+                root, rel_cmd, verbose=verbose, error_print=error_print, cwd=test_cwd
+            )
+            record.relevant_ran = True
+            record.relevant_output_excerpt = rel_record.output_excerpt or ""
+            # File-targeted runs often omit "collected N" — exit 0 without a
+            # zero-test signal is enough; non-zero exit is always a failure.
+            if rel_record.exit_code != 0 or rel_record.zero_tests:
+                rel_ok = False
+            elif (rel_record.tests_discovered or 0) > 0:
+                rel_ok = True
+            elif rel_record.tests_discovered is None and not _ZERO_TEST_RE.search(
+                rel_record.output_excerpt or ""
+            ):
+                rel_ok = True
+            else:
+                rel_ok = False
+            record.relevant_passed = rel_ok
+            if not rel_ok:
+                record.passed = False
+                record.state = VerifyState.TESTS_FAILED
+                record.failure_kind = "relevant_tests"
+                record.exit_code = rel_record.exit_code
+                record.command = rel_cmd
+                if rel_record.tests_discovered is not None:
+                    record.tests_discovered = rel_record.tests_discovered
+                if rel_record.tests_failed is not None:
+                    record.tests_failed = rel_record.tests_failed
+                if rel_record.tests_passed is not None:
+                    record.tests_passed = rel_record.tests_passed
+                record.output_excerpt = (
+                    f"Pre-existing relevant tests FAILED (mandatory).\n"
+                    f"Files: {', '.join(preexisting[:12])}\n"
+                    f"{rel_record.output_excerpt or rel_record.error or ''}"
+                )[-4000:]
+                record.error = (
+                    "Pre-existing relevant tests failed — a new test file in "
+                    "another directory does not replace them. "
+                    f"Failing/covered: {', '.join(preexisting[:8])}"
+                )
+            else:
+                # Ensure discovery count reflects that real tests ran
+                if record.tests_discovered is None or record.tests_discovered == 0:
+                    record.tests_discovered = max(
+                        len(preexisting), rel_record.tests_discovered or 0, 1
+                    )
+                    record.zero_tests = False
+                if record.exit_code == 0 and record.passed:
+                    record.state = VerifyState.TESTS_PASSED
 
     if not skip_smoke:
         try:
