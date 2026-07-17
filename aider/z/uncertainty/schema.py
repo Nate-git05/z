@@ -63,6 +63,8 @@ class NodeType(str, enum.Enum):
     # Diff invents a custom solution for a well-known stdlib/algorithm problem
     # without plan evidence of considering the established approach
     ESTABLISHED_SOLUTION_GAP = "Reinvented Established Solution"
+    # Concurrency-relevant change: race detector missing, incomplete, or residual races
+    CONCURRENCY_RACE = "Concurrency Race Analysis"
 
 
 # Older persisted display strings → current NodeType
@@ -91,6 +93,7 @@ _NODE_TYPE_ALIASES = {
     "Failure Absorption": NodeType.FAILURE_ABSORPTION,
     "Missing Sibling Registration": NodeType.PATTERN_COMPANION_GAP,
     "Reinvented Established Solution": NodeType.ESTABLISHED_SOLUTION_GAP,
+    "Concurrency Race Analysis": NodeType.CONCURRENCY_RACE,
 }
 
 

@@ -30,6 +30,13 @@ from .established_solutions import (
     ESTABLISHED_SOLUTIONS,
     scan_invention_in_diff,
 )
+from .concurrency_checks import (
+    analyze_concurrency_change,
+    classify_race_outcome,
+    discover_race_tools,
+    parse_race_count,
+    tag_concurrency_relevant,
+)
 from .package_checks import discover_package_checks, find_nearest_package_json
 from .type_members import check_local_type_members
 from .detectors import classify_relevant_tests, find_relevant_tests
@@ -70,6 +77,11 @@ __all__ = [
     "find_sibling_companion_gaps",
     "ESTABLISHED_SOLUTIONS",
     "scan_invention_in_diff",
+    "analyze_concurrency_change",
+    "classify_race_outcome",
+    "discover_race_tools",
+    "parse_race_count",
+    "tag_concurrency_relevant",
     "discover_package_checks",
     "find_nearest_package_json",
     "check_local_type_members",

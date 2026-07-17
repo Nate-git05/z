@@ -41,6 +41,10 @@ class DetectionSignals:
     requirement_gaps: List[str] = field(default_factory=list)
     mcp_unverifiable: bool = False
     closely_matches_tested_pattern: bool = False
+    # Diff touches atomics/mutexes/threads/volatile/… (see concurrency_checks)
+    concurrency_relevant: Optional[bool] = None
+    race_detector_ran: Optional[bool] = None
+    race_detector_outcome: Optional[str] = None
 
 
 def _max_tier(*tiers: Tier) -> Tier:
@@ -118,6 +122,15 @@ def derive_risk_tier(signals: DetectionSignals, node_type: NodeType) -> Tier:
     if node_type == NodeType.ESTABLISHED_SOLUTION_GAP:
         return Tier.MEDIUM
 
+    if node_type == NodeType.CONCURRENCY_RACE:
+        # Remaining races / no improvement are serious; tool-missing is reviewable.
+        # Clean dynamic runs stay Low risk (informational) but never High confidence.
+        if signals.race_detector_outcome in ("no_improvement", "regression"):
+            return Tier.HIGH
+        if signals.race_detector_outcome == "clean":
+            return Tier.LOW
+        return Tier.MEDIUM
+
     if node_type == NodeType.HIGH_CONFIDENCE:
         if signals.high_stakes_hit or signals.migration_hit:
             risk = _max_tier(risk, Tier.MEDIUM)
@@ -170,6 +183,17 @@ def derive_confidence_tier(signals: DetectionSignals, node_type: NodeType) -> Ti
 
     if node_type == NodeType.REQUIREMENT_GAP:
         conf = _min_conf(conf, Tier.LOW)
+
+    # Dynamic race analysis never upgrades confidence to High — races are
+    # non-deterministic; a clean run is reduced confidence, not proof.
+    if node_type == NodeType.CONCURRENCY_RACE or signals.race_detector_ran:
+        conf = _min_conf(conf, Tier.MEDIUM)
+        if signals.race_detector_outcome in (
+            "after_only",
+            "tool_missing",
+            "reduced",
+        ):
+            conf = _min_conf(conf, Tier.LOW)
 
     return conf
 

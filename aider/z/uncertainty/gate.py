@@ -44,6 +44,7 @@ _MEDIUM_GATE_TYPES = {
     NodeType.FAILURE_ABSORPTION,
     NodeType.PATTERN_COMPANION_GAP,
     NodeType.ESTABLISHED_SOLUTION_GAP,
+    NodeType.CONCURRENCY_RACE,
 }
 
 
@@ -407,6 +408,32 @@ def _confirm_relevant_tests_checkpoint(
     return None
 
 
+def _reflect_fix_races(record: VerificationRecord, edited: Sequence[str]) -> str:
+    """Distinct reflect path for concurrency / race-detector failures."""
+    files = ", ".join(list(edited)[:6])
+    cmp_ = getattr(record, "race_comparison", None) or {}
+    excerpt = (record.output_excerpt or record.error or "")[-1500:]
+    return (
+        "Z verification gate: CONCURRENCY / RACE DETECTOR failed "
+        f"for {files or 'this change'}.\n"
+        f"Outcome: {cmp_.get('outcome')}\n"
+        f"Before races: {cmp_.get('before_races')} → After: {cmp_.get('after_races')}\n"
+        f"Tool: {cmp_.get('tool_id')}\n"
+        f"Summary: {cmp_.get('summary')}\n"
+        f"Output excerpt:\n{excerpt}\n\n"
+        "This is NOT an ordinary test failure. Do NOT burn retries on unrelated "
+        "refactors.\n\n"
+        "REQUIRED:\n"
+        "1. Re-read the shared data structures (queues, vectors, indexes) involved "
+        "in the remaining races — a textbook atomic fix can still leave other races.\n"
+        "2. Keep using the same stress + race detector command for before/after "
+        "comparison; require a real reduction (ideally to zero).\n"
+        "3. Treat even a clean sanitizer run as reduced confidence, not proof of "
+        "absence — races are non-deterministic.\n"
+        "Do not claim completion while the race detector shows no improvement."
+    )
+
+
 def _reflect_fix_compiler(record: VerificationRecord, edited: Sequence[str]) -> str:
     """Distinct reflect path: compiler/type errors are not 'tweak the tests'."""
     excerpt = (record.output_excerpt or record.error or "")[-1800:]
@@ -492,6 +519,69 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
         verbose=bool(getattr(coder, "verbose", False)),
         error_print=io.tool_error,
     )
+
+    # Concurrency-relevant diffs → mandatory race detector (before/after) when available
+    from .verify import COMPILER_VERIFY_STATES
+
+    race_cmp = None
+    try:
+        from .concurrency_checks import (
+            analyze_concurrency_change,
+            concurrency_nodes_from_comparison,
+            tag_concurrency_relevant,
+        )
+        from .risk import collect_base_signals
+
+        diff_for_race = getattr(engine.ctx, "last_diff", None) or ""
+        tag = tag_concurrency_relevant(diff_for_race, edited_list)
+        record.concurrency_relevant = tag.relevant
+        if tag.relevant and record.state not in COMPILER_VERIFY_STATES:
+            # Only spend detector budget when ordinary verify isn't already a
+            # compiler failure; still run when tests failed so races surface.
+            io.tool_warning(
+                "Concurrency-relevant change detected — running race detector "
+                f"({'; '.join(tag.reasons[:2]) or 'threading primitives in diff'})."
+            )
+            race_cmp = analyze_concurrency_change(
+                root,
+                diff=diff_for_race,
+                edited=edited_list,
+                verbose=bool(getattr(coder, "verbose", False)),
+                error_print=io.tool_error,
+            )
+            record.race_comparison = race_cmp.to_dict()
+            engine.record_execution(
+                f"race analysis outcome={race_cmp.outcome} "
+                f"before={race_cmp.before.race_count if race_cmp.before else None} "
+                f"after={race_cmp.after.race_count if race_cmp.after else None} "
+                f"tool={race_cmp.tool.tool_id if race_cmp.tool else None}"
+            )
+            if race_cmp.blocks_commit:
+                record.failure_kind = "race_detection"
+                record.state = VerifyState.RACE_DETECTED
+                record.passed = False
+                record.error = race_cmp.summary
+                if race_cmp.after and race_cmp.after.output_excerpt:
+                    record.output_excerpt = race_cmp.after.output_excerpt
+            # Always emit an honest node (clean runs get reduced-confidence label)
+            sig = collect_base_signals(edited_list)
+            sig.concurrency_relevant = True
+            sig.race_detector_ran = race_cmp.tool_available
+            sig.race_detector_outcome = race_cmp.outcome
+            nodes = concurrency_nodes_from_comparison(
+                race_cmp,
+                signals=sig,
+                files=edited_list,
+                task_id=getattr(engine.ctx, "current_task_id", None),
+                task_title=getattr(engine.ctx, "current_task_title", None),
+                created_by_session=getattr(engine.ctx, "session_id", None),
+            )
+            if nodes:
+                store.add_many(nodes)
+    except Exception as err:  # noqa: BLE001
+        if getattr(coder, "verbose", False):
+            io.tool_warning(f"Concurrency race analysis skipped: {err}")
+
     coder.last_verification = record
     coder.test_outcome = bool(record.meaningful_pass)
     try:
@@ -526,15 +616,21 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
 
     # Branch on structured VerifyState / suite discovery — NOT on empty
     # find_relevant_tests(). "2 failed, 7 passed" must never become "no tests".
-    from .verify import COMPILER_VERIFY_STATES
-
     state = record.state or VerifyState.NOT_RUN
     discovered = record.tests_discovered
-    needs_compiler_fix = state in COMPILER_VERIFY_STATES or bool(
-        getattr(record, "is_compiler_failure", False)
+    needs_race_fix = (
+        state == VerifyState.RACE_DETECTED or record.failure_kind == "race_detection"
+    )
+    needs_compiler_fix = (
+        not needs_race_fix
+        and (
+            state in COMPILER_VERIFY_STATES
+            or bool(getattr(record, "is_compiler_failure", False))
+        )
     )
     needs_generate = (
         not needs_compiler_fix
+        and not needs_race_fix
         and (
             state
             in (VerifyState.NO_TESTS, VerifyState.RUNNER_MISSING, VerifyState.NOT_RUN)
@@ -545,6 +641,7 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
     )
     needs_fix = (
         not needs_compiler_fix
+        and not needs_race_fix
         and (
             state in (VerifyState.TESTS_FAILED, VerifyState.COLLECTION_FAILED)
             or (
@@ -594,7 +691,71 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
                 reason="human requested dedicated new test beside pre-existing ones",
             )
 
-    if needs_compiler_fix and not record.meaningful_pass:
+    if needs_race_fix and not record.meaningful_pass:
+        cmp_ = record.race_comparison or {}
+        node = _upsert_verification_node(
+            store,
+            title=(
+                f"Concurrency race detector — {cmp_.get('outcome', 'failed')} "
+                "(commit blocked)"
+            ),
+            summary=(
+                cmp_.get("summary")
+                or "Commit blocked: concurrency change did not improve under "
+                "the race detector before/after comparison."
+            ),
+            explanation=(
+                f"State: {state.value}\n"
+                f"Outcome: {cmp_.get('outcome')}\n"
+                f"Before→After races: {cmp_.get('before_races')}→"
+                f"{cmp_.get('after_races')}\n"
+                f"Tool: {cmp_.get('tool_id')}\n"
+                f"{record.output_excerpt[-1500:]}"
+            ),
+            files=edited_list,
+            record=record,
+            task_id=getattr(engine.ctx, "current_task_id", None),
+            task_title=getattr(engine.ctx, "current_task_title", None),
+        )
+        node.signals["concurrency_race"] = True
+        node.signals["race_outcome"] = cmp_.get("outcome")
+        node.signals["verification_blocked"] = True
+        store.save_local()
+        coder._z_gate_hold_dirty = True
+        if not force and fix_attempts < MAX_TEST_FIX_ATTEMPTS:
+            coder._z_verify_fix_attempts = fix_attempts + 1
+            io.tool_warning(
+                "Verification: RACE_DETECTED — re-read shared structures; "
+                "before/after sanitizer must show a real reduction."
+            )
+            return GateResult(
+                allow_commit=False,
+                reflect_message=_reflect_fix_races(record, edited_list),
+                verification=record,
+                blocked_high=[node],
+                reason="race detector — no improvement / regression",
+            )
+        if fix_attempts >= MAX_TEST_FIX_ATTEMPTS and not force:
+            node.title = (
+                f"Auto-fix exhausted — races still present after {fix_attempts} "
+                "attempts"
+            )
+            node.signals["auto_fix_exhausted"] = True
+            store.save_local()
+            reason = (
+                f"Auto-fix exhausted after {fix_attempts} attempts; "
+                "race detector still shows no improvement.\n"
+                f"{_last_failure_excerpt(record)}"
+            )
+            io.tool_error(f"Commit blocked by Z verification gate. {reason}")
+            return GateResult(
+                allow_commit=False,
+                verification=record,
+                blocked_high=[node],
+                reason=reason,
+            )
+
+    elif needs_compiler_fix and not record.meaningful_pass:
         kind = record.failure_kind or state.value
         node = _upsert_verification_node(
             store,
