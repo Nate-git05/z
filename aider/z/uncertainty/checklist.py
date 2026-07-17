@@ -200,6 +200,7 @@ _TARGET_STOP = {
     "condition",
     "vector",
     "reallocation",
+    "concurrent",
     "concurrently",
     "could",
     "while",
@@ -207,6 +208,7 @@ _TARGET_STOP = {
     "unguarded",
     "indexing",
     "grow",
+    "grows",
     "please",
     "whether",
     "there",
@@ -217,25 +219,147 @@ _TARGET_STOP = {
     "fix",
     "segfault",
     "crash",
+    "reallocate",
+    "concern",
+    "explicitly",
+    "header",  # ubiquitous field name; not a site by itself
 }
+
+# camelCase/paths are strong; bare English / common fields are not.
+_WEAK_INVESTIGATION_TARGETS = frozenset(
+    {
+        "header",
+        "size",
+        "data",
+        "info",
+        "index",
+        "count",
+        "value",
+        "buffer",
+        "ptr",
+        "tmp",
+        "state",
+        "type",
+        "name",
+        "file",
+        "path",
+        "line",
+        "code",
+        "error",
+        "result",
+        "thread",
+        "mutex",
+        "lock",
+        "atomic",
+        "shared",
+        "reader",
+        "writer",
+        "poll",
+        "read",
+        "write",
+        "load",
+        "store",
+    }
+)
+
+_DUAL_SITE_SPLIT_RE = re.compile(
+    r"(?is)\bwhile\b|\bconcurrent(?:ly)?\b|\bracing\b|\brace\s+with\b|\bvs\.?\b"
+)
+
+
+def _is_strong_investigation_target(tok: str) -> bool:
+    """Compound/specific symbols are strong; bare common words are not."""
+    if not tok:
+        return False
+    leaf = tok.split("::")[-1].split("/")[-1].strip("`")
+    if not leaf:
+        return False
+    low = leaf.lower()
+    if low in _TARGET_STOP or low in _WEAK_INVESTIGATION_TARGETS:
+        return False
+    if any(
+        low.endswith(ext)
+        for ext in (
+            ".c",
+            ".cc",
+            ".cpp",
+            ".cxx",
+            ".h",
+            ".hpp",
+            ".hh",
+            ".rs",
+            ".go",
+            ".py",
+            ".java",
+            ".ts",
+            ".js",
+        )
+    ):
+        return True
+    if "::" in tok or "/" in tok:
+        return True
+    # camelCase / PascalCase (bgLogInfos, registerLogInfo, logId)
+    if re.search(r"[a-z]", leaf) and re.search(r"[A-Z]", leaf):
+        return True
+    if "_" in leaf and len(leaf) >= 4:
+        return True
+    if re.fullmatch(r"[A-Z][A-Z0-9_]{3,}", leaf):
+        return True
+    return False
 
 
 def extract_investigation_targets(text: str) -> List[str]:
-    """Named symbols/paths/areas an investigative instruction points at."""
-    targets: List[str] = []
+    """Named symbols/paths/areas an investigative instruction points at.
+
+    Prefers strong (compound/specific) targets when any exist so bare words
+    like ``header`` / ``concurrent`` cannot independently satisfy the item.
+    """
+    raw: List[str] = []
     for m in _TARGET_RE.finditer(text or ""):
         tok = (m.group(1) or m.group(2) or m.group(3) or "").strip()
         if not tok:
             continue
-        # Prefer the leaf of Foo::bar / path
         leaf = tok.split("::")[-1].split("/")[-1]
         if leaf.lower() in _TARGET_STOP or tok.lower() in _TARGET_STOP:
             continue
         if len(leaf) < 3 and "." not in tok:
             continue
-        if tok not in targets:
-            targets.append(tok)
-    return targets[:12]
+        if tok not in raw:
+            raw.append(tok)
+    strong = [t for t in raw if _is_strong_investigation_target(t)]
+    if strong:
+        return strong[:12]
+    # No compound symbols — keep longer leftovers, still drop known-weak
+    weak_filtered = [
+        t
+        for t in raw
+        if t.split("::")[-1].split("/")[-1].lower() not in _WEAK_INVESTIGATION_TARGETS
+    ]
+    return (weak_filtered or raw)[:12]
+
+
+def investigation_site_groups(text: str, targets: Optional[Sequence[str]] = None) -> List[List[str]]:
+    """Partition targets into sites that each need evidence.
+
+    Hints shaped ``X while concurrent Y`` / ``X while Y`` are a race between
+    two named sites — both sides must be touched or inspected before
+    ``checked_fixed`` / ``checked_ruled_out``.
+    """
+    toks = list(targets) if targets is not None else extract_investigation_targets(text)
+    if not toks:
+        return []
+    strong = [t for t in toks if _is_strong_investigation_target(t)] or list(toks)
+    m = _DUAL_SITE_SPLIT_RE.search(text or "")
+    if not m:
+        return [strong]
+    left_blob = (text or "")[: m.start()].lower()
+    right_blob = (text or "")[m.end() :].lower()
+    left = [t for t in strong if _target_in_text(t, left_blob)]
+    right = [t for t in strong if _target_in_text(t, right_blob)]
+    # Prefer true dual-site when both sides name something
+    if left and right:
+        return [left, right]
+    return [strong]
 
 
 def extract_investigation_clauses(text: str) -> List[str]:
@@ -502,12 +626,40 @@ def _added_diff_blob(diff: str) -> str:
     return "\n".join(lines)
 
 
+def _changed_diff_blob(diff: str) -> str:
+    """Added + removed lines only — never unchanged unified-diff context."""
+    lines = []
+    for line in (diff or "").splitlines():
+        if line.startswith("+++") or line.startswith("---"):
+            continue
+        if line.startswith("+") or line.startswith("-"):
+            lines.append(line[1:])
+    return "\n".join(lines)
+
+
 def _target_in_text(target: str, blob: str) -> bool:
     if not target or not blob:
         return False
     t = target.lower()
     leaf = t.split("::")[-1].split("/")[-1]
     return t in blob or (leaf and leaf in blob)
+
+
+def _site_evidenced(site: Sequence[str], hits: Sequence[str]) -> bool:
+    """True when any target in the site appears in the hit list."""
+    if not site:
+        return False
+    hit_l = {h.lower() for h in hits}
+    for t in site:
+        tl = t.lower()
+        leaf = tl.split("::")[-1].split("/")[-1]
+        if tl in hit_l or (leaf and leaf in hit_l):
+            return True
+        # Also accept if a hit string contains the target leaf
+        for h in hit_l:
+            if leaf and leaf in h:
+                return True
+    return False
 
 
 def bind_evidence(
@@ -542,8 +694,7 @@ def bind_evidence(
     corpus_tests = " ".join(test_files).lower()
     log_blob = (execution_log or "").lower()
     decisions_blob = " ".join(user_decisions or []).lower()
-    added_diff = _added_diff_blob(last_diff).lower()
-    full_diff = (last_diff or "").lower()
+    changed_diff = _changed_diff_blob(last_diff).lower()
     doc_blob, doc_files = _doc_corpus(files_changed, contents)
 
     verify_ok = None
@@ -713,10 +864,23 @@ def bind_evidence(
         if kind == "investigation":
             targets = extract_investigation_targets(item.text)
             if not targets:
-                # Fall back to keyword idents from the clause
-                targets = [w for w in words if w not in _TARGET_STOP and len(w) >= 4][:8]
+                # Fall back to keyword idents from the clause (still prefer strong)
+                fallback = [
+                    w
+                    for w in words
+                    if w not in _TARGET_STOP
+                    and w not in _WEAK_INVESTIGATION_TARGETS
+                    and len(w) >= 4
+                ][:8]
+                targets = fallback
+            sites = investigation_site_groups(item.text, targets)
             if targets:
                 ev.evidence_notes.append("targets:" + ",".join(targets[:6]))
+            if len(sites) > 1:
+                ev.evidence_notes.append(
+                    "sites:"
+                    + ";".join(",".join(s[:4]) for s in sites)
+                )
 
             fixed_hits: List[str] = []
             inspect_hits: List[str] = []
@@ -724,16 +888,16 @@ def bind_evidence(
             for t in targets:
                 tl = t.lower()
                 leaf = tl.split("::")[-1].split("/")[-1]
-                # checked_fixed: named symbol/path appears in *added* diff lines
-                # or as a changed-file symbol that also appears in the diff
-                in_added = _target_in_text(t, added_diff)
-                in_diff = in_added or _target_in_text(t, full_diff)
-                in_syms = _target_in_text(t, corpus_syms)
-                in_files = _target_in_text(t, corpus_files)
-                if in_added or (in_diff and (in_syms or in_files)):
+                # checked_fixed: only +/- changed lines count — never unchanged
+                # unified-diff context (fmtlog3: bgLogInfos on a context line).
+                in_changed = _target_in_text(t, changed_diff)
+                if in_changed and (
+                    _is_strong_investigation_target(t)
+                    or not any(_is_strong_investigation_target(x) for x in targets)
+                ):
                     fixed_hits.append(t)
                     ev.symbol_hits.append(t)
-                    if in_files:
+                    if _target_in_text(t, corpus_files):
                         for f in files_changed:
                             if _target_in_text(t, f.lower()) or _target_in_text(
                                 t, (contents.get(f) or "").lower()[:4000]
@@ -775,14 +939,29 @@ def bind_evidence(
             ev.symbol_hits = list(dict.fromkeys(ev.symbol_hits))
             ev.log_hits = list(dict.fromkeys(ev.log_hits))
 
-            if fixed_hits:
+            # Dual-site races need every site evidenced (fixed and/or inspect).
+            combined_hits = list(dict.fromkeys(fixed_hits + inspect_hits))
+            sites_ok = (
+                all(_site_evidenced(site, combined_hits) for site in sites)
+                if sites
+                else bool(combined_hits)
+            )
+
+            if sites_ok and fixed_hits:
                 ev.evidence_notes.append("disposition:checked_fixed")
                 ev.evidence_notes.append("fixed:" + ",".join(fixed_hits[:6]))
-            elif inspect_hits:
+            elif sites_ok and inspect_hits:
                 ev.evidence_notes.append("disposition:checked_ruled_out")
                 ev.evidence_notes.append("ruled_out:" + ",".join(inspect_hits[:6]))
-            elif weak_hits:
+            elif fixed_hits or inspect_hits or weak_hits:
+                # Partial: touched one side of a dual-site hint, or weak mention
                 ev.evidence_notes.append("disposition:partial_inspect")
+                if fixed_hits:
+                    ev.evidence_notes.append("fixed_partial:" + ",".join(fixed_hits[:6]))
+                if inspect_hits:
+                    ev.evidence_notes.append(
+                        "inspect_partial:" + ",".join(inspect_hits[:6])
+                    )
             else:
                 ev.evidence_notes.append("disposition:not_checked")
             out.append(ev)
