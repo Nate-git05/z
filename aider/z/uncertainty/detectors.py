@@ -1267,16 +1267,24 @@ def detect_requirement_gaps(
                 else "Sub-requirement was not marked Fully Addressed after implementation."
             )
             what_wrong = "User intent remains partially unmet; follow-up work will be needed."
-            prompt_extra = (
-                "This is a process/tooling requirement — do not add product commands; "
-                "satisfy it via verification/session evidence only."
-                if kind in ("process", "verification", "decision")
-                else (
-                    "Update documentation only — do not invent product features."
-                    if kind == "documentation"
-                    else "Implement only that gap, then stop."
+            if kind in ("process", "verification", "decision"):
+                prompt_extra = (
+                    "This is a process/tooling requirement — do not add product "
+                    "commands; satisfy it via verification/session evidence only."
                 )
-            )
+            elif kind == "documentation":
+                prompt_extra = (
+                    "Update documentation only — do not invent product features."
+                )
+            elif kind == "investigation":
+                prompt_extra = (
+                    "This is a named investigative obligation. Open/grep the "
+                    "named symbols/paths and either fix a real issue there OR "
+                    "explicitly rule it out with session evidence. Do not only "
+                    "extend an unrelated prior fix pattern."
+                )
+            else:
+                prompt_extra = "Implement only that gap, then stop."
         node = _make_node(
             title=(
                 f"Unverifiable requirement: {item.text[:80]}"

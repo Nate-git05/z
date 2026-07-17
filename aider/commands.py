@@ -1459,9 +1459,13 @@ class Commands:
             self.io.tool_output(
                 f"Moved {original_name} from editable to read-only files in the chat"
             )
+            if hasattr(self.coder, "_record_inspect_path"):
+                self.coder._record_inspect_path(abs_path, via="read")
         else:
             self.coder.abs_read_only_fnames.add(abs_path)
             self.io.tool_output(f"Added {original_name} to read-only files.")
+            if hasattr(self.coder, "_record_inspect_path"):
+                self.coder._record_inspect_path(abs_path, via="read")
 
     def _add_read_only_directory(self, abs_path, original_name):
         added_files = 0

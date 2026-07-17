@@ -612,8 +612,23 @@ class Coder:
             self.io.tool_output(line, bold=bold)
             bold = False
 
+    def _record_inspect_path(self, path: str, *, via: str = "read") -> None:
+        """Session evidence that a named file/area was actually opened."""
+        try:
+            eng = getattr(self, "uncertainty_engine", None)
+            if eng is None or not hasattr(eng, "record_execution"):
+                return
+            try:
+                rel = self.get_rel_fname(path)
+            except Exception:
+                rel = str(path)
+            eng.record_execution(f"inspect: {via} {rel}")
+        except Exception:
+            pass
+
     def add_rel_fname(self, rel_fname):
         self.abs_fnames.add(self.abs_root_path(rel_fname))
+        self._record_inspect_path(rel_fname, via="read")
         self.check_added_files()
 
     def drop_rel_fname(self, fname):
@@ -3225,6 +3240,18 @@ class Coder:
             self.io.tool_output(f"Running {command}")
             # Add the command to input history
             self.io.add_to_input_history(f"/run {command.strip()}")
+            # Investigation evidence: grep/rg/search counts as inspecting named areas
+            try:
+                eng = getattr(self, "uncertainty_engine", None)
+                if eng is not None and hasattr(eng, "record_execution"):
+                    cl = command.lower()
+                    if re.search(
+                        r"(?:^|[;&|]\s*)(?:rg|grep|ag|ack|git\s+grep|findstr)\b",
+                        cl,
+                    ) or re.search(r"\bgrep\b|\brg\b", cl):
+                        eng.record_execution(f"grep: {command.strip()[:240]}")
+            except Exception:
+                pass
             exit_status, output = run_cmd(command, error_print=self.io.tool_error, cwd=self.root)
             if output:
                 accumulated_output += f"Output from {command}\n{output}\n"

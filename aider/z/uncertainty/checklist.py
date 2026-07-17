@@ -136,12 +136,133 @@ _PRODUCT_VERB_RE = re.compile(
     r"(?i)\b(implement|add|create|build|write|fix|refactor)\b"
 )
 
+# Named investigative instructions — trackable obligations, not loose context
+_INVESTIGATE_RE = re.compile(
+    r"(?i)\b("
+    r"(?:also\s+)?(?:please\s+)?"
+    r"(?:check|investigate|look\s+(?:at|into)|examine|inspect|rule\s+out|"
+    r"consider|watch\s+for|pay\s+attention\s+to|probe)|"
+    r"named\s+(?:suspect|area)|specific\s+suspect|"
+    r"also\s+(?:check|investigate|look)|"
+    r"reallocation\s+race|vector[- ]reallocation"
+    r")\b"
+)
+
+_INVESTIGATE_CLAUSE_RE = re.compile(
+    r"(?is)"
+    r"(?:^|[.;\n]|(?<=\s)also\s+)"
+    r"(?:(?:also|please)\s+)?"
+    r"(?:"
+    r"(?:check|investigate|look\s+(?:at|into)|examine|inspect|rule\s+out|"
+    r"consider|watch\s+for|pay\s+attention\s+to|probe)\b"
+    r"|a\s+named,?\s+specific\s+suspect\b"
+    r"|the\s+(?:vector[- ]reallocation|reallocation)\s+race\b"
+    r")"
+    r"[^.;\n]{6,240}"
+)
+
+# Identifiers / paths worth tracking as investigation targets
+_TARGET_RE = re.compile(
+    r"`([^`]+)`"
+    r"|([A-Za-z_][A-Za-z0-9_]{2,}(?:::[A-Za-z_][A-Za-z0-9_]*)*)"
+    r"|([\w./+-]+\.(?:c|cc|cpp|cxx|h|hpp|hh|rs|go|py|java|ts|js))"
+)
+
+_TARGET_STOP = {
+    "the",
+    "and",
+    "for",
+    "with",
+    "this",
+    "that",
+    "from",
+    "into",
+    "also",
+    "check",
+    "checks",
+    "checking",
+    "investigate",
+    "investigating",
+    "look",
+    "into",
+    "examine",
+    "inspect",
+    "rule",
+    "out",
+    "consider",
+    "watch",
+    "attention",
+    "named",
+    "specific",
+    "suspect",
+    "area",
+    "race",
+    "condition",
+    "vector",
+    "reallocation",
+    "concurrently",
+    "could",
+    "while",
+    "via",
+    "unguarded",
+    "indexing",
+    "grow",
+    "please",
+    "whether",
+    "there",
+    "still",
+    "possible",
+    "issue",
+    "bug",
+    "fix",
+    "segfault",
+    "crash",
+}
+
+
+def extract_investigation_targets(text: str) -> List[str]:
+    """Named symbols/paths/areas an investigative instruction points at."""
+    targets: List[str] = []
+    for m in _TARGET_RE.finditer(text or ""):
+        tok = (m.group(1) or m.group(2) or m.group(3) or "").strip()
+        if not tok:
+            continue
+        # Prefer the leaf of Foo::bar / path
+        leaf = tok.split("::")[-1].split("/")[-1]
+        if leaf.lower() in _TARGET_STOP or tok.lower() in _TARGET_STOP:
+            continue
+        if len(leaf) < 3 and "." not in tok:
+            continue
+        if tok not in targets:
+            targets.append(tok)
+    return targets[:12]
+
+
+def extract_investigation_clauses(text: str) -> List[str]:
+    """Pull investigative clauses out of a larger bug-fix request."""
+    clauses: List[str] = []
+    for m in _INVESTIGATE_CLAUSE_RE.finditer(text or ""):
+        chunk = re.sub(r"^\s*(?:also|please)\s+", "", m.group(0).strip(), flags=re.I)
+        chunk = chunk.strip(" \n\t-.;")
+        if len(chunk) < 12:
+            continue
+        # Must name a concrete target or we can't track it
+        if not extract_investigation_targets(chunk) and not re.search(
+            r"(?i)\b(race|realloc|overflow|leak|deadlock)\b", chunk
+        ):
+            continue
+        if chunk not in clauses:
+            clauses.append(chunk[:400])
+    return clauses
+
 
 def classify_requirement_kind(text: str) -> str:
     """
-    product | process | verification | decision | documentation | quality | external_assumption
+    product | process | verification | decision | documentation | quality |
+    external_assumption | investigation
 
     Process/decision/docs never require product-source keyword hits.
+    Investigation = named area that must be checked (fixed or ruled out).
     """
     t = text or ""
     has_product_verb = bool(_PRODUCT_VERB_RE.search(t))
@@ -175,6 +296,24 @@ def classify_requirement_kind(text: str) -> str:
             r"(?i)\b(document|documentation|readme|docs?)\b", t
         ):
             return "documentation"
+
+    # Investigative hints before quality — "investigate race in X" is not a
+    # soft quality vibe; it is a trackable obligation.
+    if _INVESTIGATE_RE.search(t) and (
+        extract_investigation_targets(t)
+        or re.search(r"(?i)\b(race|realloc|overflow|leak|deadlock|suspect)\b", t)
+    ):
+        # Pure "implement feature X" with incidental "check" stays product
+        if not (
+            has_product_verb
+            and re.search(
+                r"(?i)\b(implement|add|create|build)\b.{0,40}\b(feature|endpoint|module)\b",
+                t,
+            )
+            and not re.search(r"(?i)\b(also|investigate|look\s+at|rule\s+out)\b", t)
+        ):
+            return "investigation"
+
     if _QUALITY_RE.search(t) and not re.search(
         r"(?i)\b(implement|add|create|build)\b.{0,20}\b(feature|endpoint|module)\b",
         t,
@@ -201,18 +340,30 @@ def decompose_request(title: str, user_message: str) -> TaskChecklist:
 
     Prefer explicit numbered/bulleted lists in the user message; otherwise split
     on conjunctions and sentence boundaries into actionable checklist items.
+
+    Investigative clauses ("also check the vector-reallocation race in X") are
+    always lifted into their own ``investigation`` items even when embedded in
+    a longer bug-fix paragraph — so they cannot be silently skipped.
     """
     text = (user_message or "").strip()
     items: List[RequirementItem] = []
+    seen_texts: set[str] = set()
+
+    def _add(chunk: str, *, force_kind: Optional[str] = None) -> None:
+        chunk = (chunk or "").strip()
+        if len(chunk) < 8:
+            return
+        key = chunk.lower()
+        if key in seen_texts:
+            return
+        seen_texts.add(key)
+        kind = force_kind or classify_requirement_kind(chunk)
+        items.append(RequirementItem(text=chunk, kind=kind))
 
     for line in text.splitlines():
         m = re.match(r"^\s*(?:[-*]|\d+[.)])\s+(.+)$", line)
         if m:
-            chunk = m.group(1).strip()
-            if chunk:
-                items.append(
-                    RequirementItem(text=chunk, kind=classify_requirement_kind(chunk))
-                )
+            _add(m.group(1).strip())
 
     if not items:
         parts = re.split(r"(?:;|\.(?:\s|$)|(?:,\s*and\s+)|\band\bthen\b)", text)
@@ -223,14 +374,14 @@ def decompose_request(title: str, user_message: str) -> TaskChecklist:
             if part.lower() in {"please", "thanks", "thank you"}:
                 continue
             chunk = part[0].upper() + part[1:]
-            items.append(
-                RequirementItem(text=chunk, kind=classify_requirement_kind(chunk))
-            )
+            _add(chunk)
 
     if not items and text:
-        items.append(
-            RequirementItem(text=text[:500], kind=classify_requirement_kind(text))
-        )
+        _add(text[:500])
+
+    # Lift investigative hints even when the main sentence was classified product
+    for clause in extract_investigation_clauses(text):
+        _add(clause[0].upper() + clause[1:] if clause else clause, force_kind="investigation")
 
     return TaskChecklist(
         task_id=str(uuid.uuid4()),
@@ -343,6 +494,22 @@ def _doc_corpus(
     return "\n".join(parts), list(dict.fromkeys(hits))
 
 
+def _added_diff_blob(diff: str) -> str:
+    lines = []
+    for line in (diff or "").splitlines():
+        if line.startswith("+") and not line.startswith("+++"):
+            lines.append(line[1:])
+    return "\n".join(lines)
+
+
+def _target_in_text(target: str, blob: str) -> bool:
+    if not target or not blob:
+        return False
+    t = target.lower()
+    leaf = t.split("::")[-1].split("/")[-1]
+    return t in blob or (leaf and leaf in blob)
+
+
 def bind_evidence(
     checklist: TaskChecklist,
     *,
@@ -354,6 +521,7 @@ def bind_evidence(
     user_decisions: Sequence[str] = (),
     verification: Any = None,
     tests_passed: Optional[bool] = None,
+    last_diff: str = "",
 ) -> List[ItemEvidence]:
     """
     Attach concrete evidence to each checklist item.
@@ -364,6 +532,7 @@ def bind_evidence(
     - documentation → README/docs sections
     - quality → stress/concurrency tests + implementation symbols
     - decision → user decisions
+    - investigation → diff touch (checked_fixed) or inspect/grep log (checked_ruled_out)
     - product → implementation symbols + behavioral tests
     """
     contents = file_contents or {}
@@ -373,6 +542,8 @@ def bind_evidence(
     corpus_tests = " ".join(test_files).lower()
     log_blob = (execution_log or "").lower()
     decisions_blob = " ".join(user_decisions or []).lower()
+    added_diff = _added_diff_blob(last_diff).lower()
+    full_diff = (last_diff or "").lower()
     doc_blob, doc_files = _doc_corpus(files_changed, contents)
 
     verify_ok = None
@@ -539,6 +710,84 @@ def bind_evidence(
             out.append(ev)
             continue
 
+        if kind == "investigation":
+            targets = extract_investigation_targets(item.text)
+            if not targets:
+                # Fall back to keyword idents from the clause
+                targets = [w for w in words if w not in _TARGET_STOP and len(w) >= 4][:8]
+            if targets:
+                ev.evidence_notes.append("targets:" + ",".join(targets[:6]))
+
+            fixed_hits: List[str] = []
+            inspect_hits: List[str] = []
+            weak_hits: List[str] = []
+            for t in targets:
+                tl = t.lower()
+                leaf = tl.split("::")[-1].split("/")[-1]
+                # checked_fixed: named symbol/path appears in *added* diff lines
+                # or as a changed-file symbol that also appears in the diff
+                in_added = _target_in_text(t, added_diff)
+                in_diff = in_added or _target_in_text(t, full_diff)
+                in_syms = _target_in_text(t, corpus_syms)
+                in_files = _target_in_text(t, corpus_files)
+                if in_added or (in_diff and (in_syms or in_files)):
+                    fixed_hits.append(t)
+                    ev.symbol_hits.append(t)
+                    if in_files:
+                        for f in files_changed:
+                            if _target_in_text(t, f.lower()) or _target_in_text(
+                                t, (contents.get(f) or "").lower()[:4000]
+                            ):
+                                ev.file_hits.append(f)
+                    continue
+
+                # checked_ruled_out: session recorded inspect/grep of the target
+                inspect_pat = (
+                    f"inspect: {tl}" in log_blob
+                    or f"inspect: read {tl}" in log_blob
+                    or f"grep: {tl}" in log_blob
+                    or f"grep: {leaf}" in log_blob
+                    or (
+                        ("inspect:" in log_blob or "grep:" in log_blob)
+                        and leaf
+                        and leaf in log_blob
+                    )
+                )
+                ruled_out_lang = bool(
+                    re.search(
+                        rf"(?i)\b({re.escape(leaf)}|{re.escape(tl)})\b.{{0,80}}"
+                        r"\b(ruled\s+out|no\s+issue|not\s+a\s+(?:bug|problem)|"
+                        r"unrelated|false\s+alarm|does\s+not\s+apply)\b",
+                        log_blob,
+                    )
+                )
+                if inspect_pat or ruled_out_lang:
+                    inspect_hits.append(t)
+                    ev.log_hits.append(t)
+                    continue
+
+                # Weak: name only mentioned in chat/log without inspect/diff
+                if leaf and leaf in log_blob:
+                    weak_hits.append(t)
+                    ev.keyword_hits.append(t)
+
+            ev.file_hits = list(dict.fromkeys(ev.file_hits))
+            ev.symbol_hits = list(dict.fromkeys(ev.symbol_hits))
+            ev.log_hits = list(dict.fromkeys(ev.log_hits))
+
+            if fixed_hits:
+                ev.evidence_notes.append("disposition:checked_fixed")
+                ev.evidence_notes.append("fixed:" + ",".join(fixed_hits[:6]))
+            elif inspect_hits:
+                ev.evidence_notes.append("disposition:checked_ruled_out")
+                ev.evidence_notes.append("ruled_out:" + ",".join(inspect_hits[:6]))
+            elif weak_hits:
+                ev.evidence_notes.append("disposition:partial_inspect")
+            else:
+                ev.evidence_notes.append("disposition:not_checked")
+            out.append(ev)
+            continue
+
         # Product requirements — code/test evidence
         for w in words:
             if w in corpus_files or w in corpus_body:
@@ -595,7 +844,8 @@ def rescore_checklist_with_evidence(
     """
     Structured rescore using bound evidence.
 
-    Process/verification/decision/docs items never require product-source keyword hits.
+    Process/verification/decision/docs/investigation items never require the
+    product file+symbol+test triad.
     """
     by_id = {e.item_id: e for e in evidence}
     for item in checklist.items:
@@ -611,7 +861,13 @@ def rescore_checklist_with_evidence(
             ev.missing = missing_message_for(ev, words)
         elif status == "Partially Addressed":
             parts = ev.missing_hard_evidence_parts()
-            if kind in ("product", "quality") and parts:
+            if kind == "investigation":
+                ev.missing = (
+                    f"Named area was mentioned but not inspected or fixed: "
+                    f"{item.text}. Record an inspect/grep of the named symbols "
+                    f"or touch them in the diff."
+                )
+            elif kind in ("product", "quality") and parts:
                 ev.missing = (
                     f"Only partial evidence for: {item.text}. "
                     f"Missing: {', '.join(parts)}. "

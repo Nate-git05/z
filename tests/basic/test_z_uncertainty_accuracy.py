@@ -102,6 +102,8 @@ class ClassificationTest(unittest.TestCase):
             "Which Markdown anchor format?": "decision",
             "Production API supports this field": "external_assumption",
             "Use uncertainty before committing": "process",
+            "Also investigate a vector-reallocation race in bgLogInfos": "investigation",
+            "Look at registerLogInfo for concurrent growth": "investigation",
         }
         for text, kind in cases.items():
             self.assertEqual(
