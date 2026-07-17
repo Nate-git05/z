@@ -127,7 +127,12 @@ def cmd_skill_add(io, content: str = "", *, sync: bool = True) -> int:
 def cmd_skill_create(
     io, topic: str = "", *, model_name: Optional[str] = None, sync: bool = True
 ) -> int:
-    """Generate a skill from a prompt via BYOK model."""
+    """Generate a skill from a prompt via BYOK model.
+
+    Bug-fix topics (segfault/crash/race/leak/…) use the same
+    ``task_is_bugfix_intent`` classifier as automatic capture, so manual
+    ``z skill create`` also produces ``kind=bug_pattern`` with structured fields.
+    """
     topic = (topic or "").strip()
     if not topic:
         topic = io.prompt_ask("What should this skill cover?").strip()
@@ -135,15 +140,85 @@ def cmd_skill_create(
         io.tool_error("A skill description is required.")
         return 1
 
-    io.tool_output("Generating skill with your connected model…")
-    skill, err, _ground = generate_skill(
-        topic, model_name=model_name, created_by=_created_by()
+    from .router import task_is_bugfix_intent
+
+    prefer_bug = task_is_bugfix_intent(topic)
+    if prefer_bug:
+        io.tool_output(
+            "Bug-fix topic detected — generating bug_pattern skill "
+            "(symptom / root cause / fix / verification)…"
+        )
+    else:
+        io.tool_output("Generating skill with your connected model…")
+
+    # Prefer grounding against the live working tree when available (same
+    # discipline as post-task capture). Failure is non-fatal.
+    grounding_pack = None
+    try:
+        import subprocess
+        from pathlib import Path
+
+        from .grounding import build_grounding_pack
+
+        root = Path.cwd()
+        dirty: list[str] = []
+        diff = ""
+        names = subprocess.run(
+            ["git", "diff", "--name-only", "HEAD"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if names.returncode == 0:
+            dirty = [l.strip() for l in (names.stdout or "").splitlines() if l.strip()]
+        body = subprocess.run(
+            ["git", "diff", "HEAD"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if body.returncode == 0:
+            diff = body.stdout or ""
+        if dirty or diff:
+            grounding_pack = build_grounding_pack(
+                user_request=topic,
+                files_changed=dirty[:40],
+                root=root,
+                diff=diff[:20000],
+            )
+            if grounding_pack and not (grounding_pack.files or grounding_pack.diff):
+                grounding_pack = None
+    except Exception:
+        grounding_pack = None
+
+    skill, err, ground = generate_skill(
+        topic,
+        model_name=model_name,
+        created_by=_created_by(),
+        grounding_pack=grounding_pack,
+        two_phase=bool(grounding_pack) and not prefer_bug,
+        prefer_bug_pattern=prefer_bug,
     )
     if err or not skill:
         io.tool_error(err or "Skill generation failed.")
         return 1
 
     skill.source = "generate"
+    if prefer_bug:
+        from .schema import SKILL_KIND_BUG_PATTERN
+
+        skill.kind = SKILL_KIND_BUG_PATTERN
+        if ground and not ground.ok:
+            skill.needs_review = True
+            skill.quality_state = "draft"
+            io.tool_warning(
+                "Bug-pattern skill saved as draft — diagnosis may not match "
+                "the real diff. Accept after review: z skill accept <name>"
+            )
+            if ground.reason:
+                io.tool_warning(f"  {ground.reason}")
     _stamp_repo_key(skill)
     _persist_skill(io, skill, sync=sync)
     return 0
