@@ -94,8 +94,10 @@ class Skill:
     content_hash: Optional[str] = None  # hash of grounding pack at capture
     # Repo isolation: bind skill to the project that produced it.
     # repo_key = resolved project root; empty + shared=True → apply anywhere.
-    # Captures/generates stamp the current root so project A skills do not
-    # auto-apply (and rewrite files) in project B.
+    # Feature playbooks/scaffolds stamp the current root so project A skills
+    # do not auto-apply (and rewrite files) in project B.
+    # bug_pattern skills default to shared=True / empty repo_key — they are
+    # symptom-based and portable across codebases by design.
     repo_key: str = ""
     shared: bool = False
     # bug_pattern fields — symptom is what gets embedded for retrieval

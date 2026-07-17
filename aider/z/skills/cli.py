@@ -17,8 +17,15 @@ from .vector import get_skill_vector_index, upsert_skill_vector
 
 
 def _stamp_repo_key(skill: Skill, *, root: Optional[Path | str] = None, shared: bool = False) -> None:
-    """Bind skill to the current project unless explicitly shared."""
-    if shared:
+    """Bind skill to the current project unless explicitly shared.
+
+    Bug-pattern skills default to ``shared=True`` / empty ``repo_key`` — they
+    are symptom-based and portable across codebases. Feature playbooks/scaffolds
+    stay repo-bound (schema rule: empty + shared=True → apply anywhere).
+    """
+    from .schema import SKILL_KIND_BUG_PATTERN
+
+    if shared or (skill.kind or "") == SKILL_KIND_BUG_PATTERN:
         skill.shared = True
         skill.repo_key = ""
         return
@@ -107,14 +114,25 @@ def cmd_skill_add(io, content: str = "", *, sync: bool = True) -> int:
         triggers=list(parsed.triggers or []),
         source="paste",
         created_by=_created_by(),
+        kind=parsed.kind or "playbook",
+        symptom_description=parsed.symptom_description or "",
+        root_cause_category=parsed.root_cause_category or "",
+        root_cause_explanation=parsed.root_cause_explanation or "",
+        fix_technique=parsed.fix_technique or "",
+        verification_method=parsed.verification_method or "",
+        language=parsed.language or "",
+        languages=list(parsed.languages or []),
     )
     if parsed.id:
         kwargs["id"] = parsed.id
     skill = Skill(**kwargs)
-    # Preserve explicit shared/repo_key from pasted frontmatter; else bind to cwd
+    # Preserve explicit shared/repo_key from pasted frontmatter; else bind to cwd.
+    # bug_pattern → always shared (portable) via _stamp_repo_key.
     if parsed.shared or (parsed.repo_key or "").strip() in ("*", "global", "any"):
         skill.shared = True
         skill.repo_key = ""
+    elif (skill.kind or "") == "bug_pattern":
+        _stamp_repo_key(skill)  # forces shared=True, repo_key=""
     elif parsed.repo_key:
         skill.repo_key = parsed.repo_key.strip()
     else:
@@ -127,7 +145,12 @@ def cmd_skill_add(io, content: str = "", *, sync: bool = True) -> int:
 def cmd_skill_create(
     io, topic: str = "", *, model_name: Optional[str] = None, sync: bool = True
 ) -> int:
-    """Generate a skill from a prompt via BYOK model."""
+    """Generate a skill from a prompt via BYOK model.
+
+    Bug-fix topics (segfault/crash/race/leak/…) use the same
+    ``task_is_bugfix_intent`` classifier as automatic capture, so manual
+    ``z skill create`` also produces ``kind=bug_pattern`` with structured fields.
+    """
     topic = (topic or "").strip()
     if not topic:
         topic = io.prompt_ask("What should this skill cover?").strip()
@@ -135,16 +158,89 @@ def cmd_skill_create(
         io.tool_error("A skill description is required.")
         return 1
 
-    io.tool_output("Generating skill with your connected model…")
-    skill, err, _ground = generate_skill(
-        topic, model_name=model_name, created_by=_created_by()
+    from .router import task_is_bugfix_intent
+
+    prefer_bug = task_is_bugfix_intent(topic)
+    if prefer_bug:
+        io.tool_output(
+            "Bug-fix topic detected — generating bug_pattern skill "
+            "(symptom / root cause / fix / verification)…"
+        )
+    else:
+        io.tool_output("Generating skill with your connected model…")
+
+    # Prefer grounding against the live working tree when available (same
+    # discipline as post-task capture). Failure is non-fatal.
+    grounding_pack = None
+    try:
+        import subprocess
+        from pathlib import Path
+
+        from .grounding import build_grounding_pack
+
+        root = Path.cwd()
+        dirty: list[str] = []
+        diff = ""
+        names = subprocess.run(
+            ["git", "diff", "--name-only", "HEAD"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if names.returncode == 0:
+            dirty = [l.strip() for l in (names.stdout or "").splitlines() if l.strip()]
+        body = subprocess.run(
+            ["git", "diff", "HEAD"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if body.returncode == 0:
+            diff = body.stdout or ""
+        if dirty or diff:
+            grounding_pack = build_grounding_pack(
+                user_request=topic,
+                files_changed=dirty[:40],
+                root=root,
+                diff=diff[:20000],
+            )
+            if grounding_pack and not (grounding_pack.files or grounding_pack.diff):
+                grounding_pack = None
+    except Exception:
+        grounding_pack = None
+
+    skill, err, ground = generate_skill(
+        topic,
+        model_name=model_name,
+        created_by=_created_by(),
+        grounding_pack=grounding_pack,
+        two_phase=bool(grounding_pack) and not prefer_bug,
+        prefer_bug_pattern=prefer_bug,
     )
     if err or not skill:
         io.tool_error(err or "Skill generation failed.")
         return 1
 
     skill.source = "generate"
-    _stamp_repo_key(skill)
+    if prefer_bug:
+        from .schema import SKILL_KIND_BUG_PATTERN
+
+        skill.kind = SKILL_KIND_BUG_PATTERN
+        if ground and not ground.ok:
+            skill.needs_review = True
+            skill.quality_state = "draft"
+            io.tool_warning(
+                "Bug-pattern skill saved as draft — diagnosis may not match "
+                "the real diff. Accept after review: z skill accept <name>"
+            )
+            if ground.reason:
+                io.tool_warning(f"  {ground.reason}")
+    # bug_pattern → shared/portable; feature skills → repo-bound
+    _stamp_repo_key(skill, shared=prefer_bug)
+    if prefer_bug:
+        io.tool_output("  Scope: shared (bug-pattern — portable across projects)")
     _persist_skill(io, skill, sync=sync)
     return 0
 
@@ -244,7 +340,19 @@ def save_skill_from_task(
     # Captures always start as draft — accept after review (even if grounded)
     skill.quality_state = "draft"
     skill.needs_review = True
-    _stamp_repo_key(skill, root=repo_root)
+    if prefer_bug_pattern:
+        from .schema import SKILL_KIND_BUG_PATTERN
+
+        skill.kind = SKILL_KIND_BUG_PATTERN
+    # bug_pattern → shared/portable by default (cross-project retrieval);
+    # ordinary feature captures stay bound to repo_root.
+    _stamp_repo_key(
+        skill,
+        root=repo_root,
+        shared=prefer_bug_pattern or (skill.kind or "") == "bug_pattern",
+    )
+    if skill.shared and (skill.kind or "") == "bug_pattern":
+        io.tool_output("  Scope: shared (bug-pattern — portable across projects)")
     if ground and not ground.ok:
         io.tool_warning(
             "Skill saved as draft — it may not match the real implementation."

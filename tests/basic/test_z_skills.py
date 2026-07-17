@@ -22,7 +22,11 @@ get_settings.cache_clear()
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from aider.z.skills.cli import cmd_skill_add, offer_view_new_skill  # noqa: E402
+from aider.z.skills.cli import (  # noqa: E402
+    cmd_skill_add,
+    cmd_skill_create,
+    offer_view_new_skill,
+)
 from aider.z.skills.index import match_skills, relevance_score  # noqa: E402
 from aider.z.skills.infer import apply_inferred_metadata, infer_metadata  # noqa: E402
 from aider.z.skills.schema import Skill, SkillIndexEntry  # noqa: E402
@@ -396,6 +400,122 @@ class GenerateParseTest(unittest.TestCase):
         self.assertIn("Do the thing", skill.content)
         self.assertIn("thing", skill.tags)
 
+    def test_generate_bug_pattern_populates_structured_fields(self):
+        from aider.z.skills.generate import generate_skill
+        from aider.z.skills.schema import SKILL_KIND_BUG_PATTERN
+
+        fake_response = (
+            '{"title": "SPSC visibility", "description": "stale size race",'
+            ' "content": "## Symptom\\nCrash under load\\n",'
+            ' "kind": "bug_pattern",'
+            ' "symptom_description": "Intermittent segfault when log is last statement",'
+            ' "root_cause_category": "missing_synchronization_for_shared_state",'
+            ' "root_cause_explanation": "volatile size had no release/acquire",'
+            ' "fix_technique": "std::atomic with memory_order_release/acquire",'
+            ' "verification_method": "ThreadSanitizer before/after",'
+            ' "language": "cpp",'
+            ' "tags": ["race", "tsan"]}'
+        )
+
+        class FakeModel:
+            def simple_send_with_retries(self, messages):
+                # Bug-pattern system prompt must be selected
+                sys = messages[0]["content"]
+                assert "BUG-PATTERN" in sys or "bug_pattern" in sys.lower()
+                return fake_response
+
+        with mock.patch("aider.z.skills.generate.resolve_model", return_value=FakeModel()):
+            skill, err, ground = generate_skill(
+                "segfault in polling thread — volatile size race fixed with atomics",
+                prefer_bug_pattern=True,
+            )
+        self.assertIsNone(err)
+        self.assertEqual(skill.kind, SKILL_KIND_BUG_PATTERN)
+        self.assertIn("Intermittent segfault", skill.symptom_description)
+        self.assertEqual(
+            skill.root_cause_category, "missing_synchronization_for_shared_state"
+        )
+        self.assertIn("atomic", skill.fix_technique.lower())
+        self.assertIn("ThreadSanitizer", skill.verification_method)
+        self.assertEqual(skill.language, "cpp")
+
+
+class SkillCreateBugPatternCliTest(unittest.TestCase):
+    def test_create_routes_bugfix_topic_to_bug_pattern(self):
+        root = Path(tempfile.mkdtemp(prefix="z_skills_create_bug_"))
+        store = LocalSkillStore(root=root)
+        io = mock.MagicMock()
+        captured = {}
+
+        def fake_generate(topic, **kwargs):
+            captured.update(kwargs)
+            captured["topic"] = topic
+            skill = Skill(
+                title="SPSC race",
+                description="race",
+                content="## Fix\natomics\n",
+                kind="bug_pattern",
+                symptom_description="segfault under load",
+                root_cause_category="missing_synchronization_for_shared_state",
+                fix_technique="atomic release/acquire",
+                verification_method="TSan before/after",
+                language="cpp",
+            )
+            return skill, None, None
+
+        with mock.patch("aider.z.skills.cli.LocalSkillStore", return_value=store):
+            with mock.patch("aider.z.skills.cli.upsert_skill_vector", return_value=True):
+                with mock.patch("aider.z.skills.cli.sync_skill", return_value=None):
+                    with mock.patch(
+                        "aider.z.skills.cli.generate_skill", side_effect=fake_generate
+                    ):
+                        code = cmd_skill_create(
+                            io,
+                            "Fix intermittent segfault: missing sync on shared size field",
+                            sync=False,
+                        )
+        self.assertEqual(code, 0)
+        self.assertTrue(captured.get("prefer_bug_pattern"))
+        skills = store.list_skills()
+        self.assertEqual(len(skills), 1)
+        self.assertEqual(skills[0].kind, "bug_pattern")
+        self.assertEqual(
+            skills[0].root_cause_category,
+            "missing_synchronization_for_shared_state",
+        )
+        # Issue 3: bug_pattern must be portable, not repo-bound
+        self.assertTrue(skills[0].shared)
+        self.assertEqual(skills[0].repo_key, "")
+
+    def test_create_feature_topic_stays_playbook_path(self):
+        io = mock.MagicMock()
+        captured = {}
+
+        def fake_generate(topic, **kwargs):
+            captured.update(kwargs)
+            return (
+                Skill(title="Rate limit", description="d", content="## Steps\n1\n"),
+                None,
+                None,
+            )
+
+        root = Path(tempfile.mkdtemp(prefix="z_skills_create_feat_"))
+        store = LocalSkillStore(root=root)
+        with mock.patch("aider.z.skills.cli.LocalSkillStore", return_value=store):
+            with mock.patch("aider.z.skills.cli.upsert_skill_vector", return_value=True):
+                with mock.patch("aider.z.skills.cli.sync_skill", return_value=None):
+                    with mock.patch(
+                        "aider.z.skills.cli.generate_skill", side_effect=fake_generate
+                    ):
+                        code = cmd_skill_create(
+                            io,
+                            "how this repo validates Stripe webhooks",
+                            sync=False,
+                        )
+        self.assertEqual(code, 0)
+        self.assertFalse(captured.get("prefer_bug_pattern"))
+
 
 if __name__ == "__main__":
     unittest.main()
+
