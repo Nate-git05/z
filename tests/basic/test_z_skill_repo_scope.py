@@ -11,14 +11,15 @@ from unittest import mock
 _HOME = tempfile.mkdtemp(prefix="z_skill_repo_")
 os.environ["Z_HOME"] = _HOME
 
-from aider.z.skills.cli import _stamp_repo_key  # noqa: E402
+from aider.z.skills.cli import _stamp_repo_key, save_skill_from_task  # noqa: E402
 from aider.z.skills.router import (  # noqa: E402
     collect_repo_signals,
     normalize_repo_key,
     route_skill,
     skill_matches_repo,
+    task_is_bugfix_intent,
 )
-from aider.z.skills.schema import Skill  # noqa: E402
+from aider.z.skills.schema import SKILL_KIND_BUG_PATTERN, Skill  # noqa: E402
 
 
 class RepoKeyMatchTest(unittest.TestCase):
@@ -109,6 +110,98 @@ class RepoKeyMatchTest(unittest.TestCase):
             _stamp_repo_key(skill, root=root)
             self.assertEqual(skill.repo_key, str(root))
             self.assertFalse(skill.shared)
+
+    def test_stamp_bug_pattern_is_shared_portable(self):
+        """Issue 3: bug_pattern defaults to shared=True / empty repo_key."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td).resolve()
+            skill = Skill(
+                title="missing sync on size",
+                description="segfault under concurrent resize",
+                content="## Fix\n1. Atomicize size\n",
+                kind=SKILL_KIND_BUG_PATTERN,
+                symptom_description="intermittent segfault under concurrent resize",
+            )
+            _stamp_repo_key(skill, root=root)
+            self.assertTrue(skill.shared)
+            self.assertEqual(skill.repo_key, "")
+
+    def test_bug_pattern_routes_in_different_project(self):
+        """Cross-project retrieval: bug_pattern from A must apply in B."""
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            root_a = Path(a).resolve()
+            root_b = Path(b).resolve()
+            (root_a / "main.cpp").write_text("int main(){}\n", encoding="utf-8")
+            (root_b / "main.cpp").write_text("int main(){}\n", encoding="utf-8")
+
+            skill = Skill(
+                title="Missing sync on shared size",
+                description="segfault when size races with reader",
+                content="## Fix\n1. Make size atomic\n",
+                kind=SKILL_KIND_BUG_PATTERN,
+                languages=["cpp"],
+                quality_state="verified",
+                symptom_description="intermittent segfault under concurrent resize",
+                root_cause_category="missing_synchronization_for_shared_state",
+            )
+            _stamp_repo_key(skill, root=root_a)
+            self.assertTrue(skill.shared)
+            self.assertEqual(skill.repo_key, "")
+
+            ok, reason = skill_matches_repo(skill, root_b)
+            self.assertTrue(ok, reason)
+            sig_b = collect_repo_signals(root_b)
+            d = route_skill(
+                skill,
+                "fix intermittent segfault under concurrent resize",
+                sig_b,
+                score=0.9,
+            )
+            self.assertTrue(d.apply, d.reason)
+
+    def test_save_skill_from_task_bug_pattern_is_shared(self):
+        """Automatic capture path also stamps portable scope."""
+        from aider.io import InputOutput
+
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            root_a = Path(a).resolve()
+            root_b = Path(b).resolve()
+            fake = Skill(
+                title="Race on size field",
+                description="crash under concurrent resize",
+                content="## Fix\n1. Atomicize\n",
+                kind=SKILL_KIND_BUG_PATTERN,
+                symptom_description="segfault under concurrent resize",
+                root_cause_category="missing_synchronization_for_shared_state",
+            )
+
+            class _Ground:
+                ok = True
+                reason = ""
+                grounded_symbols = []
+
+            io = InputOutput(pretty=False, yes=True)
+            with mock.patch(
+                "aider.z.skills.cli.generate_skill",
+                return_value=(fake, None, _Ground()),
+            ), mock.patch(
+                "aider.z.skills.cli._persist_skill",
+                side_effect=lambda io, skill, sync=True: skill,
+            ):
+                skill, created = save_skill_from_task(
+                    io,
+                    "fix intermittent segfault under concurrent resize",
+                    repo_root=root_a,
+                    prefer_bug_pattern=True,
+                )
+            self.assertTrue(created)
+            self.assertIsNotNone(skill)
+            self.assertEqual(skill.kind, SKILL_KIND_BUG_PATTERN)
+            self.assertTrue(skill.shared)
+            self.assertEqual(skill.repo_key, "")
+
+            ok, reason = skill_matches_repo(skill, root_b)
+            self.assertTrue(ok, reason)
 
 
 class PathJailTest(unittest.TestCase):

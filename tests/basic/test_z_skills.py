@@ -483,6 +483,9 @@ class SkillCreateBugPatternCliTest(unittest.TestCase):
             skills[0].root_cause_category,
             "missing_synchronization_for_shared_state",
         )
+        # Issue 3: bug_pattern must be portable, not repo-bound
+        self.assertTrue(skills[0].shared)
+        self.assertEqual(skills[0].repo_key, "")
 
     def test_create_feature_topic_stays_playbook_path(self):
         io = mock.MagicMock()

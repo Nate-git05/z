@@ -17,8 +17,15 @@ from .vector import get_skill_vector_index, upsert_skill_vector
 
 
 def _stamp_repo_key(skill: Skill, *, root: Optional[Path | str] = None, shared: bool = False) -> None:
-    """Bind skill to the current project unless explicitly shared."""
-    if shared:
+    """Bind skill to the current project unless explicitly shared.
+
+    Bug-pattern skills default to ``shared=True`` / empty ``repo_key`` — they
+    are symptom-based and portable across codebases. Feature playbooks/scaffolds
+    stay repo-bound (schema rule: empty + shared=True → apply anywhere).
+    """
+    from .schema import SKILL_KIND_BUG_PATTERN
+
+    if shared or (skill.kind or "") == SKILL_KIND_BUG_PATTERN:
         skill.shared = True
         skill.repo_key = ""
         return
@@ -107,14 +114,25 @@ def cmd_skill_add(io, content: str = "", *, sync: bool = True) -> int:
         triggers=list(parsed.triggers or []),
         source="paste",
         created_by=_created_by(),
+        kind=parsed.kind or "playbook",
+        symptom_description=parsed.symptom_description or "",
+        root_cause_category=parsed.root_cause_category or "",
+        root_cause_explanation=parsed.root_cause_explanation or "",
+        fix_technique=parsed.fix_technique or "",
+        verification_method=parsed.verification_method or "",
+        language=parsed.language or "",
+        languages=list(parsed.languages or []),
     )
     if parsed.id:
         kwargs["id"] = parsed.id
     skill = Skill(**kwargs)
-    # Preserve explicit shared/repo_key from pasted frontmatter; else bind to cwd
+    # Preserve explicit shared/repo_key from pasted frontmatter; else bind to cwd.
+    # bug_pattern → always shared (portable) via _stamp_repo_key.
     if parsed.shared or (parsed.repo_key or "").strip() in ("*", "global", "any"):
         skill.shared = True
         skill.repo_key = ""
+    elif (skill.kind or "") == "bug_pattern":
+        _stamp_repo_key(skill)  # forces shared=True, repo_key=""
     elif parsed.repo_key:
         skill.repo_key = parsed.repo_key.strip()
     else:
@@ -219,7 +237,10 @@ def cmd_skill_create(
             )
             if ground.reason:
                 io.tool_warning(f"  {ground.reason}")
-    _stamp_repo_key(skill)
+    # bug_pattern → shared/portable; feature skills → repo-bound
+    _stamp_repo_key(skill, shared=prefer_bug)
+    if prefer_bug:
+        io.tool_output("  Scope: shared (bug-pattern — portable across projects)")
     _persist_skill(io, skill, sync=sync)
     return 0
 
@@ -319,7 +340,19 @@ def save_skill_from_task(
     # Captures always start as draft — accept after review (even if grounded)
     skill.quality_state = "draft"
     skill.needs_review = True
-    _stamp_repo_key(skill, root=repo_root)
+    if prefer_bug_pattern:
+        from .schema import SKILL_KIND_BUG_PATTERN
+
+        skill.kind = SKILL_KIND_BUG_PATTERN
+    # bug_pattern → shared/portable by default (cross-project retrieval);
+    # ordinary feature captures stay bound to repo_root.
+    _stamp_repo_key(
+        skill,
+        root=repo_root,
+        shared=prefer_bug_pattern or (skill.kind or "") == "bug_pattern",
+    )
+    if skill.shared and (skill.kind or "") == "bug_pattern":
+        io.tool_output("  Scope: shared (bug-pattern — portable across projects)")
     if ground and not ground.ok:
         io.tool_warning(
             "Skill saved as draft — it may not match the real implementation."
