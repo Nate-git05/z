@@ -64,6 +64,8 @@ class VerifyState(str, enum.Enum):
     BUILD_FAILED = "BUILD_FAILED"
     LINT_FAILED = "LINT_FAILED"
     TYPE_MEMBER_FAILED = "TYPE_MEMBER_FAILED"
+    RACE_DETECTED = "RACE_DETECTED"
+    DYNAMIC_ANALYSIS_FAILED = "DYNAMIC_ANALYSIS_FAILED"
 
 
 # States that mean "re-read the type / fix the compile error", not "tweak tests"
@@ -98,7 +100,7 @@ class VerificationRecord:
     error: str = ""
     # Package-scoped prechecks (typecheck/build/lint) run before tests
     prechecks: List[dict] = field(default_factory=list)
-    failure_kind: str = ""  # test | typecheck | build | lint | type_member | root_guard | relevant_tests
+    failure_kind: str = ""  # test | typecheck | build | lint | type_member | root_guard | relevant_tests | race_detection
     # Mandatory relevant-test discovery / execution (pre-existing cannot be skipped)
     relevant_tests: List[str] = field(default_factory=list)
     relevant_preexisting: List[str] = field(default_factory=list)
@@ -107,6 +109,11 @@ class VerificationRecord:
     relevant_ran: bool = False
     relevant_passed: Optional[bool] = None
     relevant_output_excerpt: str = ""
+    # Concurrency / race dynamic analysis (see concurrency_checks.py)
+    concurrency_relevant: bool = False
+    race_comparison: Optional[dict] = None
+    # Full dynamic-risk taxonomy comparisons (concurrency / memory_safety / leaks)
+    dynamic_comparisons: Optional[list] = None
     at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
@@ -129,6 +136,15 @@ class VerificationRecord:
     def meaningful_pass(self) -> bool:
         """True only when suite + mandatory pre-existing relevant tests passed."""
         if self.is_compiler_failure:
+            return False
+        if self.state in (
+            VerifyState.RACE_DETECTED,
+            VerifyState.DYNAMIC_ANALYSIS_FAILED,
+        ) or self.failure_kind in (
+            "race_detection",
+            "dynamic_analysis",
+            "sanitizer",
+        ):
             return False
         if self.relevant_preexisting:
             # New tests alone cannot substitute — pre-existing must have run green
