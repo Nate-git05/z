@@ -45,6 +45,9 @@ _MEDIUM_GATE_TYPES = {
     NodeType.PATTERN_COMPANION_GAP,
     NodeType.ESTABLISHED_SOLUTION_GAP,
     NodeType.CONCURRENCY_RACE,
+    NodeType.MEMORY_SAFETY,
+    NodeType.LEAK_ANALYSIS,
+    NodeType.DYNAMIC_ANALYSIS,
 }
 
 
@@ -408,30 +411,52 @@ def _confirm_relevant_tests_checkpoint(
     return None
 
 
-def _reflect_fix_races(record: VerificationRecord, edited: Sequence[str]) -> str:
-    """Distinct reflect path for concurrency / race-detector failures."""
+def _reflect_fix_dynamic(record: VerificationRecord, edited: Sequence[str]) -> str:
+    """Distinct reflect path for dynamic-analysis / sanitizer failures."""
     files = ", ".join(list(edited)[:6])
-    cmp_ = getattr(record, "race_comparison", None) or {}
+    comps = list(getattr(record, "dynamic_comparisons", None) or [])
+    cmp_ = comps[0] if comps else (getattr(record, "race_comparison", None) or {})
+    category = cmp_.get("category_id") or ""
+    if not category:
+        # Legacy race-only payloads omit category_id
+        if (
+            record.failure_kind == "race_detection"
+            or getattr(record.state, "value", "") == "RACE_DETECTED"
+            or "before_races" in cmp_
+        ):
+            category = "concurrency"
+        else:
+            category = cmp_.get("category_title") or "dynamic"
+    noun = cmp_.get("issue_noun") or ("race" if category == "concurrency" else "issue")
+    before_n = cmp_.get("before_issues", cmp_.get("before_races"))
+    after_n = cmp_.get("after_issues", cmp_.get("after_races"))
     excerpt = (record.output_excerpt or record.error or "")[-1500:]
+    label = "RACE DETECTOR" if category == "concurrency" else "DYNAMIC ANALYSIS / SANITIZER"
     return (
-        "Z verification gate: CONCURRENCY / RACE DETECTOR failed "
+        f"Z verification gate: {label} failed "
         f"for {files or 'this change'}.\n"
+        f"Category: {category}\n"
         f"Outcome: {cmp_.get('outcome')}\n"
-        f"Before races: {cmp_.get('before_races')} → After: {cmp_.get('after_races')}\n"
+        f"Before {noun}s: {before_n} → After: {after_n}\n"
         f"Tool: {cmp_.get('tool_id')}\n"
         f"Summary: {cmp_.get('summary')}\n"
         f"Output excerpt:\n{excerpt}\n\n"
         "This is NOT an ordinary test failure. Do NOT burn retries on unrelated "
         "refactors.\n\n"
         "REQUIRED:\n"
-        "1. Re-read the shared data structures (queues, vectors, indexes) involved "
-        "in the remaining races — a textbook atomic fix can still leave other races.\n"
-        "2. Keep using the same stress + race detector command for before/after "
+        f"1. Re-read the code paths involved in the remaining {noun}(s) — a "
+        "textbook fix can still leave other issues in the same class.\n"
+        "2. Keep using the same stress + sanitizer command for before/after "
         "comparison; require a real reduction (ideally to zero).\n"
         "3. Treat even a clean sanitizer run as reduced confidence, not proof of "
-        "absence — races are non-deterministic.\n"
-        "Do not claim completion while the race detector shows no improvement."
+        "absence — this class of bug is non-deterministic.\n"
+        "Do not claim completion while the detector shows no improvement."
     )
+
+
+def _reflect_fix_races(record: VerificationRecord, edited: Sequence[str]) -> str:
+    """Back-compat wrapper — concurrency is one dynamic-risk category."""
+    return _reflect_fix_dynamic(record, edited)
 
 
 def _reflect_fix_compiler(record: VerificationRecord, edited: Sequence[str]) -> str:
@@ -520,67 +545,92 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
         error_print=io.tool_error,
     )
 
-    # Concurrency-relevant diffs → mandatory race detector (before/after) when available
+    # Dynamic-risk diffs → mandatory sanitizer before/after when available
+    # (concurrency / memory_safety / leaks — one taxonomy, three rows)
     from .verify import COMPILER_VERIFY_STATES
 
-    race_cmp = None
     try:
-        from .concurrency_checks import (
-            analyze_concurrency_change,
-            concurrency_nodes_from_comparison,
-            tag_concurrency_relevant,
+        from .dynamic_analysis import (
+            analyze_dynamic_risks,
+            nodes_from_comparison,
+            tag_dynamic_risks,
+            worst_blocking_comparison,
         )
         from .risk import collect_base_signals
 
-        diff_for_race = getattr(engine.ctx, "last_diff", None) or ""
-        tag = tag_concurrency_relevant(diff_for_race, edited_list)
-        record.concurrency_relevant = tag.relevant
-        if tag.relevant and record.state not in COMPILER_VERIFY_STATES:
+        diff_for_dyn = getattr(engine.ctx, "last_diff", None) or ""
+        tags = tag_dynamic_risks(diff_for_dyn, edited_list)
+        record.concurrency_relevant = any(t.category_id == "concurrency" for t in tags)
+        if tags and record.state not in COMPILER_VERIFY_STATES:
             # Only spend detector budget when ordinary verify isn't already a
-            # compiler failure; still run when tests failed so races surface.
+            # compiler failure; still run when tests failed so issues surface.
+            cats = ", ".join(t.category_id for t in tags)
             io.tool_warning(
-                "Concurrency-relevant change detected — running race detector "
-                f"({'; '.join(tag.reasons[:2]) or 'threading primitives in diff'})."
+                f"Dynamic-risk change detected ({cats}) — running sanitizer "
+                f"analysis ({'; '.join(tags[0].reasons[:2]) or 'taxonomy match'})."
             )
-            race_cmp = analyze_concurrency_change(
+            comparisons = analyze_dynamic_risks(
                 root,
-                diff=diff_for_race,
+                diff=diff_for_dyn,
                 edited=edited_list,
                 verbose=bool(getattr(coder, "verbose", False)),
                 error_print=io.tool_error,
             )
-            record.race_comparison = race_cmp.to_dict()
-            engine.record_execution(
-                f"race analysis outcome={race_cmp.outcome} "
-                f"before={race_cmp.before.race_count if race_cmp.before else None} "
-                f"after={race_cmp.after.race_count if race_cmp.after else None} "
-                f"tool={race_cmp.tool.tool_id if race_cmp.tool else None}"
-            )
-            if race_cmp.blocks_commit:
-                record.failure_kind = "race_detection"
-                record.state = VerifyState.RACE_DETECTED
+            record.dynamic_comparisons = [c.to_dict() for c in comparisons]
+            # Keep race_comparison populated for concurrency back-compat
+            for c in comparisons:
+                if c.category_id == "concurrency":
+                    record.race_comparison = c.to_dict()
+                    break
+            for c in comparisons:
+                engine.record_execution(
+                    f"dynamic analysis category={c.category_id} "
+                    f"outcome={c.outcome} "
+                    f"before={c.before.issue_count if c.before else None} "
+                    f"after={c.after.issue_count if c.after else None} "
+                    f"tool={c.tool.tool_id if c.tool else None}"
+                )
+            hard = [c for c in comparisons if c.blocks_commit]
+            if hard:
+                blocker = worst_blocking_comparison(hard)
+                assert blocker is not None
+                if blocker.category_id == "concurrency":
+                    record.failure_kind = "race_detection"
+                    record.state = VerifyState.RACE_DETECTED
+                else:
+                    record.failure_kind = "dynamic_analysis"
+                    record.state = VerifyState.DYNAMIC_ANALYSIS_FAILED
                 record.passed = False
-                record.error = race_cmp.summary
-                if race_cmp.after and race_cmp.after.output_excerpt:
-                    record.output_excerpt = race_cmp.after.output_excerpt
-            # Always emit an honest node (clean runs get reduced-confidence label)
+                record.error = blocker.summary
+                if blocker.after and blocker.after.output_excerpt:
+                    record.output_excerpt = blocker.after.output_excerpt
+                # Prefer the blocking comparison for reflect messaging
+                record.dynamic_comparisons = [
+                    blocker.to_dict()
+                ] + [
+                    c.to_dict()
+                    for c in comparisons
+                    if c is not blocker
+                ]
+            # Always emit honest nodes (clean runs get reduced-confidence label);
+            # soft-block outcomes become Medium gate nodes via _MEDIUM_GATE_TYPES.
             sig = collect_base_signals(edited_list)
-            sig.concurrency_relevant = True
-            sig.race_detector_ran = race_cmp.tool_available
-            sig.race_detector_outcome = race_cmp.outcome
-            nodes = concurrency_nodes_from_comparison(
-                race_cmp,
-                signals=sig,
-                files=edited_list,
-                task_id=getattr(engine.ctx, "current_task_id", None),
-                task_title=getattr(engine.ctx, "current_task_title", None),
-                created_by_session=getattr(engine.ctx, "session_id", None),
-            )
-            if nodes:
-                store.add_many(nodes)
+            all_nodes = []
+            for c in comparisons:
+                nodes = nodes_from_comparison(
+                    c,
+                    signals=sig,
+                    files=edited_list,
+                    task_id=getattr(engine.ctx, "current_task_id", None),
+                    task_title=getattr(engine.ctx, "current_task_title", None),
+                    created_by_session=getattr(engine.ctx, "session_id", None),
+                )
+                all_nodes.extend(nodes)
+            if all_nodes:
+                store.add_many(all_nodes)
     except Exception as err:  # noqa: BLE001
         if getattr(coder, "verbose", False):
-            io.tool_warning(f"Concurrency race analysis skipped: {err}")
+            io.tool_warning(f"Dynamic-risk analysis skipped: {err}")
 
     coder.last_verification = record
     coder.test_outcome = bool(record.meaningful_pass)
@@ -618,11 +668,15 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
     # find_relevant_tests(). "2 failed, 7 passed" must never become "no tests".
     state = record.state or VerifyState.NOT_RUN
     discovered = record.tests_discovered
-    needs_race_fix = (
-        state == VerifyState.RACE_DETECTED or record.failure_kind == "race_detection"
+    needs_dynamic_fix = (
+        state
+        in (VerifyState.RACE_DETECTED, VerifyState.DYNAMIC_ANALYSIS_FAILED)
+        or record.failure_kind
+        in ("race_detection", "dynamic_analysis", "sanitizer")
     )
+    needs_race_fix = needs_dynamic_fix  # back-compat alias
     needs_compiler_fix = (
-        not needs_race_fix
+        not needs_dynamic_fix
         and (
             state in COMPILER_VERIFY_STATES
             or bool(getattr(record, "is_compiler_failure", False))
@@ -630,7 +684,7 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
     )
     needs_generate = (
         not needs_compiler_fix
-        and not needs_race_fix
+        and not needs_dynamic_fix
         and (
             state
             in (VerifyState.NO_TESTS, VerifyState.RUNNER_MISSING, VerifyState.NOT_RUN)
@@ -641,7 +695,7 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
     )
     needs_fix = (
         not needs_compiler_fix
-        and not needs_race_fix
+        and not needs_dynamic_fix
         and (
             state in (VerifyState.TESTS_FAILED, VerifyState.COLLECTION_FAILED)
             or (
@@ -691,24 +745,43 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
                 reason="human requested dedicated new test beside pre-existing ones",
             )
 
-    if needs_race_fix and not record.meaningful_pass:
-        cmp_ = record.race_comparison or {}
+    if needs_dynamic_fix and not record.meaningful_pass:
+        comps = list(record.dynamic_comparisons or [])
+        cmp_ = next(
+            (
+                c
+                for c in comps
+                if c.get("outcome") in ("no_improvement", "regression")
+            ),
+            None,
+        )
+        if cmp_ is None:
+            cmp_ = comps[0] if comps else (record.race_comparison or {})
+        category = cmp_.get("category_id") or "dynamic"
+        noun = cmp_.get("issue_noun") or "issue"
+        before_n = cmp_.get("before_issues", cmp_.get("before_races"))
+        after_n = cmp_.get("after_issues", cmp_.get("after_races"))
+        title_prefix = (
+            "Concurrency race detector"
+            if category == "concurrency"
+            else f"Dynamic analysis ({category})"
+        )
         node = _upsert_verification_node(
             store,
             title=(
-                f"Concurrency race detector — {cmp_.get('outcome', 'failed')} "
+                f"{title_prefix} — {cmp_.get('outcome', 'failed')} "
                 "(commit blocked)"
             ),
             summary=(
                 cmp_.get("summary")
-                or "Commit blocked: concurrency change did not improve under "
-                "the race detector before/after comparison."
+                or "Commit blocked: dynamic-risk change did not improve under "
+                "the sanitizer before/after comparison."
             ),
             explanation=(
                 f"State: {state.value}\n"
+                f"Category: {category}\n"
                 f"Outcome: {cmp_.get('outcome')}\n"
-                f"Before→After races: {cmp_.get('before_races')}→"
-                f"{cmp_.get('after_races')}\n"
+                f"Before→After {noun}s: {before_n}→{after_n}\n"
                 f"Tool: {cmp_.get('tool_id')}\n"
                 f"{record.output_excerpt[-1500:]}"
             ),
@@ -717,34 +790,38 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
             task_id=getattr(engine.ctx, "current_task_id", None),
             task_title=getattr(engine.ctx, "current_task_title", None),
         )
-        node.signals["concurrency_race"] = True
+        node.signals["dynamic_analysis"] = True
+        node.signals["dynamic_risk_category"] = category
+        node.signals["concurrency_race"] = category == "concurrency"
         node.signals["race_outcome"] = cmp_.get("outcome")
+        node.signals["sanitizer_outcome"] = cmp_.get("outcome")
         node.signals["verification_blocked"] = True
         store.save_local()
         coder._z_gate_hold_dirty = True
         if not force and fix_attempts < MAX_TEST_FIX_ATTEMPTS:
             coder._z_verify_fix_attempts = fix_attempts + 1
+            state_label = getattr(state, "value", state)
             io.tool_warning(
-                "Verification: RACE_DETECTED — re-read shared structures; "
+                f"Verification: {state_label} — re-read affected code paths; "
                 "before/after sanitizer must show a real reduction."
             )
             return GateResult(
                 allow_commit=False,
-                reflect_message=_reflect_fix_races(record, edited_list),
+                reflect_message=_reflect_fix_dynamic(record, edited_list),
                 verification=record,
                 blocked_high=[node],
-                reason="race detector — no improvement / regression",
+                reason="dynamic analysis — no improvement / regression",
             )
         if fix_attempts >= MAX_TEST_FIX_ATTEMPTS and not force:
             node.title = (
-                f"Auto-fix exhausted — races still present after {fix_attempts} "
-                "attempts"
+                f"Auto-fix exhausted — {noun}s still present after "
+                f"{fix_attempts} attempts"
             )
             node.signals["auto_fix_exhausted"] = True
             store.save_local()
             reason = (
                 f"Auto-fix exhausted after {fix_attempts} attempts; "
-                "race detector still shows no improvement.\n"
+                "sanitizer still shows no improvement.\n"
                 f"{_last_failure_excerpt(record)}"
             )
             io.tool_error(f"Commit blocked by Z verification gate. {reason}")

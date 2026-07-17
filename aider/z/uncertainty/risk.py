@@ -45,6 +45,13 @@ class DetectionSignals:
     concurrency_relevant: Optional[bool] = None
     race_detector_ran: Optional[bool] = None
     race_detector_outcome: Optional[str] = None
+    # Broader dynamic-risk taxonomy (concurrency / memory_safety / leaks)
+    dynamic_risk_relevant: Optional[bool] = None
+    dynamic_risk_categories: List[str] = field(default_factory=list)
+    sanitizer_ran: Optional[bool] = None
+    sanitizer_outcome: Optional[str] = None
+    memory_safety_relevant: Optional[bool] = None
+    leak_relevant: Optional[bool] = None
 
 
 def _max_tier(*tiers: Tier) -> Tier:
@@ -122,12 +129,22 @@ def derive_risk_tier(signals: DetectionSignals, node_type: NodeType) -> Tier:
     if node_type == NodeType.ESTABLISHED_SOLUTION_GAP:
         return Tier.MEDIUM
 
-    if node_type == NodeType.CONCURRENCY_RACE:
-        # Remaining races / no improvement are serious; tool-missing is reviewable.
+    _dynamic_types = (
+        NodeType.CONCURRENCY_RACE,
+        NodeType.MEMORY_SAFETY,
+        NodeType.LEAK_ANALYSIS,
+        NodeType.DYNAMIC_ANALYSIS,
+    )
+    if node_type in _dynamic_types:
+        # Remaining issues / no improvement are serious; tool-missing is reviewable.
         # Clean dynamic runs stay Low risk (informational) but never High confidence.
-        if signals.race_detector_outcome in ("no_improvement", "regression"):
+        outcome = (
+            signals.sanitizer_outcome
+            or signals.race_detector_outcome
+        )
+        if outcome in ("no_improvement", "regression"):
             return Tier.HIGH
-        if signals.race_detector_outcome == "clean":
+        if outcome == "clean":
             return Tier.LOW
         return Tier.MEDIUM
 
@@ -184,11 +201,23 @@ def derive_confidence_tier(signals: DetectionSignals, node_type: NodeType) -> Ti
     if node_type == NodeType.REQUIREMENT_GAP:
         conf = _min_conf(conf, Tier.LOW)
 
-    # Dynamic race analysis never upgrades confidence to High — races are
+    # Dynamic analysis never upgrades confidence to High — these bugs are
     # non-deterministic; a clean run is reduced confidence, not proof.
-    if node_type == NodeType.CONCURRENCY_RACE or signals.race_detector_ran:
+    _dynamic_types = (
+        NodeType.CONCURRENCY_RACE,
+        NodeType.MEMORY_SAFETY,
+        NodeType.LEAK_ANALYSIS,
+        NodeType.DYNAMIC_ANALYSIS,
+    )
+    if (
+        node_type in _dynamic_types
+        or signals.race_detector_ran
+        or signals.sanitizer_ran
+        or signals.dynamic_risk_relevant
+    ):
         conf = _min_conf(conf, Tier.MEDIUM)
-        if signals.race_detector_outcome in (
+        outcome = signals.sanitizer_outcome or signals.race_detector_outcome
+        if outcome in (
             "after_only",
             "tool_missing",
             "reduced",
