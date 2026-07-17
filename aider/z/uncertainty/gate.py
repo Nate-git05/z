@@ -304,12 +304,25 @@ def _reflect_generate_tests(edited: Sequence[str], relevant: Sequence[str]) -> s
 def _reflect_fix_tests(record: VerificationRecord, edited: Sequence[str]) -> str:
     excerpt = (record.output_excerpt or record.error or "")[-1500:]
     files = ", ".join(list(edited)[:6])
+    preexisting = list(getattr(record, "relevant_preexisting", None) or [])
+    relevant_note = ""
+    if record.failure_kind == "relevant_tests" or (
+        preexisting and record.relevant_passed is False
+    ):
+        relevant_note = (
+            "\nMANDATORY pre-existing relevant tests were discovered and must pass — "
+            "a newly written test in a different directory does NOT replace them:\n"
+            + "\n".join(f"  - {p}" for p in preexisting[:12])
+            + "\nUpdate those established tests (or the implementation) to match the "
+            "intentional behavior change. Do not only add parallel coverage elsewhere.\n"
+        )
     return (
         "Z verification gate: the test suite failed after your edits"
         f"{f' to {files}' if files else ''}.\n"
         f"Command: {record.command}\n"
         f"Exit code: {record.exit_code}\n"
         f"Discovered tests: {record.tests_discovered}\n"
+        f"{relevant_note}"
         f"Output (excerpt):\n{excerpt}\n\n"
         "ALLOWED fixes: correct the implementation/tests under review; "
         "install a real declared dependency (pip install / requirements).\n"
@@ -327,6 +340,71 @@ def _reflect_fix_tests(record: VerificationRecord, edited: Sequence[str]) -> str
         "If install fails, STOP and report the exact error — do not fabricate a stand-in.\n"
         "Do not claim completion while tests are red."
     )
+
+
+def _confirm_relevant_tests_checkpoint(
+    io,
+    record: VerificationRecord,
+    *,
+    force: bool = False,
+) -> Optional[str]:
+    """
+    Human-visible checkpoint: list discovered pre-existing tests, confirm run,
+    and ask whether a dedicated new test is also wanted.
+
+    Returns an optional reflect_message when the user wants a dedicated new test
+    added after the mandatory pre-existing run.
+    """
+    preexisting = list(getattr(record, "relevant_preexisting", None) or [])
+    if not preexisting:
+        return None
+    if force:
+        return None
+    # Avoid re-prompting every gate loop in the same session
+    if getattr(io, "_z_relevant_tests_acked", False):
+        return None
+
+    lines = [f"  - {p}" for p in preexisting[:20]]
+    if len(preexisting) > 20:
+        lines.append(f"  … and {len(preexisting) - 20} more")
+    subject = "\n".join(lines)
+    status = (
+        "PASSED"
+        if record.relevant_passed is True
+        else "FAILED"
+        if record.relevant_passed is False
+        else "PENDING"
+    )
+    io.tool_warning(
+        f"Found {len(preexisting)} existing test file(s) covering this module "
+        f"(status={status}). Running them is mandatory — new tests elsewhere "
+        f"do not replace them:\n{subject}"
+    )
+    # Informational ack that discovery happened (not a silent skip)
+    io.confirm_ask(
+        "Acknowledge these pre-existing tests were discovered and must stay green?",
+        default="y",
+        subject=subject,
+    )
+    setattr(io, "_z_relevant_tests_acked", True)
+
+    want_new = io.confirm_ask(
+        "Would you also like a dedicated new test added for this specific fix?",
+        default="n",
+        explicit_yes_required=True,
+        subject=subject,
+    )
+    if want_new and record.meaningful_pass:
+        files = ", ".join(preexisting[:6])
+        return (
+            "Z verification gate: pre-existing relevant tests already cover this "
+            f"module ({files}).\n"
+            "The human asked for an ADDITIONAL dedicated test for this specific fix.\n"
+            "Add one focused test NEXT TO the established test file(s) above — "
+            "follow that directory/naming convention. Do not create a parallel "
+            "tree in a different folder. Keep the pre-existing tests green."
+        )
+    return None
 
 
 def _reflect_fix_compiler(record: VerificationRecord, edited: Sequence[str]) -> str:
@@ -375,10 +453,42 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
     io = coder.io
 
     # --- 1) Real verification ---
+    # Extract symbols + brand-new paths so relevant-test discovery can find
+    # nested pre-existing files (e.g. implementations/test_model_retry.py).
+    symbols: List[str] = []
+    new_files: List[str] = list(getattr(engine.ctx, "new_files_this_turn", None) or [])
+    try:
+        from .sibling_traits import new_files_from_diff
+
+        diff_text = getattr(engine.ctx, "last_diff", None) or ""
+        for nf in new_files_from_diff(diff_text):
+            if nf not in new_files:
+                new_files.append(nf)
+        contents = {}
+        for path in edited_list:
+            try:
+                rel = coder.get_rel_fname(path)
+            except Exception:
+                rel = str(path)
+            abs_p = root / rel
+            if abs_p.is_file():
+                try:
+                    contents[rel] = abs_p.read_text(encoding="utf-8", errors="ignore")[
+                        :20000
+                    ]
+                except OSError:
+                    pass
+        if contents and hasattr(engine, "_extract_symbols"):
+            symbols = list(engine._extract_symbols(contents) or [])
+    except Exception:
+        pass
+
     record, relevant = verify_edits(
         root,
         edited_list,
         test_cmd=getattr(coder, "test_cmd", None),
+        symbols=symbols,
+        new_files=new_files,
         verbose=bool(getattr(coder, "verbose", False)),
         error_print=io.tool_error,
     )
@@ -389,7 +499,9 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
         engine.record_execution(
             f"verification state={getattr(record.state, 'value', record.state)} "
             f"discovered={record.tests_discovered} exit={record.exit_code} "
-            f"cmd={record.command}"
+            f"cmd={record.command} relevant_preexisting="
+            f"{len(record.relevant_preexisting or [])} "
+            f"relevant_passed={record.relevant_passed}"
         )
         # Surface ModuleNotFoundError into the session log for fabrication checks
         from aider.z.deps import extract_missing_modules
@@ -445,6 +557,42 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
     # Prefer fix when we know tests existed and failed
     if needs_fix and (discovered or 0) > 0:
         needs_generate = False
+    # Pre-existing relevant tests failed/unrun — never "generate new tests" instead
+    if record.failure_kind == "relevant_tests" or (
+        record.relevant_preexisting
+        and record.relevant_passed is False
+    ):
+        needs_fix = True
+        needs_generate = False
+
+    # Always surface discovered pre-existing tests (visibility); interactive
+    # "want a dedicated new test?" only when the mandatory run is green.
+    if record.relevant_preexisting and not getattr(io, "_z_relevant_listed", False):
+        listed = "\n".join(f"  - {p}" for p in record.relevant_preexisting[:16])
+        io.tool_warning(
+            f"Found {len(record.relevant_preexisting)} existing test file(s) "
+            f"covering this module — running them is mandatory:\n{listed}"
+        )
+        setattr(io, "_z_relevant_listed", True)
+    if (
+        not needs_compiler_fix
+        and not needs_fix
+        and not needs_generate
+        and record.meaningful_pass
+    ):
+        try:
+            extra_reflect = _confirm_relevant_tests_checkpoint(
+                io, record, force=force
+            )
+        except Exception:
+            extra_reflect = None
+        if extra_reflect:
+            return GateResult(
+                allow_commit=False,
+                reflect_message=extra_reflect,
+                verification=record,
+                reason="human requested dedicated new test beside pre-existing ones",
+            )
 
     if needs_compiler_fix and not record.meaningful_pass:
         kind = record.failure_kind or state.value

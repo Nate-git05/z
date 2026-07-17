@@ -118,12 +118,30 @@ def find_relevant_tests(
     files_changed: Sequence[str],
     symbols: Sequence[str] = (),
 ) -> List[str]:
-    """Locate tests in the same module or that reference changed symbols by name."""
+    """Locate tests in the same module or that reference changed symbols by name.
+
+    Includes nested layouts (e.g. ``tests/.../implementations/test_<stem>.py``)
+    that co-location heuristics alone miss.
+    """
     root = Path(root)
     found: Set[str] = set()
     changed = [Path(f) for f in files_changed]
+    # Skip test files themselves as "changed module" stems when scanning —
+    # still allow them to appear if they match another changed production file.
+    prod_changed = [
+        p
+        for p in changed
+        if not (
+            p.name.startswith("test_")
+            or p.name.endswith("_test.py")
+            or ".test." in p.name
+            or ".spec." in p.name
+        )
+    ]
+    if not prod_changed:
+        prod_changed = list(changed)
 
-    for path in changed:
+    for path in prod_changed:
         stem = path.stem
         parent = path.parent
         candidates = [
@@ -143,36 +161,108 @@ def find_relevant_tests(
                     found.add(str(c.relative_to(root)))
                 except ValueError:
                     found.add(str(c))
+        # Nested / unconventional but conventional-named tests anywhere under root
+        if stem and stem not in ("index", "main", "app", "init", "utils", "helpers"):
+            for pattern in (
+                f"**/test_{stem}.py",
+                f"**/{stem}_test.py",
+                f"**/{stem}.test.ts",
+                f"**/{stem}.spec.ts",
+                f"**/{stem}.test.js",
+                f"**/{stem}.spec.js",
+            ):
+                for tf in root.glob(pattern):
+                    if not tf.is_file():
+                        continue
+                    if any(
+                        part in ("node_modules", ".git", "venv", ".venv", "dist", "build")
+                        for part in tf.parts
+                    ):
+                        continue
+                    try:
+                        found.add(str(tf.relative_to(root)))
+                    except ValueError:
+                        found.add(str(tf))
 
-    # Scan test dirs for symbol name references
+    # Scan test dirs for symbol / module-stem references
     symbol_names = [s for s in symbols if s and len(s) > 2]
-    test_globs = ["**/test_*.py", "**/*_test.py", "**/*.test.ts", "**/*.spec.ts", "**/tests/**/*.py"]
+    test_globs = [
+        "**/test_*.py",
+        "**/*_test.py",
+        "**/*.test.ts",
+        "**/*.spec.ts",
+        "**/tests/**/*.py",
+    ]
+    scanned = 0
+    scan_limit = 800
     for pattern in test_globs:
         for tf in root.glob(pattern):
             if not tf.is_file():
                 continue
+            if any(
+                part in ("node_modules", ".git", "venv", ".venv", "dist", "build")
+                for part in tf.parts
+            ):
+                continue
+            scanned += 1
+            if scanned > scan_limit:
+                break
             try:
                 text = tf.read_text(encoding="utf-8", errors="ignore")
             except OSError:
                 continue
-            # Same-file / module name hints
-            for path in changed:
-                if path.stem and path.stem in text and path.stem not in ("index", "main", "app"):
-                    try:
-                        found.add(str(tf.relative_to(root)))
-                    except ValueError:
-                        found.add(str(tf))
+            hit = False
+            for path in prod_changed:
+                if (
+                    path.stem
+                    and path.stem in text
+                    and path.stem not in ("index", "main", "app", "init", "utils", "helpers")
+                ):
+                    hit = True
                     break
-            for sym in symbol_names:
-                short = sym.rsplit(".", 1)[-1]
-                if short in text:
-                    try:
-                        found.add(str(tf.relative_to(root)))
-                    except ValueError:
-                        found.add(str(tf))
-                    break
+            if not hit:
+                for sym in symbol_names:
+                    short = sym.rsplit(".", 1)[-1]
+                    if len(short) > 2 and short in text:
+                        hit = True
+                        break
+            if hit:
+                try:
+                    found.add(str(tf.relative_to(root)))
+                except ValueError:
+                    found.add(str(tf))
+        if scanned > scan_limit:
+            break
 
     return sorted(found)
+
+
+def classify_relevant_tests(
+    relevant: Sequence[str],
+    edited: Sequence[str] = (),
+    *,
+    new_files: Sequence[str] = (),
+) -> tuple[List[str], List[str]]:
+    """
+    Split discovered relevant tests into pre-existing vs newly written this turn.
+
+    Newly written tests cannot substitute for running the established ones.
+    Prefer ``new_files`` (diff ``new file mode`` / ``new_files_this_turn``).
+    When that list is empty, treat nothing as newly written — fail closed so
+    every discovered file must still execute.
+    """
+    new_set = {n.replace("\\", "/") for n in (new_files or ())}
+    preexisting: List[str] = []
+    newly_written: List[str] = []
+    for rel in relevant:
+        r = (rel or "").replace("\\", "/")
+        if not r:
+            continue
+        if r in new_set:
+            newly_written.append(r)
+        else:
+            preexisting.append(r)
+    return preexisting, newly_written
 
 
 def detect_missing_or_failing_tests(
