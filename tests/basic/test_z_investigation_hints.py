@@ -16,6 +16,7 @@ from aider.z.uncertainty.checklist import (  # noqa: E402
     decompose_request,
     extract_investigation_clauses,
     extract_investigation_targets,
+    investigation_site_groups,
     rescore_checklist_with_evidence,
 )
 from aider.z.uncertainty.detectors import detect_requirement_gaps  # noqa: E402
@@ -42,6 +43,20 @@ _FMTLOG_HINT = (
     "the vector."
 )
 
+# Live fmtlog3 wording that previously false-fired checked_fixed
+_FMTLOG3_HINT = (
+    "check for a vector-reallocation race: bgLogInfos/logInfos indexing via "
+    "header->logId while a concurrent registerLogInfo() could reallocate the vector"
+)
+
+# Size-load-only change; bgLogInfos line is unchanged context (commit e041134 shape)
+_FMTLOG3_SIZE_ONLY_DIFF = """diff --git a/src/fmtlog.cpp b/src/fmtlog.cpp
+@@ -100,7 +100,7 @@ void poll() {
+-    auto size = header->size.load(std::memory_order_relaxed);
++    auto size = header->size.load(std::memory_order_acquire);
+     StaticLogInfo& info = bgLogInfos[header->logId];
+"""
+
 
 class ClassifyAndDecomposeTest(unittest.TestCase):
     def test_investigation_in_registry(self):
@@ -64,6 +79,25 @@ class ClassifyAndDecomposeTest(unittest.TestCase):
         joined = " ".join(targets)
         self.assertIn("bgLogInfos", joined)
         self.assertIn("registerLogInfo", joined)
+        # Weak/common tokens must not be primary targets
+        self.assertNotIn("concurrent", [t.lower() for t in targets])
+        self.assertNotIn("header", [t.lower() for t in targets])
+
+    def test_fmtlog3_targets_are_strong_only(self):
+        targets = extract_investigation_targets(_FMTLOG3_HINT)
+        low = [t.lower() for t in targets]
+        self.assertIn("bgloginfos", low)
+        self.assertIn("registerloginfo", low)
+        for weak in ("header", "concurrent", "reallocate", "concern", "explicitly"):
+            self.assertNotIn(weak, low, targets)
+
+    def test_dual_site_groups_for_while_race(self):
+        groups = investigation_site_groups(_FMTLOG3_HINT)
+        self.assertEqual(len(groups), 2, groups)
+        left = " ".join(groups[0]).lower()
+        right = " ".join(groups[1]).lower()
+        self.assertIn("bgloginfos", left)
+        self.assertIn("registerloginfo", right)
 
     def test_decompose_lifts_embedded_investigation(self):
         cl = decompose_request("fmtlog #115", _FMTLOG_HINT)
@@ -144,6 +178,82 @@ class DispositionEvidenceTest(unittest.TestCase):
         rescore_checklist_with_evidence(cl, evidence)
         self.assertEqual(item.status, "Fully Addressed")
         self.assertIn("disposition:checked_fixed", evidence[0].evidence_notes)
+
+    def test_context_line_does_not_checked_fixed(self):
+        """fmtlog3: unchanged bgLogInfos context + header->size edit ≠ fixed."""
+        item = RequirementItem(text="Also investigate " + _FMTLOG3_HINT, kind="investigation")
+        cl = TaskChecklist(task_id="t", title="fmtlog3", items=[item])
+        evidence = bind_evidence(
+            cl,
+            files_changed=["src/fmtlog.cpp"],
+            file_contents={
+                "src/fmtlog.cpp": (
+                    "auto size = header->size.load();\n"
+                    "StaticLogInfo& info = bgLogInfos[header->logId];\n"
+                )
+            },
+            symbols=["size"],
+            last_diff=_FMTLOG3_SIZE_ONLY_DIFF,
+        )
+        rescore_checklist_with_evidence(cl, evidence)
+        notes = evidence[0].evidence_notes
+        self.assertNotIn("disposition:checked_fixed", notes, notes)
+        self.assertIn(item.status, ("Not Addressed", "Partially Addressed"))
+        self.assertTrue(
+            any(
+                n in notes
+                for n in ("disposition:not_checked", "disposition:partial_inspect")
+            ),
+            notes,
+        )
+
+        sig = collect_base_signals(["src/fmtlog.cpp"])
+        nodes = detect_requirement_gaps(sig, checklist=cl, gap_details=[])
+        inv_nodes = [
+            n for n in nodes if n.signals.get("requirement_kind") == "investigation"
+        ]
+        self.assertTrue(inv_nodes)
+        self.assertEqual(_effective_gate_tier(inv_nodes[0]), Tier.HIGH)
+
+    def test_one_site_only_is_partial_not_fixed(self):
+        """Touching registerLogInfo alone must not clear a dual-site race hint."""
+        item = RequirementItem(text="Also investigate " + _FMTLOG3_HINT, kind="investigation")
+        cl = TaskChecklist(task_id="t", title="fmtlog3", items=[item])
+        evidence = bind_evidence(
+            cl,
+            files_changed=["src/fmtlog.cpp"],
+            symbols=["registerLogInfo"],
+            last_diff=(
+                "diff --git a/src/fmtlog.cpp b/src/fmtlog.cpp\n"
+                "+void registerLogInfo() {\n"
+                "+  std::lock_guard<std::mutex> g(mu);\n"
+                "+  infos.push_back(entry);\n"
+                "+}\n"
+            ),
+        )
+        notes = evidence[0].evidence_notes
+        self.assertNotIn("disposition:checked_fixed", notes, notes)
+        self.assertIn("disposition:partial_inspect", notes)
+
+    def test_both_sites_in_changed_lines_checked_fixed(self):
+        item = RequirementItem(text="Also investigate " + _FMTLOG3_HINT, kind="investigation")
+        cl = TaskChecklist(task_id="t", title="fmtlog3", items=[item])
+        evidence = bind_evidence(
+            cl,
+            files_changed=["src/fmtlog.cpp"],
+            symbols=["registerLogInfo", "bgLogInfos"],
+            last_diff=(
+                "diff --git a/src/fmtlog.cpp b/src/fmtlog.cpp\n"
+                "+  // reader uses snapshot of bgLogInfos\n"
+                "+void registerLogInfo() {\n"
+                "+  std::lock_guard<std::mutex> g(mu);\n"
+                "+  logInfos.emplace_back();\n"
+                "+}\n"
+            ),
+        )
+        rescore_checklist_with_evidence(cl, evidence)
+        self.assertIn("disposition:checked_fixed", evidence[0].evidence_notes)
+        self.assertEqual(item.status, "Fully Addressed")
 
     def test_checked_ruled_out_via_inspect_log(self):
         item = self._item()

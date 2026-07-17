@@ -243,9 +243,11 @@ KIND_VERIFIERS: Dict[str, KindVerifier] = {
         status_fn=_status_investigation,
         hard_block_on_gap=True,
         description=(
-            "Named investigative hint must be checked_fixed (diff touches "
-            "named symbols) or checked_ruled_out (session inspect/grep "
-            "evidence) — silently skipping hard-blocks like product gaps."
+            "Named investigative hint must be checked_fixed (changed +/- "
+            "diff lines touch strong named symbols on every dual-site) or "
+            "checked_ruled_out (session inspect/grep evidence) — silently "
+            "skipping hard-blocks like product gaps. Unchanged context "
+            "lines and bare words (header, concurrent) do not count."
         ),
     ),
 }
