@@ -303,6 +303,58 @@ def format_grounding_pack(pack: GroundingPack) -> str:
     return "\n".join(parts).strip() + "\n"
 
 
+def check_bug_pattern_grounding(skill, pack: GroundingPack) -> GroundingResult:
+    """
+    Ground a bug_pattern skill: claimed root_cause_category must match real
+    diff evidence (same fail-closed spirit as established_solutions).
+    """
+    from .bug_concepts import category_grounded_in_diff, concept_by_id
+
+    category = (getattr(skill, "root_cause_category", None) or "").strip()
+    if not category:
+        return GroundingResult(
+            ok=False,
+            grounded_symbols=[],
+            missing_symbols=[],
+            invented_ratio=1.0,
+            reason="bug_pattern missing root_cause_category",
+        )
+    if concept_by_id(category) is None:
+        return GroundingResult(
+            ok=False,
+            grounded_symbols=[],
+            missing_symbols=[category],
+            invented_ratio=1.0,
+            reason=f"unknown root_cause_category (not in curated taxonomy): {category}",
+        )
+    ok, reason = category_grounded_in_diff(category, pack.diff or "")
+    if not ok:
+        return GroundingResult(
+            ok=False,
+            grounded_symbols=[],
+            missing_symbols=[category],
+            invented_ratio=1.0,
+            reason=reason,
+        )
+    # Also run ordinary symbol grounding on content (soft — category is the hard gate)
+    text = (
+        f"{getattr(skill, 'title', '')}\n"
+        f"{getattr(skill, 'root_cause_explanation', '')}\n"
+        f"{getattr(skill, 'content', '')}"
+    )
+    sym = check_grounding(text, pack)
+    grounded = list(sym.grounded_symbols)
+    if category not in grounded:
+        grounded.append(category)
+    return GroundingResult(
+        ok=True,
+        grounded_symbols=grounded,
+        missing_symbols=list(sym.missing_symbols),
+        invented_ratio=sym.invented_ratio,
+        reason=f"bug_pattern grounded ({reason})",
+    )
+
+
 def check_grounding(
     skill_text: str,
     pack: GroundingPack,

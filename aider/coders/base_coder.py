@@ -1200,7 +1200,13 @@ class Coder:
             if not block:
                 return
             names = ", ".join(s.title for s in skills)
-            label = "Applying skill(s)" if checkpoint == "turn" else "Injecting skill(s) for this step"
+            has_bug = any((s.kind or "") == "bug_pattern" for s in skills)
+            if has_bug and all((s.kind or "") == "bug_pattern" for s in skills):
+                label = "Bug-pattern hypothesis"
+            elif checkpoint == "turn":
+                label = "Applying skill(s)"
+            else:
+                label = "Injecting skill(s) for this step"
             why = "; ".join(
                 f"{s.title} [{s.kind or 'playbook'}"
                 + (f"/{','.join(s.languages)}" if s.languages else "")
@@ -1224,28 +1230,53 @@ class Coder:
             if getattr(self, "verbose", False):
                 pass
 
+    def _skill_capture_skip(self, reason: str) -> None:
+        """Visible skip reason — silence here is how capture looked 'broken'."""
+        if getattr(self, "verbose", False) or os.environ.get(
+            "Z_SKILL_CAPTURE_LOG", ""
+        ).strip().lower() in ("1", "true", "yes"):
+            self.io.tool_output(f"Skill capture skipped: {reason}")
+
     def _maybe_suggest_skill(self, user_message: str):
-        """After a task: ask to create a skill grounded in the real diff/files."""
+        """After a task: ask to create a skill grounded in the real diff/files.
+
+        Fires after a clean verify *or* a human-approved / force / manual commit.
+        Earlier gating required meaningful_pass + cleared hold only — so force/
+        medium-ack completions (most real-repo runs) never offered capture.
+        """
         edited = self.aider_edited_files or set()
         if len(edited) < 1:
+            self._skill_capture_skip("no edited files")
             return
         # Skip tiny one-liners / pure renames
-        if len(user_message.strip()) < 24 and len(edited) < 2:
+        if len((user_message or "").strip()) < 24 and len(edited) < 2:
+            self._skill_capture_skip("turn too small")
             return
-        # Never block task completion on skill capture (evals / --yes / failed verify)
+        # Never block task completion on skill capture (evals / --yes)
         if os.environ.get("Z_SKIP_SKILL_CAPTURE", "").strip().lower() in (
             "1",
             "true",
             "yes",
         ):
+            self._skill_capture_skip("Z_SKIP_SKILL_CAPTURE set")
             return
         if getattr(self.io, "yes", None) is True:
             # yes-always would auto-accept and hang on multi-minute model calls
+            self._skill_capture_skip("--yes / yes_always")
             return
+
         last_ver = getattr(self, "last_verification", None)
-        if last_ver is not None and not getattr(last_ver, "meaningful_pass", False):
+        committed = bool(getattr(self, "last_aider_commit_hash", None))
+        verify_ok = bool(
+            last_ver is not None and getattr(last_ver, "meaningful_pass", False)
+        )
+        # Offer when verify is green OR this turn produced a commit (including
+        # human-approved force / medium-ack / /commit paths).
+        if last_ver is not None and not verify_ok and not committed:
+            self._skill_capture_skip("verify incomplete and no commit this turn")
             return
-        if getattr(self, "_z_gate_hold_dirty", False):
+        if getattr(self, "_z_gate_hold_dirty", False) and not committed:
+            self._skill_capture_skip("gate hold still set (no approved commit)")
             return
         try:
             if not self.io.confirm_ask(
@@ -1253,9 +1284,11 @@ class Coder:
                 default="n",
                 explicit_yes_required=True,
             ):
+                self._skill_capture_skip("user declined")
                 return
             from aider.z.skills.cli import offer_view_new_skill, save_skill_from_task
             from aider.z.skills.grounding import build_grounding_pack
+            from aider.z.skills.router import task_is_bugfix_intent
 
             rels = []
             abs_paths = []
@@ -1297,6 +1330,7 @@ class Coder:
             model_name = None
             if getattr(self, "main_model", None):
                 model_name = getattr(self.main_model, "name", None)
+            prefer_bug = task_is_bugfix_intent(user_message)
             skill, created = save_skill_from_task(
                 self.io,
                 topic,
@@ -1305,6 +1339,7 @@ class Coder:
                 grounding_pack=pack if pack.files or pack.diff else None,
                 uncertainty_engine=getattr(self, "uncertainty_engine", None),
                 repo_root=root,
+                prefer_bug_pattern=prefer_bug,
             )
             if created and skill:
                 offer_view_new_skill(self.io, skill)
@@ -1315,8 +1350,8 @@ class Coder:
                 self.skill_index = load_skills_for_session(io=None)
             except Exception:
                 pass
-        except Exception:
-            pass
+        except Exception as err:  # noqa: BLE001
+            self._skill_capture_skip(f"exception: {err}")
 
     def _maybe_begin_uncertainty_task(self, user_message: str):
         engine = getattr(self, "uncertainty_engine", None)

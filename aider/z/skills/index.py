@@ -109,16 +109,22 @@ def match_skills(
 
 
 def _entry_from_row(r: dict, *, source: str) -> SkillIndexEntry:
+    from .schema import VALID_SKILL_KINDS
+
     kind = (r.get("kind") or "playbook")
     if isinstance(kind, str):
         kind = kind.strip().lower()
     else:
         kind = "playbook"
-    if kind not in ("scaffold", "playbook"):
+    if kind not in VALID_SKILL_KINDS:
         kind = "playbook"
     apply_once = r.get("apply_once")
     if apply_once is None:
         apply_once = kind == "scaffold"
+    language = str(r.get("language") or "").strip().lower()
+    languages = _as_str_list(r.get("languages"))
+    if language and language not in languages:
+        languages = [language] + list(languages)
     return SkillIndexEntry(
         id=str(r.get("id") or ""),
         title=r.get("title") or "",
@@ -131,7 +137,7 @@ def _entry_from_row(r: dict, *, source: str) -> SkillIndexEntry:
         tags=_as_str_list(r.get("tags")),
         project_types=_as_str_list(r.get("project_types")),
         triggers=_as_str_list(r.get("triggers")),
-        languages=_as_str_list(r.get("languages")),
+        languages=languages,
         kind=kind,
         artifacts=_as_str_list(r.get("artifacts")),
         apply_once=bool(apply_once),
@@ -147,6 +153,12 @@ def _entry_from_row(r: dict, *, source: str) -> SkillIndexEntry:
         ),
         repo_key=str(r.get("repo_key") or "").strip(),
         shared=bool(r.get("shared")),
+        symptom_description=str(r.get("symptom_description") or "").strip(),
+        root_cause_category=str(r.get("root_cause_category") or "").strip(),
+        root_cause_explanation=str(r.get("root_cause_explanation") or "").strip(),
+        fix_technique=str(r.get("fix_technique") or "").strip(),
+        verification_method=str(r.get("verification_method") or "").strip(),
+        language=language or (languages[0] if languages else ""),
     )
 
 

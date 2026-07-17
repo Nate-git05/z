@@ -49,9 +49,15 @@ def _as_str_list(value: Any) -> List[str]:
     return [str(value).strip()]
 
 
-# scaffold = one-shot bootstrap; playbook = reusable ongoing guidance
+# scaffold = one-shot bootstrap; playbook = reusable ongoing guidance;
+# bug_pattern = reusable diagnosis (symptom → root cause → fix technique)
 SKILL_KIND_SCAFFOLD = "scaffold"
 SKILL_KIND_PLAYBOOK = "playbook"
+SKILL_KIND_BUG_PATTERN = "bug_pattern"
+
+VALID_SKILL_KINDS = frozenset(
+    {SKILL_KIND_SCAFFOLD, SKILL_KIND_PLAYBOOK, SKILL_KIND_BUG_PATTERN}
+)
 
 
 @dataclass
@@ -73,7 +79,7 @@ class Skill:
     triggers: List[str] = field(default_factory=list)
     source: str = "generate"  # paste | generate | capture
     # Router fields
-    kind: str = SKILL_KIND_PLAYBOOK  # scaffold | playbook
+    kind: str = SKILL_KIND_PLAYBOOK  # scaffold | playbook | bug_pattern
     languages: List[str] = field(default_factory=list)
     artifacts: List[str] = field(default_factory=list)  # paths that mean "already done"
     apply_once: bool = False
@@ -92,12 +98,30 @@ class Skill:
     # auto-apply (and rewrite files) in project B.
     repo_key: str = ""
     shared: bool = False
+    # bug_pattern fields — symptom is what gets embedded for retrieval
+    symptom_description: str = ""
+    root_cause_category: str = ""
+    root_cause_explanation: str = ""
+    fix_technique: str = ""
+    verification_method: str = ""
+    language: str = ""  # coarse applicability filter (also mirrored into languages)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     def embed_text(self) -> str:
         """Text embedded into ChromaDB for retrieval."""
+        if (self.kind or "") == SKILL_KIND_BUG_PATTERN:
+            # Embed the transferable symptom — not the fix — for cross-repo match
+            parts = [
+                self.symptom_description or self.description or "",
+                self.root_cause_category or "",
+                self.title or "",
+                self.language or " ".join(self.languages or []),
+                " ".join(self.tags or []),
+                "bug_pattern",
+            ]
+            return "\n".join(p for p in parts if p).strip()
         parts = [
             self.title or "",
             self.description or "",
@@ -133,6 +157,12 @@ class Skill:
             "repo_key": self.repo_key or "",
             "shared": bool(self.shared),
             "created_at": self.created_at,
+            "symptom_description": self.symptom_description or "",
+            "root_cause_category": self.root_cause_category or "",
+            "root_cause_explanation": self.root_cause_explanation or "",
+            "fix_technique": self.fix_technique or "",
+            "verification_method": self.verification_method or "",
+            "language": self.language or "",
         }
 
     def index_entry(self) -> dict[str, Any]:
@@ -161,16 +191,26 @@ class Skill:
             "source": self.source,
             "repo_key": self.repo_key or "",
             "shared": bool(self.shared),
+            "symptom_description": self.symptom_description or "",
+            "root_cause_category": self.root_cause_category or "",
+            "root_cause_explanation": self.root_cause_explanation or "",
+            "fix_technique": self.fix_technique or "",
+            "verification_method": self.verification_method or "",
+            "language": self.language or "",
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Skill":
         kind = (data.get("kind") or SKILL_KIND_PLAYBOOK).strip().lower()
-        if kind not in (SKILL_KIND_SCAFFOLD, SKILL_KIND_PLAYBOOK):
+        if kind not in VALID_SKILL_KINDS:
             kind = SKILL_KIND_PLAYBOOK
         apply_once = data.get("apply_once")
         if apply_once is None:
             apply_once = kind == SKILL_KIND_SCAFFOLD
+        language = (data.get("language") or "").strip().lower()
+        languages = _as_str_list(data.get("languages"))
+        if language and language not in languages:
+            languages = [language] + languages
         return cls(
             id=str(data.get("id") or uuid.uuid4()),
             title=data.get("title") or "Untitled skill",
@@ -189,7 +229,7 @@ class Skill:
             triggers=_as_str_list(data.get("triggers")),
             source=data.get("source") or "generate",
             kind=kind,
-            languages=_as_str_list(data.get("languages")),
+            languages=languages,
             artifacts=_as_str_list(data.get("artifacts")),
             apply_once=bool(apply_once),
             capability=(data.get("capability") or "").strip(),
@@ -201,6 +241,12 @@ class Skill:
             content_hash=data.get("content_hash"),
             repo_key=str(data.get("repo_key") or "").strip(),
             shared=bool(data.get("shared")),
+            symptom_description=(data.get("symptom_description") or "").strip(),
+            root_cause_category=(data.get("root_cause_category") or "").strip(),
+            root_cause_explanation=(data.get("root_cause_explanation") or "").strip(),
+            fix_technique=(data.get("fix_technique") or "").strip(),
+            verification_method=(data.get("verification_method") or "").strip(),
+            language=language or (languages[0] if languages else ""),
         )
 
 
@@ -230,11 +276,19 @@ class SkillIndexEntry:
     quality_state: str = "verified"
     repo_key: str = ""
     shared: bool = False
+    symptom_description: str = ""
+    root_cause_category: str = ""
+    root_cause_explanation: str = ""
+    fix_technique: str = ""
+    verification_method: str = ""
+    language: str = ""
 
     def match_text(self) -> str:
         bits = [
             self.title,
             self.description,
+            self.symptom_description or "",
+            self.root_cause_category or "",
             " ".join(self.tags or []),
             " ".join(self.triggers or []),
             " ".join(self.project_types or []),

@@ -6,6 +6,7 @@ import re
 from typing import Iterable, List, Optional, Set
 
 from .schema import (
+    SKILL_KIND_BUG_PATTERN,
     SKILL_KIND_PLAYBOOK,
     SKILL_KIND_SCAFFOLD,
     Skill,
@@ -254,7 +255,11 @@ def infer_metadata(
             body, title=resolved_title, description=resolved_desc, tags=resolved_tags
         )
 
-    if resolved_kind not in (SKILL_KIND_SCAFFOLD, SKILL_KIND_PLAYBOOK):
+    if resolved_kind not in (
+        SKILL_KIND_SCAFFOLD,
+        SKILL_KIND_PLAYBOOK,
+        SKILL_KIND_BUG_PATTERN,
+    ):
         resolved_kind = infer_kind(body, title=resolved_title, description=resolved_desc)
 
     if not resolved_artifacts:

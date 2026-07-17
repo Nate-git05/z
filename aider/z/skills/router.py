@@ -19,6 +19,7 @@ from typing import List, Optional, Sequence, Set
 from aider.z.paths import ensure_z_home
 
 from .schema import (
+    SKILL_KIND_BUG_PATTERN,
     SKILL_KIND_PLAYBOOK,
     SKILL_KIND_SCAFFOLD,
     Skill,
@@ -98,6 +99,18 @@ _SCAFFOLD_TASK_RE = re.compile(
 _ONGOING_TASK_RE = re.compile(
     r"(?i)\b(add|fix|implement|refactor|update|change|migrate|test|"
     r"handle|validate|wire|connect|route|endpoint|bug|error)\b"
+)
+
+# Bug-shaped tasks — retrieve bug_pattern pool, not feature playbooks
+_BUGFIX_TASK_RE = re.compile(
+    r"(?i)\b("
+    r"segfault|seg\s*fault|crash(?:es|ing|ed)?|race(?:\s*condition)?|"
+    r"data\s*race|intermittent|flaky|hangs?|deadlock|livelock|"
+    r"memory\s*leak|leaks?\b|use[- ]after[- ]free|buffer\s*overflow|"
+    r"heisenbug|aslr|asan|tsan|lsan|threadsanitizer|addresssanitizer|"
+    r"null\s*deref|sigsegv|abort(?:ed|s)?|corrupted?\s+memory|"
+    r"fix\s+(?:the\s+)?(?:bug|crash|segfault|race|leak)"
+    r")\b"
 )
 
 _MARKER_TO_LANG = {
@@ -181,6 +194,11 @@ def task_is_scaffold_intent(task: str) -> bool:
 
 def task_is_ongoing_intent(task: str) -> bool:
     return bool(_ONGOING_TASK_RE.search(task or ""))
+
+
+def task_is_bugfix_intent(task: str) -> bool:
+    """True when the task looks like diagnosing/fixing a runtime bug."""
+    return bool(_BUGFIX_TASK_RE.search(task or ""))
 
 
 def artifacts_satisfied(root: Path, artifacts: Sequence[str]) -> bool:
@@ -373,6 +391,17 @@ def route_skill(
     kind = (skill.kind or SKILL_KIND_PLAYBOOK).lower()
     apply_once = skill.apply_once or kind == SKILL_KIND_SCAFFOLD
 
+    # bug_pattern: only on bug-fix intent; surfaced as hypothesis (not auto-applied playbook)
+    if kind == SKILL_KIND_BUG_PATTERN:
+        if not task_is_bugfix_intent(task):
+            return RouteDecision(
+                skill, False, "bug_pattern skipped — task is not bug-fix shaped", score
+            )
+        # Inject as a labeled hypothesis — caller formats specially
+        return RouteDecision(
+            skill, True, "bug_pattern hypothesis for bug-fix task", score
+        )
+
     if kind == SKILL_KIND_SCAFFOLD or apply_once:
         if sid and is_skill_satisfied(signals.root, sid):
             return RouteDecision(skill, False, "scaffold already satisfied (state)", score)
@@ -430,7 +459,17 @@ def route_skills(
         )
 
     approved = [d for d in decisions if d.apply]
-    if prefer_playbooks_when_established and signals.established:
+    if task_is_bugfix_intent(task):
+        # Prefer bug_pattern hypotheses first on bug-fix tasks
+        patterns = [
+            d for d in approved if (d.skill.kind or "") == SKILL_KIND_BUG_PATTERN
+        ]
+        others = [
+            d for d in approved if (d.skill.kind or "") != SKILL_KIND_BUG_PATTERN
+        ]
+        if patterns:
+            approved = patterns + others
+    elif prefer_playbooks_when_established and signals.established:
         # Prefer playbooks over scaffolds when both approved
         playbooks = [d for d in approved if (d.skill.kind or "") != SKILL_KIND_SCAFFOLD]
         scaffolds = [d for d in approved if (d.skill.kind or "") == SKILL_KIND_SCAFFOLD]
