@@ -1304,6 +1304,29 @@ def _last_failure_excerpt(record: Optional[VerificationRecord], reflect_message:
     return "\n".join(parts) if parts else "(no failure excerpt captured)"
 
 
+def resolve_commit_edit_set(
+    edited: Optional[Sequence[str]],
+    session_edited: Optional[Sequence[str]],
+    num_reflections: int,
+) -> Set[str]:
+    """
+    Choose which files the verify/commit gate should see after a turn.
+
+    A reflection that applies no new patches (e.g. lint-fix reply that asks
+    for clearer diagnostics instead of emitting edit blocks) must still gate
+    earlier session edits — otherwise real work is left uncommitted with no
+    "Commit blocked..." message and the loop simply exits.
+    """
+    current = {str(p) for p in (edited or ()) if p}
+    if current:
+        return current
+    if int(num_reflections or 0) > 0:
+        prior = {str(p) for p in (session_edited or ()) if p}
+        if prior:
+            return prior
+    return set()
+
+
 def report_auto_fix_exhaustion(
     coder,
     *,
@@ -1344,9 +1367,23 @@ def report_auto_fix_exhaustion(
                 "typecheck failed",
                 "property '",
                 "does not exist on type",
+                "lint",
+                "linter",
+                "attempt to fix lint",
             )
         ):
             tests_still_failing = True
+
+    # Stuck lint/reflect with session edits still dirty counts as exhaustion even
+    # when no VerificationRecord exists yet (gate never ran).
+    session_edited = list(getattr(coder, "aider_edited_files", None) or [])
+    if (
+        not tests_still_failing
+        and session_edited
+        and pending
+        and any(s in (pending or "").lower() for s in ("lint", "linter", "fix lint"))
+    ):
+        tests_still_failing = True
 
     if not tests_still_failing:
         if io is not None:

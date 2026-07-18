@@ -2145,6 +2145,18 @@ class Coder:
         if self.reflected_message:
             return
 
+        # Reflection turns that apply no new patches must still gate/commit
+        # earlier session edits (fmtlog4: lint-fix reflection replied with
+        # prose → empty apply_updates → bool(edited) skipped prepare_commit
+        # and left the real fix uncommitted with no message).
+        from aider.z.uncertainty.gate import resolve_commit_edit_set
+
+        commit_edited = resolve_commit_edit_set(
+            edited,
+            self.aider_edited_files,
+            int(getattr(self, "num_reflections", 0) or 0),
+        )
+
         # Lint before commit (do not commit yet — Z verify gate owns the commit point)
         if edited and self.auto_lint:
             lint_errors = self.lint_edited(edited)
@@ -2165,7 +2177,7 @@ class Coder:
         # Z verify-before-commit gate: real tests + tiered uncertainty policy.
         # Replaces the old "commit then maybe auto-test then analyze" order.
         use_verify_gate = (
-            bool(edited)
+            bool(commit_edited)
             and not self.reflected_message
             and bool(getattr(self, "uncertainty_engine", None))
             and bool(getattr(self, "verify_commit_gate", True))
@@ -2178,7 +2190,7 @@ class Coder:
             from aider.z.uncertainty.verify import gate_enabled
 
             if gate_enabled():
-                gate_result = prepare_commit(self, edited)
+                gate_result = prepare_commit(self, commit_edited)
                 if gate_result.reflect_message:
                     self.reflected_message = gate_result.reflect_message
                     return
@@ -2192,7 +2204,7 @@ class Coder:
                     self.move_back_cur_messages(blocked_msg)
                     return
 
-                saved_message = self.auto_commit(edited)
+                saved_message = self.auto_commit(commit_edited)
                 # Tie explicit acknowledgments / force overrides to the commit hash
                 if saved_message and getattr(self, "last_aider_commit_hash", None):
                     accepted = list(gate_result.acknowledged_medium) + list(
@@ -2212,8 +2224,8 @@ class Coder:
                 return
 
         # Legacy path (no Z uncertainty engine / gate disabled): commit, optional tests, analyze
-        if edited:
-            saved_message = self.auto_commit(edited)
+        if commit_edited:
+            saved_message = self.auto_commit(commit_edited)
 
             if not saved_message and hasattr(self.gpt_prompts, "files_content_gpt_edits_no_repo"):
                 saved_message = self.gpt_prompts.files_content_gpt_edits_no_repo
