@@ -164,8 +164,10 @@ def detect_test_command(root: Path) -> Optional[str]:
     """
     Best-effort project test command when --test-cmd is unset.
 
-    Prefer declared runners. For dependency-free Python layouts under tests/,
-    use unittest discover (not an undeclared pytest dependency).
+    Prefer declared runners (Python/JS, then Cargo/Maven/Gradle/Ruby/PHP/
+    .NET/Swift/CMake/Make). For dependency-free Python layouts under tests/,
+    use unittest discover (not an undeclared pytest dependency) — only after
+    no other ecosystem manifest matches.
     """
     root = Path(root)
     # Explicit pytest config → pytest is declared
@@ -203,6 +205,55 @@ def detect_test_command(root: Path) -> Optional[str]:
             continue
         if re.search(r"(?m)^\s*pytest\b", rtext):
             return f"{py} -m pytest -q"
+
+    # Non-Python/JS ecosystems — check manifests before the stray tests/
+    # unittest fallback so Cargo.toml + a leftover tests/ dir still runs cargo.
+    if (root / "Cargo.toml").is_file():
+        return "cargo test"
+
+    if (root / "pom.xml").is_file():
+        mvnw = root / "mvnw"
+        return f"{'./mvnw' if mvnw.is_file() else 'mvn'} test"
+
+    if (root / "build.gradle").is_file() or (root / "build.gradle.kts").is_file():
+        gradlew = root / "gradlew"
+        return f"{'./gradlew' if gradlew.is_file() else 'gradle'} test"
+
+    if (root / "Gemfile").is_file():
+        spec_dir = root / "spec"
+        test_dir = root / "test"
+        if (root / ".rspec").is_file() or (
+            spec_dir.is_dir() and any(spec_dir.glob("*_spec.rb"))
+        ):
+            return "bundle exec rspec"
+        if test_dir.is_dir() and any(test_dir.glob("*_test.rb")):
+            return "bundle exec rake test"
+
+    if (root / "composer.json").is_file():
+        try:
+            data = json.loads((root / "composer.json").read_text(encoding="utf-8"))
+            if "test" in (data.get("scripts") or {}):
+                return "composer test"
+        except (OSError, json.JSONDecodeError):
+            pass
+        if (root / "vendor" / "bin" / "phpunit").is_file():
+            return "./vendor/bin/phpunit"
+
+    if any(root.glob("*.csproj")) or any(root.glob("*.sln")):
+        return "dotnet test"
+
+    if (root / "Package.swift").is_file():
+        return "swift test"
+
+    if (root / "CMakeLists.txt").is_file() and (root / "build").is_dir():
+        return "ctest --test-dir build"
+    if (root / "Makefile").is_file():
+        try:
+            mtext = (root / "Makefile").read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            mtext = ""
+        if re.search(r"(?m)^test\s*:", mtext):
+            return "make test"
 
     tests_dir = root / "tests"
     if tests_dir.is_dir() and any(tests_dir.rglob("test_*.py")):
