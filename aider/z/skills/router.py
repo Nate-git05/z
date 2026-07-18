@@ -304,7 +304,18 @@ def language_compatible(
     *,
     task: str = "",
 ) -> bool:
-    """False when skill languages clearly conflict with the repo or task."""
+    """False when skill languages clearly conflict with the repo or task.
+
+    ``bug_pattern`` skills are exempt from hard language rejection: they carry
+    a language-agnostic ``root_cause_category`` so a concurrency / memory
+    pattern captured in C++ can still surface as a hypothesis in Rust/Go.
+    Relevance for that kind is scored via symptom / category similarity, not
+    the literal ``languages`` metadata field.
+    """
+    kind = (getattr(skill, "kind", None) or SKILL_KIND_PLAYBOOK).lower()
+    if kind == SKILL_KIND_BUG_PATTERN:
+        return True
+
     skill_langs = _infer_skill_langs(skill)
     task_langs = _task_languages(task)
     repo_langs = set(signals.languages or ())

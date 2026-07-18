@@ -83,6 +83,72 @@ class DetectCommandTest(unittest.TestCase):
             (tests / "test_foo.py").write_text("def test_a():\n    assert True\n", encoding="utf-8")
             self.assertIn("-m pytest -q", detect_test_command(root))
 
+    def test_detects_cargo_test(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "Cargo.toml").write_text(
+                '[package]\nname = "task_queue_rs"\nversion = "0.1.0"\n',
+                encoding="utf-8",
+            )
+            # Stray tests/ must not steal routing from Cargo
+            tests = root / "tests"
+            tests.mkdir()
+            (tests / "test_foo.py").write_text("def test_a():\n    assert True\n", encoding="utf-8")
+            self.assertEqual(detect_test_command(root), "cargo test")
+
+    def test_detects_maven_wrapper(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "pom.xml").write_text("<project/>\n", encoding="utf-8")
+            (root / "mvnw").write_text("#!/bin/sh\n", encoding="utf-8")
+            self.assertEqual(detect_test_command(root), "./mvnw test")
+
+    def test_detects_gradle_kotlin_dsl(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "build.gradle.kts").write_text("plugins {}\n", encoding="utf-8")
+            self.assertEqual(detect_test_command(root), "gradle test")
+
+    def test_detects_rspec(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "Gemfile").write_text('source "https://rubygems.org"\n', encoding="utf-8")
+            (root / ".rspec").write_text("--format documentation\n", encoding="utf-8")
+            self.assertEqual(detect_test_command(root), "bundle exec rspec")
+
+    def test_detects_composer_test_script(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "composer.json").write_text(
+                '{"scripts": {"test": "phpunit"}}\n', encoding="utf-8"
+            )
+            self.assertEqual(detect_test_command(root), "composer test")
+
+    def test_detects_dotnet_test(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "App.csproj").write_text("<Project/>\n", encoding="utf-8")
+            self.assertEqual(detect_test_command(root), "dotnet test")
+
+    def test_detects_swift_test(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "Package.swift").write_text("// swift-tools-version: 5.9\n", encoding="utf-8")
+            self.assertEqual(detect_test_command(root), "swift test")
+
+    def test_detects_ctest_when_build_dir_present(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "CMakeLists.txt").write_text("project(x)\n", encoding="utf-8")
+            (root / "build").mkdir()
+            self.assertEqual(detect_test_command(root), "ctest --test-dir build")
+
+    def test_detects_make_test_target(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "Makefile").write_text("test:\n\t./run_tests\n", encoding="utf-8")
+            self.assertEqual(detect_test_command(root), "make test")
+
 
 class PathImportTest(unittest.TestCase):
     def test_module_path(self):
