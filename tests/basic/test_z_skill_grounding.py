@@ -60,6 +60,52 @@ class SymbolExtractTest(unittest.TestCase):
         self.assertIn("SlidingWindowRateLimiter", names)
         self.assertIn("allow", names)
 
+    def test_cpp_methods_not_control_flow_keywords(self):
+        """Live failure: extract_symbols_from_source returned ['LruCache', 'if']."""
+        src = """
+class LruCache {
+ public:
+  explicit LruCache(size_t capacity) : capacity_(capacity) {}
+  void put(int key, int value) {
+    if (capacity_ == 0) {
+      return;
+    }
+    while (size_ > capacity_) {
+      evict();
+    }
+    switch (key) {
+      default: break;
+    }
+  }
+  int get(int key) { return -1; }
+};
+"""
+        names = extract_symbols_from_source("lru_cache.h", src)
+        self.assertIn("LruCache", names)
+        self.assertIn("put", names)
+        self.assertIn("get", names)
+        for kw in ("if", "while", "switch", "return", "for", "catch"):
+            self.assertNotIn(kw, names, names)
+
+    def test_js_methods_keep_untyped_form(self):
+        src = """
+class Widget {
+  render() {
+    if (ready === false) {
+      return null;
+    }
+  }
+  async load(id) {
+    return id;
+  }
+}
+"""
+        names = extract_symbols_from_source("widget.js", src)
+        self.assertIn("Widget", names)
+        self.assertIn("render", names)
+        self.assertIn("load", names)
+        self.assertNotIn("if", names)
+
     def test_claimed_symbols_from_markdown(self):
         text = (
             "Use `SlidingWindowRateLimiter.allow` — never invent a `TokenBucket`.\n"
