@@ -15,6 +15,7 @@ from aider.z.uncertainty.engine import SessionContext, UncertaintyEngine  # noqa
 from aider.z.uncertainty.gate import (  # noqa: E402
     _effective_gate_tier,
     report_auto_fix_exhaustion,
+    resolve_commit_edit_set,
 )
 from aider.z.uncertainty.schema import NodeType, Tier  # noqa: E402
 from aider.z.uncertainty.store import UncertaintyStore  # noqa: E402
@@ -104,6 +105,50 @@ class AutoFixExhaustionTest(unittest.TestCase):
         )
         self.assertFalse(
             any("Commit blocked by Z verification gate" in e for e in coder._errors)
+        )
+
+    def test_exhausted_lint_pending_with_session_edits_is_loud(self):
+        """Lint-fix reflection cap with dirty session edits must not warn-only."""
+        record = VerificationRecord(
+            ran=False,
+            passed=False,
+            state=VerifyState.NOT_RUN,
+            output_excerpt="",
+        )
+        coder = self._coder(
+            record=record,
+            pending="Linter errors:\nfmtlog.cpp: unused variable 'x'\n",
+        )
+        coder.test_outcome = None
+        coder.last_verification = None
+        coder.uncertainty_engine.ctx.last_verification = None
+        node = report_auto_fix_exhaustion(
+            coder, max_reflections=3, pending_reflect=coder.reflected_message
+        )
+        self.assertIsNotNone(node)
+        self.assertTrue(
+            any("Commit blocked by Z verification gate" in e for e in coder._errors)
+        )
+
+
+class ResolveCommitEditSetTest(unittest.TestCase):
+    def test_current_turn_edits_win(self):
+        self.assertEqual(
+            resolve_commit_edit_set(["a.cpp"], ["old.cpp"], num_reflections=2),
+            {"a.cpp"},
+        )
+
+    def test_idle_reflection_reuses_session_edits(self):
+        """fmtlog4: lint reflection replied with prose → empty apply_updates."""
+        self.assertEqual(
+            resolve_commit_edit_set([], ["fmtlog.cpp", "fmtlog.h"], num_reflections=1),
+            {"fmtlog.cpp", "fmtlog.h"},
+        )
+
+    def test_no_reflection_empty_turn_stays_empty(self):
+        self.assertEqual(
+            resolve_commit_edit_set([], ["stale.cpp"], num_reflections=0),
+            set(),
         )
 
 
