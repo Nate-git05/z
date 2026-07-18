@@ -6,6 +6,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 from unittest.mock import MagicMock
 
 _HOME = tempfile.mkdtemp(prefix="z_reflect_exh_")
@@ -150,6 +151,78 @@ class ResolveCommitEditSetTest(unittest.TestCase):
             resolve_commit_edit_set([], ["stale.cpp"], num_reflections=0),
             set(),
         )
+
+
+class ExhaustionSkillCaptureTest(unittest.TestCase):
+    """Reflection exhaustion must not forfeit capture of earlier committed work."""
+
+    def _run_one_until_exhaustion(self, *, committed: bool):
+        from aider.coders.base_coder import Coder
+
+        suggest_calls = []
+
+        class FakeIO:
+            yes = True
+
+            def tool_output(self, *a, **k):
+                pass
+
+            def tool_warning(self, *a, **k):
+                pass
+
+            def tool_error(self, *a, **k):
+                pass
+
+            def confirm_ask(self, *a, **k):
+                return False
+
+        coder = Coder.__new__(Coder)
+        coder.io = FakeIO()
+        coder.verbose = False
+        coder.max_reflections = 3
+        coder.num_reflections = 0
+        coder.reflected_message = None
+        coder.aider_edited_files = {"src/ReactFlightDOMClient.js"}
+        coder.last_aider_commit_hash = "abc123" if committed else None
+        coder.last_verification = None
+        coder._z_gate_hold_dirty = False
+        coder.root = None
+
+        def fake_init():
+            # Preserve session edit/commit state across init_before_message
+            coder.num_reflections = 0
+            coder.reflected_message = None
+
+        def fake_send(_message):
+            coder.reflected_message = "Attempt to fix lint errors?\nunused var"
+            if False:
+                yield None
+
+        coder.init_before_message = fake_init
+        coder.send_message = fake_send
+        coder._maybe_pull_skills = lambda *a, **k: None
+        coder._maybe_begin_uncertainty_task = lambda *a, **k: None
+        coder._maybe_require_implementation_plan = lambda *a, **k: True
+        coder._maybe_suggest_skill = lambda msg: suggest_calls.append(msg)
+
+        with mock.patch(
+            "aider.z.uncertainty.gate.report_auto_fix_exhaustion",
+            return_value=None,
+        ):
+            coder.run_one(
+                "Fix encodeFormAction to pass debugValue through the edge client",
+                preproc=False,
+            )
+        return suggest_calls
+
+    def test_exhaustion_with_prior_commit_offers_skill_capture(self):
+        calls = self._run_one_until_exhaustion(committed=True)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("encodeFormAction", calls[0])
+
+    def test_exhaustion_without_commit_skips_skill_capture(self):
+        calls = self._run_one_until_exhaustion(committed=False)
+        self.assertEqual(calls, [])
 
 
 if __name__ == "__main__":

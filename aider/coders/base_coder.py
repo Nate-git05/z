@@ -1148,6 +1148,20 @@ class Coder:
                         "work still unresolved. A human needs to look."
                     )
                 self.reflected_message = None
+                # Exhaustion returns before the clean-exit capture site below.
+                # If a commit already landed earlier this session, that verified
+                # work is still worth capturing (React: real fix committed, then
+                # an unrelated tangent burned the reflection budget).
+                if (
+                    isinstance(user_message, str)
+                    and not user_message.startswith("/")
+                    and getattr(self, "last_aider_commit_hash", None)
+                    and self.aider_edited_files
+                ):
+                    try:
+                        self._maybe_suggest_skill(user_message)
+                    except Exception:
+                        pass
                 return
 
             self.num_reflections += 1
