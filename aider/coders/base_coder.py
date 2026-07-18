@@ -3195,7 +3195,17 @@ class Coder:
         if not self.repo:
             return
 
-        self.repo.commit(fnames=self.need_commit_before_edits, coder=self)
+        # Same bookkeeping as auto_commit(): lint-fix / multi-reflection loops
+        # often land real work only via dirty_commit(). If we discard the result,
+        # last_aider_commit_hash stays None and exhaustion-path skill capture
+        # (and other hash consumers) miss commits that already exist in git.
+        try:
+            res = self.repo.commit(fnames=self.need_commit_before_edits, coder=self)
+        except ANY_GIT_ERROR as err:
+            self.io.tool_error(f"Unable to commit: {str(err)}")
+            return
+        if res:
+            self.show_auto_commit_outcome(res)
 
         # files changed, move cur messages back behind the files messages
         # self.move_back_cur_messages(self.gpt_prompts.files_content_local_edits)
