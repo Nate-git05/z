@@ -88,10 +88,74 @@ _RE_FUNC = re.compile(
     r"|^\s*(?:pub\s+)?(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)"
     r"|^\s*(?:export\s+)?const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:async\s*)?\("
 )
-_RE_METHOD = re.compile(
+# Explicit Rust/Python method forms (fn/def) — never ambiguous with if/while.
+_RE_METHOD_EXPLICIT = re.compile(
     r"(?m)^\s+(?:async\s+)?(?:pub(?:\([^)]*\))?\s+)?(?:fn|def)\s+"
     r"([A-Za-z_][A-Za-z0-9_]*)"
-    r"|^\s+(?:async\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\([^)]*\)\s*[:{]"
+)
+# C-family / Java / etc.: ReturnType name(params) { — requires a type token
+# before the name so `if (x == 0) {` cannot match.
+_RE_METHOD_TYPED = re.compile(
+    r"(?m)^\s+"
+    r"(?:(?:public|private|protected|static|virtual|inline|constexpr|explicit|"
+    r"friend|async|override|export|mutable|volatile|typename)\s+)*"
+    r"(?:[\w:]+(?:\s*<[^;{}()>]*>)?(?:\s*[*&])?\s+)+"
+    r"([A-Za-z_][A-Za-z0-9_]*)\s*"
+    r"\(([^;{}]*)\)\s*"
+    r"(?:const\s*)?(?:noexcept(?:\s*\([^)]*\))?\s*)?(?:override\s*)?(?:final\s*)?"
+    r"[{:]"
+)
+# Untyped JS/TS-style methods: name(params) { / name(params):
+# Paren body must look like a parameter list, not a control-flow expression.
+_RE_METHOD_LOOSE = re.compile(
+    r"(?m)^\s+(?:async\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*[:{]"
+)
+
+# Tokens that introduce `name ( ... ) {` as *statements* in C-family / JS /
+# Go / Rust / etc. Closed grammatical set — not an English stopword list and
+# not grown reactively one live failure at a time.
+_STATEMENT_INTRODUCERS = frozenset(
+    {
+        "if",
+        "else",
+        "elif",
+        "while",
+        "for",
+        "do",
+        "switch",
+        "case",
+        "catch",
+        "try",
+        "finally",
+        "except",
+        "return",
+        "throw",
+        "new",
+        "delete",
+        "sizeof",
+        "typeof",
+        "alignof",
+        "noexcept",
+        "match",
+        "select",
+        "defer",
+        "go",
+        "range",
+        "when",
+        "unless",
+        "with",
+        "assert",
+        "yield",
+        "await",  # top-level await (...); not a method decl
+        "instanceof",
+    }
+)
+
+# Operators / forms that appear in conditions, not in ordinary parameter lists.
+_CONTROL_EXPR_RE = re.compile(
+    r"(==|!=|<=|>=|&&|\|\||\b(?:not|and|or)\b|"
+    r"(?<![\w:])!(?=[\w(])|"
+    r"(?<![\w\s:])<(?![=<\w/])|(?<![\w\s:])>(?![=>\w]))"
 )
 
 # Per-file and total budgets for the grounding pack (chars)
@@ -172,13 +236,42 @@ def _extract_python_symbols(content: str) -> List[str]:
     return _dedupe(names)
 
 
+def _paren_looks_like_control_expression(inside: str) -> bool:
+    """True for `if (x == 0)` conditions; False for typical parameter lists."""
+    s = (inside or "").strip()
+    if not s:
+        return False
+    return bool(_CONTROL_EXPR_RE.search(s))
+
+
+def _loose_method_name_ok(name: str, paren_inside: str) -> bool:
+    """Accept untyped `name(...) {{` only when it cannot be a control statement."""
+    if not name or name.lower() in _SYMBOL_STOP:
+        return False
+    # Grammar: statement introducers are never method declarations.
+    if name.lower() in _STATEMENT_INTRODUCERS:
+        return False
+    if _paren_looks_like_control_expression(paren_inside):
+        return False
+    return True
+
+
 def _extract_regex_symbols(content: str) -> List[str]:
     names: List[str] = []
-    for rx in (_RE_CLASS, _RE_FUNC, _RE_METHOD):
+    for rx in (_RE_CLASS, _RE_FUNC, _RE_METHOD_EXPLICIT):
         for m in rx.finditer(content):
             for g in m.groups():
-                if g and g not in _SYMBOL_STOP:
+                if g and g.lower() not in _SYMBOL_STOP:
                     names.append(g)
+    for m in _RE_METHOD_TYPED.finditer(content):
+        name = m.group(1) or ""
+        if name and name.lower() not in _SYMBOL_STOP and name.lower() not in _STATEMENT_INTRODUCERS:
+            names.append(name)
+    for m in _RE_METHOD_LOOSE.finditer(content):
+        name = m.group(1) or ""
+        paren = m.group(2) or ""
+        if _loose_method_name_ok(name, paren):
+            names.append(name)
     return _dedupe(names)
 
 
