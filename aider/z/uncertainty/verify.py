@@ -164,7 +164,7 @@ def detect_test_command(root: Path) -> Optional[str]:
     """
     Best-effort project test command when --test-cmd is unset.
 
-    Prefer declared runners (Python/JS, then Cargo/Maven/Gradle/Ruby/PHP/
+    Prefer declared runners (Python/JS, then Go/Cargo/Maven/Gradle/Ruby/PHP/
     .NET/Swift/CMake/Make). For dependency-free Python layouts under tests/,
     use unittest discover (not an undeclared pytest dependency) — only after
     no other ecosystem manifest matches.
@@ -208,6 +208,9 @@ def detect_test_command(root: Path) -> Optional[str]:
 
     # Non-Python/JS ecosystems — check manifests before the stray tests/
     # unittest fallback so Cargo.toml + a leftover tests/ dir still runs cargo.
+    if (root / "go.mod").is_file():
+        return "go test ./..."
+
     if (root / "Cargo.toml").is_file():
         return "cargo test"
 

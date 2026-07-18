@@ -83,6 +83,20 @@ class DetectCommandTest(unittest.TestCase):
             (tests / "test_foo.py").write_text("def test_a():\n    assert True\n", encoding="utf-8")
             self.assertIn("-m pytest -q", detect_test_command(root))
 
+    def test_detects_go_test(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "go.mod").write_text(
+                "module example.com/leakfix\n\ngo 1.22\n", encoding="utf-8"
+            )
+            # Stray tests/ must not steal routing from Go
+            tests = root / "tests"
+            tests.mkdir()
+            (tests / "test_foo.py").write_text(
+                "def test_a():\n    assert True\n", encoding="utf-8"
+            )
+            self.assertEqual(detect_test_command(root), "go test ./...")
+
     def test_detects_cargo_test(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
