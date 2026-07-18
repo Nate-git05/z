@@ -101,7 +101,27 @@ def _status_documentation(ev, words: Sequence[str] = ()) -> str:
     return STATUS_NOT
 
 
+def _product_files_missing(ev) -> List[str]:
+    for n in getattr(ev, "evidence_notes", None) or []:
+        s = str(n)
+        if s.startswith("files_missing:"):
+            raw = s.split(":", 1)[-1]
+            return [p for p in raw.split(",") if p.strip()]
+    return []
+
+
+def _product_file_list_incomplete(ev) -> bool:
+    notes = getattr(ev, "evidence_notes", None) or []
+    if any(str(n) == "files_list_incomplete:true" for n in notes):
+        return True
+    return bool(_product_files_missing(ev))
+
+
 def _fully_product(ev, words: Sequence[str] = ()) -> bool:
+    # Enumerated file lists: incomplete coverage can never be Fully Addressed
+    # even if file+symbol+test triad somehow lights up on a subset.
+    if _product_file_list_incomplete(ev):
+        return False
     return bool(getattr(ev, "has_hard_product_evidence", False))
 
 
@@ -109,6 +129,26 @@ def _status_product(ev, words: Sequence[str] = ()) -> str:
     words = list(words or [])
     if _fully_product(ev, words):
         return STATUS_FULLY
+    missing_files = _product_files_missing(ev)
+    if missing_files or _product_file_list_incomplete(ev):
+        # Partial when some required paths were updated as described; else Not.
+        notes = getattr(ev, "evidence_notes", None) or []
+        complete = any(str(n) == "files_list_complete:true" for n in notes)
+        covered = bool(getattr(ev, "file_hits", None)) and not complete
+        if covered or bool(getattr(ev, "file_hits", None)):
+            # file_hits only populated for covered required paths in list mode
+            required_n = 0
+            for n in notes:
+                if str(n).startswith("required_files:"):
+                    required_n = len(
+                        [p for p in str(n).split(":", 1)[-1].split(",") if p]
+                    )
+                    break
+            if required_n and len(missing_files) < required_n:
+                return STATUS_PARTIAL
+            if getattr(ev, "file_hits", None) and missing_files:
+                return STATUS_PARTIAL
+        return STATUS_NOT if missing_files else STATUS_PARTIAL
     if not words:
         if getattr(ev, "has_code_evidence", False) or getattr(
             ev, "has_test_only_evidence", False
@@ -388,6 +428,13 @@ def missing_message_for(ev, words: Sequence[str] = ()) -> str:
             f"inspect/grep evidence for {target_s}. Disposition required: "
             f"checked_fixed | checked_ruled_out. Asked: {text}"
         )
+    if v.kind in ("product", "quality"):
+        missing_files = _product_files_missing(ev)
+        if missing_files:
+            return (
+                "Required files not updated as described: "
+                + ", ".join(missing_files)
+            )
     if v.kind == "quality":
         parts = []
         if hasattr(ev, "missing_hard_evidence_parts"):
