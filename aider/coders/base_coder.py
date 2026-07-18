@@ -1275,7 +1275,19 @@ class Coder:
         ):
             self._skill_capture_skip("Z_SKIP_SKILL_CAPTURE set")
             return
-        if getattr(self.io, "yes", None) is True:
+
+        # Classify before the yes-always guard: bug_pattern capture is already
+        # gated by task_is_bugfix_intent and is the case where CI/--yes-always
+        # runs need organizational memory most. Ordinary playbook suggestions
+        # stay skipped under yes-always (noisy / multi-minute on every task).
+        try:
+            from aider.z.skills.router import task_is_bugfix_intent
+
+            is_bugfix = task_is_bugfix_intent(user_message)
+        except Exception:
+            is_bugfix = False
+
+        if getattr(self.io, "yes", None) is True and not is_bugfix:
             # yes-always would auto-accept and hang on multi-minute model calls
             self._skill_capture_skip("--yes / yes_always")
             return
@@ -1294,16 +1306,24 @@ class Coder:
             self._skill_capture_skip("gate hold still set (no approved commit)")
             return
         try:
-            if not self.io.confirm_ask(
-                "Want me to save this as a reusable skill for next time?",
-                default="n",
-                explicit_yes_required=True,
-            ):
-                self._skill_capture_skip("user declined")
-                return
+            auto_bug_capture = bool(
+                is_bugfix and getattr(self.io, "yes", None) is True
+            )
+            if not auto_bug_capture:
+                if not self.io.confirm_ask(
+                    "Want me to save this as a reusable skill for next time?",
+                    default="n",
+                    explicit_yes_required=True,
+                ):
+                    self._skill_capture_skip("user declined")
+                    return
+            else:
+                self.io.tool_output(
+                    "Bug-fix detected under --yes-always — "
+                    "auto-capturing bug_pattern skill…"
+                )
             from aider.z.skills.cli import offer_view_new_skill, save_skill_from_task
             from aider.z.skills.grounding import build_grounding_pack
-            from aider.z.skills.router import task_is_bugfix_intent
 
             rels = []
             abs_paths = []
@@ -1345,7 +1365,7 @@ class Coder:
             model_name = None
             if getattr(self, "main_model", None):
                 model_name = getattr(self.main_model, "name", None)
-            prefer_bug = task_is_bugfix_intent(user_message)
+            prefer_bug = bool(is_bugfix)
             skill, created = save_skill_from_task(
                 self.io,
                 topic,

@@ -102,6 +102,106 @@ class CaptureGateTest(unittest.TestCase):
         coder._maybe_suggest_skill("Fix the segfault in the background thread")
         self.assertTrue(any("verify incomplete" in s for s in skips), skips)
 
+    def test_yes_always_skips_ordinary_playbook_capture(self):
+        from aider.coders.base_coder import Coder
+
+        class FakeIO:
+            yes = True
+
+            def confirm_ask(self, *a, **k):
+                raise AssertionError("should not prompt under yes-always")
+
+            def tool_output(self, *a, **k):
+                pass
+
+        coder = Coder.__new__(Coder)
+        coder.io = FakeIO()
+        coder.verbose = True
+        coder.aider_edited_files = {"src/rate_limiter.py"}
+        coder.last_verification = mock.Mock(meaningful_pass=True)
+        coder.last_aider_commit_hash = "abc123"
+        coder._z_gate_hold_dirty = False
+        skips = []
+        coder._skill_capture_skip = lambda r: skips.append(r)
+        coder._maybe_suggest_skill(
+            "Add a sliding-window rate limiter middleware for the API"
+        )
+        self.assertTrue(any("yes_always" in s or "--yes" in s for s in skips), skips)
+
+    def test_yes_always_auto_captures_bug_pattern(self):
+        """CI/--yes-always must still accumulate bug_pattern organizational memory."""
+        from aider.coders.base_coder import Coder
+        from aider.z.skills.schema import SKILL_KIND_BUG_PATTERN, Skill
+
+        outputs = []
+
+        class FakeIO:
+            yes = True
+
+            def confirm_ask(self, *a, **k):
+                raise AssertionError(
+                    "bug_pattern under yes-always must not prompt confirm_ask"
+                )
+
+            def tool_output(self, *a, **k):
+                outputs.append(a[0] if a else "")
+
+            def tool_warning(self, *a, **k):
+                pass
+
+            def tool_error(self, *a, **k):
+                pass
+
+        coder = Coder.__new__(Coder)
+        coder.io = FakeIO()
+        coder.verbose = True
+        coder.aider_edited_files = {"src/fmtlog.cpp"}
+        coder.last_verification = mock.Mock(meaningful_pass=True)
+        coder.last_aider_commit_hash = "def456"
+        coder._z_gate_hold_dirty = False
+        coder.root = None
+        coder.repo = None
+        coder.main_model = None
+        coder.uncertainty_engine = None
+        skips = []
+        coder._skill_capture_skip = lambda r: skips.append(r)
+
+        fake_skill = Skill(
+            title="Missing sync on size",
+            description="race",
+            content="atomics",
+            kind=SKILL_KIND_BUG_PATTERN,
+            shared=True,
+        )
+        captured = {}
+
+        def fake_save(io, topic, **kwargs):
+            captured["topic"] = topic
+            captured.update(kwargs)
+            return fake_skill, True
+
+        with mock.patch(
+            "aider.z.skills.cli.save_skill_from_task", side_effect=fake_save
+        ), mock.patch(
+            "aider.z.skills.cli.offer_view_new_skill"
+        ), mock.patch(
+            "aider.z.skills.grounding.build_grounding_pack",
+            return_value=mock.Mock(files=[], diff=""),
+        ):
+            coder._maybe_suggest_skill(
+                "Fix intermittent segfault from missing sync on shared size field"
+            )
+
+        self.assertFalse(
+            any("yes_always" in s or "--yes" in s for s in skips),
+            skips,
+        )
+        self.assertTrue(captured.get("prefer_bug_pattern"), captured)
+        self.assertTrue(
+            any("auto-capturing bug_pattern" in str(o).lower() for o in outputs),
+            outputs,
+        )
+
 
 class TaxonomyTest(unittest.TestCase):
     def test_core_categories_present(self):
