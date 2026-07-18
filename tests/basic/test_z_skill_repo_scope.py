@@ -159,6 +159,47 @@ class RepoKeyMatchTest(unittest.TestCase):
             )
             self.assertTrue(d.apply, d.reason)
 
+    def test_shared_bug_pattern_not_stale_in_unrelated_project(self):
+        """Capture-repo symbols must not block portable bug_pattern retrieval.
+
+        Live failure: fmtlog capture (MsgHeader/emplace_back/…) was rejected in
+        sensor_ring with ``stale — missing symbols`` even though shared=True.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td).resolve()
+            (root / "ring.cpp").write_text(
+                "struct Ring { int head; };\n", encoding="utf-8"
+            )
+            skill = Skill(
+                title="Missing sync on shared size",
+                description="segfault when size races with reader",
+                content="## Fix\n1. Make size atomic\n",
+                kind=SKILL_KIND_BUG_PATTERN,
+                languages=["cpp"],
+                quality_state="verified",
+                needs_review=False,
+                shared=True,
+                repo_key="",
+                symptom_description="intermittent segfault under concurrent resize",
+                root_cause_category="missing_synchronization_for_shared_state",
+                grounded_symbols=[
+                    "MsgHeader",
+                    "size",
+                    "emplace_back",
+                    "missing_synchronization_for_shared_state",
+                ],
+                source_files=["fmtlog-inl.h", "fmtlog.h", ".gitignore"],
+            )
+            sig = collect_repo_signals(root)
+            d = route_skill(
+                skill,
+                "fix intermittent segfault under concurrent resize",
+                sig,
+                score=0.9,
+            )
+            self.assertTrue(d.apply, d.reason)
+            self.assertNotIn("stale", d.reason)
+
     def test_save_skill_from_task_bug_pattern_is_shared(self):
         """Automatic capture path also stamps portable scope."""
         from aider.io import InputOutput

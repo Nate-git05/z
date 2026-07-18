@@ -336,16 +336,20 @@ def check_bug_pattern_grounding(skill, pack: GroundingPack) -> GroundingResult:
             invented_ratio=1.0,
             reason=reason,
         )
-    # Also run ordinary symbol grounding on content (soft — category is the hard gate)
+    # Also run ordinary symbol grounding on content (soft — category is the hard gate).
+    # grounded_symbols must stay code identifiers from the diff/AST — never append
+    # root_cause_category taxonomy labels (those live on skill.root_cause_category).
     text = (
         f"{getattr(skill, 'title', '')}\n"
         f"{getattr(skill, 'root_cause_explanation', '')}\n"
         f"{getattr(skill, 'content', '')}"
     )
     sym = check_grounding(text, pack)
-    grounded = list(sym.grounded_symbols)
-    if category not in grounded:
-        grounded.append(category)
+    grounded = [
+        s
+        for s in (sym.grounded_symbols or [])
+        if (s or "").strip() and (s or "").strip().lower() != category.lower()
+    ]
     return GroundingResult(
         ok=True,
         grounded_symbols=grounded,

@@ -153,6 +153,44 @@ class BugPatternGroundingTest(unittest.TestCase):
         pack = GroundingPack(diff=_ATOMIC_DIFF, symbols=["size"])
         result = check_bug_pattern_grounding(skill, pack)
         self.assertTrue(result.ok, result.reason)
+        # Taxonomy labels stay on root_cause_category — never in grounded_symbols
+        self.assertNotIn(
+            "missing_synchronization_for_shared_state",
+            result.grounded_symbols,
+        )
+
+    def test_apply_pack_metadata_strips_taxonomy_from_grounded_symbols(self):
+        from aider.z.skills.generate import _apply_pack_metadata
+        from aider.z.skills.grounding import FileEvidence, GroundingResult
+
+        skill = Skill(
+            title="SPSC visibility",
+            description="race",
+            content="Use atomics",
+            kind=SKILL_KIND_BUG_PATTERN,
+            root_cause_category="missing_synchronization_for_shared_state",
+        )
+        pack = GroundingPack(
+            diff=_ATOMIC_DIFF,
+            symbols=["size", "missing_synchronization_for_shared_state"],
+            files=[FileEvidence(path="fmtlog-inl.h", content=_ATOMIC_DIFF)],
+        )
+        result = GroundingResult(
+            ok=True,
+            grounded_symbols=[
+                "size",
+                "missing_synchronization_for_shared_state",
+            ],
+            missing_symbols=[],
+            invented_ratio=0.0,
+            reason="ok",
+        )
+        _apply_pack_metadata(skill, pack, result)
+        self.assertEqual(skill.grounded_symbols, ["size"])
+        self.assertNotIn(
+            "missing_synchronization_for_shared_state",
+            skill.grounded_symbols,
+        )
 
     def test_ungrounded_category_needs_review(self):
         skill = Skill(
