@@ -79,6 +79,89 @@ class PackageDiscoveryTest(unittest.TestCase):
             self.assertIsNotNone(plan.package_test)
             self.assertIn("bun run test", plan.package_test[1])
 
+    def test_falls_back_to_workspace_root_test_script(self):
+        """React-style: nested packages have no test; only root defines Jest."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            pkg = root / "packages" / "react-client"
+            (pkg / "src").mkdir(parents=True)
+            (pkg / "package.json").write_text(
+                json.dumps(
+                    {
+                        "name": "react-client",
+                        "scripts": {"build": "echo build"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (root / "package.json").write_text(
+                json.dumps(
+                    {
+                        "private": True,
+                        "scripts": {
+                            "test": "node ./scripts/jest/jest-cli.js",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (root / "package-lock.json").write_text("{}", encoding="utf-8")
+            plan = discover_package_checks(
+                root, ["packages/react-client/src/ReactFlightClient.js"]
+            )
+            self.assertIsNotNone(
+                plan.package_test,
+                "expected workspace-root test script when nearest package has none",
+            )
+            cwd, cmd = plan.package_test
+            self.assertEqual(Path(cwd).resolve(), root.resolve())
+            self.assertIn("test", cmd)
+            self.assertTrue(cmd.startswith("npm run") or cmd == "npm run test")
+
+    def test_prefers_nested_test_over_root(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            pkg = root / "packages" / "app"
+            (pkg / "src").mkdir(parents=True)
+            (pkg / "package.json").write_text(
+                json.dumps({"scripts": {"test": "vitest run"}}),
+                encoding="utf-8",
+            )
+            (root / "package.json").write_text(
+                json.dumps({"scripts": {"test": "node ./scripts/jest/jest-cli.js"}}),
+                encoding="utf-8",
+            )
+            plan = discover_package_checks(root, ["packages/app/src/a.ts"])
+            self.assertIsNotNone(plan.package_test)
+            cwd, cmd = plan.package_test
+            self.assertEqual(Path(cwd).resolve(), pkg.resolve())
+            self.assertIn("test", cmd)
+
+    def test_skips_root_guard_script(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            pkg = root / "packages" / "app"
+            (pkg / "src").mkdir(parents=True)
+            (pkg / "package.json").write_text(
+                json.dumps({"scripts": {"lint": "eslint ."}}),
+                encoding="utf-8",
+            )
+            (root / "package.json").write_text(
+                json.dumps(
+                    {
+                        "scripts": {
+                            "test": (
+                                "echo 'Do not run npm test from the root — "
+                                "this is a monorepo' && exit 1"
+                            )
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            plan = discover_package_checks(root, ["packages/app/src/a.ts"])
+            self.assertIsNone(plan.package_test)
+
     def test_compiler_and_guard_heuristics(self):
         self.assertTrue(
             looks_like_compiler_output(

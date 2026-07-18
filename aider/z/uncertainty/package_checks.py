@@ -113,9 +113,13 @@ def find_nearest_package_json(root: Path, rel_file: str) -> Optional[Path]:
 
 def _package_rel(root: Path, pkg_json: Path) -> str:
     try:
-        return pkg_json.parent.relative_to(Path(root).resolve()).as_posix()
+        rel = pkg_json.parent.relative_to(Path(root).resolve()).as_posix()
     except ValueError:
         return ""
+    # Workspace root package.json → "" (not "." — callers treat non-empty as nested)
+    if rel in ("", "."):
+        return ""
+    return rel
 
 
 def _detect_runner(pkg_dir: Path) -> str:
@@ -165,6 +169,51 @@ def _load_scripts(pkg_json: Path) -> dict:
     return scripts if isinstance(scripts, dict) else {}
 
 
+def _find_test_script_upward(
+    root: Path, start_dir: Path
+) -> Optional[Tuple[str, str]]:
+    """
+    Walk from *start_dir* up to *root* for a package.json with a usable ``test``.
+
+    Prefer the nearest nested package that declares ``test``. When only the
+    workspace root defines tests (React / Jest monorepos), return that root
+    command instead of silence. Skip root scripts that are monorepo guards
+    ("do not run npm test from the root").
+    """
+    root = Path(root).resolve()
+    try:
+        cur = Path(start_dir).resolve()
+    except OSError:
+        return None
+    if not str(cur).startswith(str(root)):
+        cur = root
+
+    root_fallback: Optional[Tuple[str, str]] = None
+    for _ in range(24):
+        pkg_json = cur / "package.json"
+        if pkg_json.is_file():
+            scripts = _load_scripts(pkg_json)
+            body = str(scripts.get("test") or "").strip()
+            if body:
+                rel = _package_rel(root, pkg_json)
+                runner = _detect_runner(cur)
+                prefix = _run_prefix(runner)
+                cmd = f"{prefix} test"
+                if rel:
+                    # Nested package test — best match for this edit
+                    return (str(cur.resolve()), cmd)
+                # Workspace root: keep as fallback unless it's a "don't run here" guard
+                if not looks_like_root_test_guard(body):
+                    root_fallback = (str(cur.resolve()), cmd)
+        if cur == root:
+            break
+        parent = cur.parent
+        if parent == cur:
+            break
+        cur = parent
+    return root_fallback
+
+
 def discover_package_checks(
     root: Path,
     edited: Sequence[str],
@@ -173,8 +222,9 @@ def discover_package_checks(
     Build prechecks for each distinct nearest package touched by *edited*.
 
     Order per package: typecheck → build → lint (first available of each tier).
-    Also surfaces a package-local ``test`` script when present (preferred over
-    root ``npm test`` guards).
+    Surfaces a ``test`` script from the nearest package that defines one,
+    walking up to the workspace root when nested packages omit ``test``
+    (common Jest monorepo layout).
     """
     root = Path(root)
     plan = PackageCheckPlan()
@@ -193,6 +243,9 @@ def discover_package_checks(
     for pkg_json in seen_pkgs.values():
         scripts = _load_scripts(pkg_json)
         if not scripts:
+            # Still try upward test discovery — package.json may exist with no scripts
+            if package_test is None:
+                package_test = _find_test_script_upward(root, pkg_json.parent)
             continue
         pkg_dir = pkg_json.parent
         rel = _package_rel(root, pkg_json)
@@ -219,10 +272,13 @@ def discover_package_checks(
             )
             break  # one authoritative precheck per package
 
-        if package_test is None and "test" in scripts:
-            # Prefer non-root package test scripts
-            if rel:  # non-empty = nested package
-                package_test = (str(pkg_dir.resolve()), f"{prefix} test")
+        if package_test is None:
+            # Nested test if present; else climb to workspace-root test script.
+            package_test = _find_test_script_upward(root, pkg_dir)
+
+    # No nearest package.json at all (or none yielded a test) — still try root.
+    if package_test is None:
+        package_test = _find_test_script_upward(root, root)
 
     plan.package_test = package_test
     return plan
