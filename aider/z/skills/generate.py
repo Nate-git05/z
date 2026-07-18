@@ -215,7 +215,21 @@ def _skill_from_data(
 
 def _apply_pack_metadata(skill: Skill, pack: GroundingPack, result: GroundingResult) -> None:
     skill.source_files = list(pack.source_files)
-    skill.grounded_symbols = list(result.grounded_symbols or pack.symbols[:40])
+    grounded = list(result.grounded_symbols or pack.symbols[:40])
+    # Never let taxonomy labels / schema field values pollute grounded_symbols
+    if (skill.kind or "") == SKILL_KIND_BUG_PATTERN:
+        from .bug_concepts import taxonomy_category_ids
+
+        ban = {c.lower() for c in taxonomy_category_ids()}
+        cat = (skill.root_cause_category or "").strip().lower()
+        if cat:
+            ban.add(cat)
+        grounded = [
+            s
+            for s in grounded
+            if (s or "").strip() and (s or "").strip().lower() not in ban
+        ]
+    skill.grounded_symbols = grounded
     skill.content_hash = pack.content_hash()
     skill.grounded_at = datetime.now(timezone.utc).isoformat()
     if not skill.capability and pack.user_request:

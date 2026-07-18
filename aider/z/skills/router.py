@@ -367,8 +367,23 @@ def route_skill(
     if not language_compatible(skill, signals, task=task):
         return RouteDecision(skill, False, "language/stack mismatch", score)
 
-    # Stale check: if we know grounded symbols + source files, skip when gone
-    if skill.grounded_symbols and skill.source_files:
+    kind = (skill.kind or SKILL_KIND_PLAYBOOK).lower()
+    apply_once = skill.apply_once or kind == SKILL_KIND_SCAFFOLD
+
+    # Stale check: playbook/scaffold only. Shared/portable bug_pattern skills
+    # carry capture-repo symbols (MsgHeader, emplace_back, …) that will never
+    # exist in an unrelated project — running symbols_still_present against
+    # signals.root silently blocks cross-project retrieval forever.
+    # Only run for project-bound skills (non-shared with a repo_key).
+    portable = bool(getattr(skill, "shared", False)) or not (
+        getattr(skill, "repo_key", None) or ""
+    ).strip()
+    skip_stale = kind == SKILL_KIND_BUG_PATTERN and portable
+    if (
+        not skip_stale
+        and skill.grounded_symbols
+        and skill.source_files
+    ):
         try:
             from .grounding import symbols_still_present
 
@@ -387,9 +402,6 @@ def route_skill(
                 )
         except Exception:
             pass
-
-    kind = (skill.kind or SKILL_KIND_PLAYBOOK).lower()
-    apply_once = skill.apply_once or kind == SKILL_KIND_SCAFFOLD
 
     # bug_pattern: only on bug-fix intent; surfaced as hypothesis (not auto-applied playbook)
     if kind == SKILL_KIND_BUG_PATTERN:
