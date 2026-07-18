@@ -24,6 +24,7 @@ from aider.z.skills.grounding import (  # noqa: E402
 )
 from aider.z.skills.router import (  # noqa: E402
     collect_repo_signals,
+    language_compatible,
     route_skill,
     task_is_bugfix_intent,
 )
@@ -342,6 +343,85 @@ class IntentAndRouteTest(unittest.TestCase):
                 skill, "Add a new HTTP endpoint for health", sig, score=0.7
             )
             self.assertFalse(d_feat.apply)
+
+    def test_bug_pattern_transfers_across_languages(self):
+        """C++-captured sync pattern must not hard-fail language/stack in Rust.
+
+        Live failure: languages=[cpp] vs rust task → 'language/stack mismatch'
+        even with matching root_cause_category.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "Cargo.toml").write_text(
+                '[package]\nname = "job_queue"\nversion = "0.1.0"\n',
+                encoding="utf-8",
+            )
+            (root / "src").mkdir()
+            (root / "src" / "lib.rs").write_text(
+                "static mut READY: bool = false;\n", encoding="utf-8"
+            )
+            sig = collect_repo_signals(root)
+            skill = Skill(
+                title="Volatile publication flags fail to synchronize",
+                description="producer/consumer race on ready flag",
+                content="Use acquire/release atomics",
+                kind=SKILL_KIND_BUG_PATTERN,
+                quality_state="verified",
+                needs_review=False,
+                shared=True,
+                repo_key="",
+                languages=["cpp"],
+                language="cpp",
+                root_cause_category="missing_synchronization_for_shared_state",
+                symptom_description=(
+                    "consumer observes stale ready flag; intermittent race"
+                ),
+            )
+            self.assertTrue(
+                language_compatible(
+                    skill,
+                    sig,
+                    task="Fix data race on ready flag between producer and consumer in Rust",
+                )
+            )
+            d = route_skill(
+                skill,
+                "Fix data race on ready flag between producer and consumer in Rust",
+                sig,
+                score=0.85,
+            )
+            self.assertTrue(d.apply, d.reason)
+            self.assertNotIn("language", d.reason.lower())
+
+    def test_playbook_still_hard_filters_language(self):
+        """Ordinary playbooks remain language-bound."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "Cargo.toml").write_text(
+                '[package]\nname = "x"\nversion = "0.1.0"\n', encoding="utf-8"
+            )
+            (root / "src").mkdir()
+            (root / "src" / "main.rs").write_text("fn main() {}\n", encoding="utf-8")
+            sig = collect_repo_signals(root)
+            skill = Skill(
+                title="Stripe webhook validation",
+                description="How this Python API validates Stripe webhooks",
+                content="Use stripe.Webhook.construct_event",
+                kind="playbook",
+                quality_state="verified",
+                needs_review=False,
+                languages=["python"],
+            )
+            self.assertFalse(
+                language_compatible(
+                    skill, sig, task="Add Stripe webhook validation in Rust"
+                )
+            )
+            d = route_skill(
+                skill, "Add Stripe webhook validation in Rust", sig, score=0.9
+            )
+            self.assertFalse(d.apply)
+            self.assertIn("language", d.reason.lower())
 
 
 class HypothesisFormatTest(unittest.TestCase):
