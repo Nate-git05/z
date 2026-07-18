@@ -153,6 +153,55 @@ class ResolveCommitEditSetTest(unittest.TestCase):
         )
 
 
+class DirtyCommitHashTest(unittest.TestCase):
+    """dirty_commit must update last_aider_commit_hash like auto_commit does."""
+
+    def test_dirty_commit_records_hash(self):
+        from aider.coders.base_coder import Coder
+
+        class FakeIO:
+            def tool_output(self, *a, **k):
+                pass
+
+            def tool_error(self, *a, **k):
+                pass
+
+        class FakeRepo:
+            def commit(self, **kwargs):
+                return ("deadbeef", "fix: make job queue slot readiness atomic")
+
+        coder = Coder.__new__(Coder)
+        coder.io = FakeIO()
+        coder.repo = FakeRepo()
+        coder.dirty_commits = True
+        coder.need_commit_before_edits = {"src/job_queue.hpp"}
+        coder.last_aider_commit_hash = None
+        coder.aider_commit_hashes = set()
+        coder.last_aider_commit_message = None
+        coder.show_diffs = False
+        coder.commands = MagicMock()
+
+        self.assertTrue(coder.dirty_commit())
+        self.assertEqual(coder.last_aider_commit_hash, "deadbeef")
+        self.assertIn("deadbeef", coder.aider_commit_hashes)
+        self.assertEqual(
+            coder.last_aider_commit_message,
+            "fix: make job queue slot readiness atomic",
+        )
+
+    def test_dirty_commit_noop_without_pending(self):
+        from aider.coders.base_coder import Coder
+
+        coder = Coder.__new__(Coder)
+        coder.dirty_commits = True
+        coder.need_commit_before_edits = set()
+        coder.repo = MagicMock()
+        coder.last_aider_commit_hash = None
+        self.assertIsNone(coder.dirty_commit())
+        coder.repo.commit.assert_not_called()
+        self.assertIsNone(coder.last_aider_commit_hash)
+
+
 class ExhaustionSkillCaptureTest(unittest.TestCase):
     """Reflection exhaustion must not forfeit capture of earlier committed work."""
 
