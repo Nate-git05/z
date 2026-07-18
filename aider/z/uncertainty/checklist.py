@@ -637,6 +637,197 @@ def _changed_diff_blob(diff: str) -> str:
     return "\n".join(lines)
 
 
+# Explicit file paths in product checklist items (React Flight-style lists).
+_PRODUCT_FILE_PATH_RE = re.compile(
+    r"`([^`\n]+?\.[A-Za-z0-9]+)`"
+    r"|((?:[\w.+@-]+/)+[\w.+@-]+\.[A-Za-z0-9]+)"
+    r"|(\b[\w.+@-]+\.(?:js|jsx|ts|tsx|mjs|cjs|cts|mts|py|go|rs|java|"
+    r"cpp|cc|cxx|c|h|hpp|hh|cs|kt|swift|rb|php|vue|svelte)\b)"
+)
+
+_FILE_LIST_CHANGE_STOP = frozenset(
+    {
+        "skip",
+        "skips",
+        "skipping",
+        "inconsistent",
+        "subset",
+        "worse",
+        "doing",
+        "update",
+        "updates",
+        "updating",
+        "change",
+        "changes",
+        "changing",
+        "file",
+        "files",
+        "path",
+        "paths",
+        "variant",
+        "variants",
+        "across",
+        "every",
+        "same",
+        "line",
+        "ones",
+        "them",
+        "these",
+        "those",
+        "must",
+        "need",
+        "needs",
+        "needed",
+        "required",
+        "require",
+        "please",
+        "make",
+        "sure",
+        "both",
+        "each",
+        "all",
+        "any",
+        "none",
+        "touch",
+        "touched",
+        "edit",
+        "edits",
+        "edited",
+        "apply",
+        "applied",
+        "add",
+        "adds",
+        "adding",
+        "type",
+        "types",
+        "one",
+        "line",
+    }
+)
+
+
+def extract_product_file_paths(text: str) -> List[str]:
+    """File paths/locations a product item enumerates (order-preserving unique)."""
+    found: List[str] = []
+    for m in _PRODUCT_FILE_PATH_RE.finditer(text or ""):
+        tok = (m.group(1) or m.group(2) or m.group(3) or "").strip().strip("`'\"")
+        if not tok or tok.startswith("http"):
+            continue
+        # Drop pure extension-less noise / version-like tokens
+        leaf = tok.replace("\\", "/").split("/")[-1]
+        if "." not in leaf or leaf.startswith("."):
+            continue
+        if tok not in found:
+            found.append(tok)
+    return found
+
+
+def _diff_changed_by_file(diff: str) -> dict[str, str]:
+    """Map repo-relative path → concatenated +/- lines for that file's hunks."""
+    buckets: dict[str, List[str]] = {}
+    current: Optional[str] = None
+    for line in (diff or "").splitlines():
+        if line.startswith("diff --git "):
+            m = re.search(r"diff --git a/(.+?) b/(.+)$", line)
+            current = (m.group(2).strip() if m else None)
+            if current:
+                buckets.setdefault(current, [])
+            continue
+        if line.startswith("+++ b/"):
+            current = line[6:].strip()
+            if current and current != "/dev/null":
+                buckets.setdefault(current, [])
+            continue
+        if not current:
+            continue
+        if line.startswith("+++") or line.startswith("---"):
+            continue
+        if line.startswith("+") or line.startswith("-"):
+            buckets.setdefault(current, []).append(line[1:])
+    return {path: "\n".join(parts) for path, parts in buckets.items()}
+
+
+def _normalize_repo_path(path: str) -> str:
+    return (path or "").replace("\\", "/").strip().lstrip("./")
+
+
+def _path_matches_required(required: str, candidate: str) -> bool:
+    r = _normalize_repo_path(required).lower()
+    c = _normalize_repo_path(candidate).lower()
+    if not r or not c:
+        return False
+    if r == c:
+        return True
+    if c.endswith("/" + r) or r.endswith("/" + c):
+        return True
+    if "/" in r:
+        return c.endswith(r) or r.endswith(c)
+    return Path(c).name == r
+
+
+def _match_required_path(
+    required: str, files_changed: Sequence[str]
+) -> Optional[str]:
+    for f in files_changed:
+        if _path_matches_required(required, f):
+            return f
+    return None
+
+
+def _distinctive_change_tokens(text: str, paths: Sequence[str]) -> List[str]:
+    """Tokens describing the required edit, excluding enumerated path names."""
+    cleaned = text or ""
+    for p in paths:
+        cleaned = re.sub(re.escape(p), " ", cleaned, flags=re.I)
+        leaf = Path(_normalize_repo_path(p)).name
+        if leaf:
+            cleaned = re.sub(re.escape(leaf), " ", cleaned, flags=re.I)
+    tokens: List[str] = []
+    for tok in re.findall(r"\b[A-Za-z_][A-Za-z0-9_]{2,}\b", cleaned):
+        low = tok.lower()
+        if (
+            low in _STOP
+            or low in _TARGET_STOP
+            or low in _WEAK_INVESTIGATION_TARGETS
+            or low in _FILE_LIST_CHANGE_STOP
+        ):
+            continue
+        camel = bool(re.search(r"[a-z]", tok) and re.search(r"[A-Z]", tok))
+        if not camel and len(tok) < 6:
+            continue
+        if tok not in tokens:
+            tokens.append(tok)
+    return tokens[:16]
+
+
+def _lookup_file_changed_blob(
+    matched_path: str, required: str, per_file_diff: dict[str, str]
+) -> str:
+    for key, blob in per_file_diff.items():
+        if _path_matches_required(matched_path, key) or _path_matches_required(
+            required, key
+        ):
+            return blob
+    return ""
+
+
+def _file_has_described_change(
+    matched_path: str,
+    required: str,
+    per_file_diff: dict[str, str],
+    change_tokens: Sequence[str],
+) -> bool:
+    """True when +/- hunks for this file show the described change (not mere touch)."""
+    blob = _lookup_file_changed_blob(matched_path, required, per_file_diff)
+    if not (blob or "").strip():
+        return False
+    if not change_tokens:
+        # Item was only a file list — require a real edit in this file.
+        return True
+    blob_l = blob.lower()
+    return any(tok.lower() in blob_l for tok in change_tokens)
+
+
 def _target_in_text(target: str, blob: str) -> bool:
     if not target or not blob:
         return False
@@ -968,6 +1159,43 @@ def bind_evidence(
             continue
 
         # Product requirements — code/test evidence
+        required_paths = extract_product_file_paths(item.text)
+        if len(required_paths) >= 2:
+            # Enumerated file list: each named path must show the *described*
+            # change in +/- hunks. Touching a subset (or editing the right
+            # files for an unrelated fix) must not Fully Address the item.
+            per_file_diff = _diff_changed_by_file(last_diff)
+            change_tokens = _distinctive_change_tokens(item.text, required_paths)
+            covered: List[str] = []
+            missing_paths: List[str] = []
+            for req in required_paths:
+                matched = _match_required_path(req, files_changed)
+                if matched and _file_has_described_change(
+                    matched, req, per_file_diff, change_tokens
+                ):
+                    covered.append(req)
+                    ev.file_hits.append(matched)
+                else:
+                    missing_paths.append(req)
+            ev.evidence_notes.append(
+                "required_files:" + ",".join(required_paths[:12])
+            )
+            if change_tokens:
+                ev.evidence_notes.append(
+                    "change_tokens:" + ",".join(change_tokens[:8])
+                )
+            if missing_paths:
+                ev.evidence_notes.append("files_list_incomplete:true")
+                ev.evidence_notes.append(
+                    "files_missing:" + ",".join(missing_paths[:12])
+                )
+                ev.missing = (
+                    "Required files not updated as described: "
+                    + ", ".join(missing_paths)
+                )
+            else:
+                ev.evidence_notes.append("files_list_complete:true")
+
         for w in words:
             if w in corpus_files or w in corpus_body:
                 ev.keyword_hits.append(w)
@@ -975,27 +1203,32 @@ def bind_evidence(
                 ev.symbol_hits.append(w)
             if w in corpus_tests:
                 ev.test_hits.append(w)
-        for f in files_changed:
-            fl = f.lower()
-            if any(w in fl for w in words):
-                ev.file_hits.append(f)
-            else:
-                body = (contents.get(f) or "").lower()
-                if words and sum(1 for w in words if w in body) >= max(1, len(words) // 3):
-                    if f not in ev.file_hits:
+        if len(required_paths) < 2:
+            for f in files_changed:
+                fl = f.lower()
+                if any(w in fl for w in words):
+                    ev.file_hits.append(f)
+                else:
+                    body = (contents.get(f) or "").lower()
+                    if words and sum(1 for w in words if w in body) >= max(
+                        1, len(words) // 3
+                    ):
+                        if f not in ev.file_hits:
+                            ev.file_hits.append(f)
+            # Also scan implementation files not only tests
+            for f, body in contents.items():
+                if _looks_doc_path(f):
+                    continue
+                bl = body.lower()
+                if words and sum(1 for w in words if w in bl) >= max(
+                    1, len(words) // 3
+                ):
+                    if f not in ev.file_hits and f not in test_files:
                         ev.file_hits.append(f)
         for t in test_files:
             tl = t.lower()
             if any(w in tl for w in words):
                 ev.test_hits.append(t)
-        # Also scan implementation files not only tests
-        for f, body in contents.items():
-            if _looks_doc_path(f):
-                continue
-            bl = body.lower()
-            if words and sum(1 for w in words if w in bl) >= max(1, len(words) // 3):
-                if f not in ev.file_hits and f not in test_files:
-                    ev.file_hits.append(f)
         ev.file_hits = list(dict.fromkeys(ev.file_hits))
         ev.symbol_hits = list(dict.fromkeys(ev.symbol_hits))
         ev.test_hits = list(dict.fromkeys(ev.test_hits))
@@ -1040,11 +1273,23 @@ def rescore_checklist_with_evidence(
             ev.missing = missing_message_for(ev, words)
         elif status == "Partially Addressed":
             parts = ev.missing_hard_evidence_parts()
+            missing_files = []
+            for n in ev.evidence_notes or []:
+                if str(n).startswith("files_missing:"):
+                    missing_files = [
+                        p for p in str(n).split(":", 1)[-1].split(",") if p.strip()
+                    ]
+                    break
             if kind == "investigation":
                 ev.missing = (
                     f"Named area was mentioned but not inspected or fixed: "
                     f"{item.text}. Record an inspect/grep of the named symbols "
                     f"or touch them in the diff."
+                )
+            elif kind in ("product", "quality") and missing_files:
+                ev.missing = (
+                    "Required files not updated as described: "
+                    + ", ".join(missing_files)
                 )
             elif kind in ("product", "quality") and parts:
                 ev.missing = (
