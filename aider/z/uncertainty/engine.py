@@ -224,6 +224,66 @@ class UncertaintyEngine:
     def record_migration_impact(self, text: str) -> None:
         self.ctx.migration_data_impact = text
 
+    def rescore_checklist_light(
+        self,
+        files_changed: Sequence[str],
+        *,
+        tests_passed: Optional[bool] = None,
+        diff: Optional[str] = None,
+    ) -> None:
+        """Bind evidence + rescore the checklist without detectors or nodes.
+
+        Used by drift detection during multi-reflection sessions, when the
+        full ``analyze_edits`` pipeline is intentionally skipped (reflection
+        still pending). Same ``bind_evidence`` / ``rescore_checklist_*`` pair
+        as the gap-analysis path — just without edge-case detection, node
+        creation, or summary printing.
+        """
+        if not self.ctx.checklist:
+            return
+        root = self.ctx.root
+        files = [self._rel(f) for f in files_changed]
+        if not files:
+            return
+        contents = self._read_files(files)
+        symbols = self._extract_symbols(contents) if contents else []
+        relevant = find_relevant_tests(root, files, symbols)
+        doc_contents = dict(contents)
+        for doc_name in ("README.md", "README.rst", "README.txt", "README"):
+            doc_path = root / doc_name
+            if doc_name not in doc_contents and doc_path.is_file():
+                try:
+                    doc_contents[doc_name] = doc_path.read_text(
+                        encoding="utf-8", errors="ignore"
+                    )[:12000]
+                except OSError:
+                    pass
+        evidence = bind_evidence(
+            self.ctx.checklist,
+            files_changed=files,
+            file_contents=doc_contents,
+            symbols=symbols,
+            test_files=relevant,
+            execution_log=self.ctx.execution_log or self.ctx.discussed_text,
+            user_decisions=self.ctx.user_decisions,
+            verification=self.ctx.last_verification,
+            tests_passed=tests_passed,
+            last_diff=diff if diff is not None else (self.ctx.last_diff or ""),
+        )
+        model_complete = getattr(self.ctx, "model_complete", None)
+        if callable(model_complete):
+            rescore_checklist_with_model(
+                self.ctx.checklist, evidence, model_complete=model_complete
+            )
+        else:
+            rescore_checklist_with_evidence(self.ctx.checklist, evidence)
+        try:
+            self.ctx.requirement_ledger = ledger_snapshot(
+                self.ctx.checklist, evidence
+            )
+        except Exception:
+            pass
+
     def analyze_edits(
         self,
         files_changed: Sequence[str],

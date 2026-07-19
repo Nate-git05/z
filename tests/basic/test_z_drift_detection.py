@@ -684,6 +684,10 @@ class DriftGateInRunOneTest(unittest.TestCase):
         coder._maybe_require_implementation_plan = lambda *a, **k: True
         coder._maybe_suggest_skill = lambda *a, **k: None
         coder.get_rel_fname = lambda p: os.path.relpath(str(p), str(root))
+        # Keep the artificial Fully status: lightweight rescore would demote
+        # to Partial without test_hits (covered separately). This test is the
+        # complete-task "Stop here?" confirm path.
+        coder._rescore_checklist_for_drift = lambda: None
 
         with mock.patch(
             "aider.z.uncertainty.gate.report_auto_fix_exhaustion",
@@ -698,6 +702,150 @@ class DriftGateInRunOneTest(unittest.TestCase):
         self.assertFalse(any("Still-unresolved checklist" in m for m in sent))
         # Loop stopped — did not keep reflecting forever
         self.assertLessEqual(send_n["n"], 3)
+
+
+class ReflectChecklistRescoreTest(unittest.TestCase):
+    """Multi-reflection sessions must rescore checklist without clean exit."""
+
+    def test_rescore_runs_while_reflection_still_pending(self):
+        from aider.coders.base_coder import Coder
+        from aider.z.uncertainty.engine import SessionContext, UncertaintyEngine
+        from aider.z.uncertainty.store import UncertaintyStore
+
+        root = Path(tempfile.mkdtemp(prefix="z_drift_rescore_"))
+        src = root / "src"
+        src.mkdir()
+        cache = src / "lru_cache.h"
+        cache.write_text(
+            "class LruCache {\n public:\n  void put(int k, int v);\n};\n",
+            encoding="utf-8",
+        )
+
+        store = UncertaintyStore(root=root, repo_key=str(root))
+        eng = UncertaintyEngine(SessionContext(root=root, store=store))
+        eng.ctx.checklist = TaskChecklist(
+            task_id="lru",
+            title="Fix LRU leak",
+            items=[
+                RequirementItem(
+                    id="fix",
+                    text="Fix memory leak in src/lru_cache.h (LruCache)",
+                    status=STATUS_NOT,
+                    kind="product",
+                ),
+            ],
+        )
+
+        class FakeIO:
+            yes = True
+
+            def tool_output(self, *a, **k):
+                pass
+
+            def tool_warning(self, *a, **k):
+                pass
+
+            def tool_error(self, *a, **k):
+                pass
+
+            def confirm_ask(self, *a, **k):
+                return False
+
+        coder = Coder.__new__(Coder)
+        coder.io = FakeIO()
+        coder.verbose = False
+        coder.max_reflections = 3
+        coder.num_reflections = 0
+        coder.reflected_message = None
+        coder.aider_edited_files = set()
+        coder.last_aider_commit_hash = None
+        coder.last_verification = None
+        coder.test_outcome = None
+        coder._z_gate_hold_dirty = False
+        coder.root = root
+        coder.repo = None
+        coder.uncertainty_engine = eng
+        coder.uncertainty_store = store
+        coder._drift_asked_this_task = False
+        coder._drift_reflection_log = []
+
+        send_n = {"n": 0}
+        analysis_calls = []
+
+        def fake_init():
+            coder.num_reflections = 0
+            coder.reflected_message = None
+            coder._drift_reflection_log = []
+            coder.aider_edited_files = set()
+
+        def fake_send(message):
+            send_n["n"] += 1
+            edited = {str(cache)}
+            coder._last_send_edited_files = set(edited)
+            coder.aider_edited_files.update(edited)
+            # Always pending reflection — clean-exit analysis must NOT be required
+            coder.reflected_message = "Attempt to fix lint errors?\nunused"
+            if send_n["n"] >= 3:
+                coder.reflected_message = None
+            if False:
+                yield None
+
+        coder.init_before_message = fake_init
+        coder.send_message = fake_send
+        coder._maybe_pull_skills = lambda *a, **k: None
+        coder._maybe_begin_uncertainty_task = lambda *a, **k: None
+        coder._maybe_require_implementation_plan = lambda *a, **k: True
+        coder._maybe_suggest_skill = lambda *a, **k: None
+        coder._run_uncertainty_analysis = lambda edited: analysis_calls.append(
+            list(edited)
+        )
+        coder.get_rel_fname = lambda p: os.path.relpath(str(p), str(root))
+
+        with mock.patch(
+            "aider.z.uncertainty.gate.report_auto_fix_exhaustion",
+            return_value=None,
+        ):
+            coder.run_one("Fix the LRU cache memory leak", preproc=False)
+
+        item = eng.ctx.checklist.items[0]
+        self.assertIsNotNone(
+            item.last_evidence,
+            "lightweight rescore must populate last_evidence mid-reflection",
+        )
+        self.assertTrue(
+            item.last_evidence.file_hits or item.last_evidence.symbol_hits,
+            item.last_evidence,
+        )
+        self.assertNotEqual(item.status, STATUS_NOT)
+        # Full pipeline stayed gated (never called from run_one clean-exit here)
+        self.assertEqual(analysis_calls, [])
+
+    def test_rescore_checklist_light_does_not_add_nodes(self):
+        from aider.z.uncertainty.engine import SessionContext, UncertaintyEngine
+        from aider.z.uncertainty.store import UncertaintyStore
+
+        root = Path(tempfile.mkdtemp(prefix="z_drift_light_"))
+        (root / "src").mkdir()
+        path = root / "src" / "lru_cache.h"
+        path.write_text("struct LruCache {};\n", encoding="utf-8")
+        store = UncertaintyStore(root=root, repo_key=str(root))
+        eng = UncertaintyEngine(SessionContext(root=root, store=store))
+        eng.ctx.checklist = TaskChecklist(
+            task_id="t",
+            title="t",
+            items=[
+                RequirementItem(
+                    id="fix",
+                    text="Touch src/lru_cache.h LruCache",
+                    status=STATUS_NOT,
+                    kind="product",
+                )
+            ],
+        )
+        before = len(store.list(include_resolved=True))
+        eng.rescore_checklist_light(["src/lru_cache.h"])
+        self.assertEqual(len(store.list(include_resolved=True)), before)
+        self.assertIsNotNone(eng.ctx.checklist.items[0].last_evidence)
 
 
 class DriftDebugLogTest(unittest.TestCase):
