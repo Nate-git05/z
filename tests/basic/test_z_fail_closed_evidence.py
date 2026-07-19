@@ -164,6 +164,48 @@ class ExhaustiveRegistryTest(unittest.TestCase):
             evidence[0].evidence_notes,
         )
 
+    def test_checklist_rescore_survives_stray_brace_in_model_response(self):
+        """Incidental braces in model prose must not discard a valid JSON score.
+
+        Fail-closed ceilings may keep status at mechanical Not Addressed when
+        the model claims Partial/Full without evidence — but the parsed
+        ``missing`` field must still be applied. The old greedy ``{...}``
+        regex raised JSONDecodeError and silently left evidence untouched.
+        """
+        checklist = TaskChecklist(
+            task_id="t1",
+            title="Concurrency",
+            items=[
+                RequirementItem(
+                    id="req_1",
+                    text="Protect shared state with a mutex",
+                    kind="product",
+                    status="Not Addressed",
+                )
+            ],
+        )
+        evidence = bind_evidence(
+            checklist,
+            files_changed=["sync.cpp"],
+            file_contents={"sync.cpp": "void lock() {}\n"},
+            symbols=[],
+            test_files=[],
+        )
+        prior_missing = evidence[0].missing
+
+        def fake_model(_prompt: str) -> str:
+            return (
+                "The mutex pattern here uses std::lock_guard{mtx} for safety.\n\n"
+                '{"items": [{"id": "req_1", "status": "Partially Addressed", '
+                '"evidence": ["lock present"], "missing": "no test yet"}]}'
+            )
+
+        rescore_checklist_with_model(
+            checklist, evidence, model_complete=fake_model
+        )
+        self.assertEqual(evidence[0].missing, "no test yet")
+        self.assertNotEqual(evidence[0].missing, prior_missing)
+
     def test_decision_requires_decision_hits_not_process_log(self):
         ev = ItemEvidence(
             item_id="1",
