@@ -252,7 +252,11 @@ class ExhaustionSkillCaptureTest(unittest.TestCase):
         coder._maybe_pull_skills = lambda *a, **k: None
         coder._maybe_begin_uncertainty_task = lambda *a, **k: None
         coder._maybe_require_implementation_plan = lambda *a, **k: True
-        coder._maybe_suggest_skill = lambda msg: suggest_calls.append(msg)
+
+        def capture_suggest(msg, **kwargs):
+            suggest_calls.append((msg, kwargs))
+
+        coder._maybe_suggest_skill = capture_suggest
 
         with mock.patch(
             "aider.z.uncertainty.gate.report_auto_fix_exhaustion",
@@ -267,11 +271,119 @@ class ExhaustionSkillCaptureTest(unittest.TestCase):
     def test_exhaustion_with_prior_commit_offers_skill_capture(self):
         calls = self._run_one_until_exhaustion(committed=True)
         self.assertEqual(len(calls), 1)
-        self.assertIn("encodeFormAction", calls[0])
+        msg, kwargs = calls[0]
+        self.assertIn("encodeFormAction", msg)
+        self.assertTrue(
+            kwargs.get("session_scoped_diff"),
+            f"exhaustion path must request session-scoped diff, got {kwargs!r}",
+        )
 
     def test_exhaustion_without_commit_skips_skill_capture(self):
         calls = self._run_one_until_exhaustion(committed=False)
         self.assertEqual(calls, [])
+
+
+class SessionScopedDiffCaptureTest(unittest.TestCase):
+    """Exhaustion capture must ground in cumulative session diff, not trailing dirt."""
+
+    def _coder_for_capture(self, *, session_scoped: bool):
+        from aider.coders.base_coder import Coder
+
+        class FakeIO:
+            yes = True
+
+            def confirm_ask(self, *a, **k):
+                return True
+
+            def tool_output(self, *a, **k):
+                pass
+
+            def tool_error(self, *a, **k):
+                pass
+
+        class FakeRepo:
+            def __init__(self):
+                self.get_diffs_calls = []
+                self.get_diffs_since_calls = []
+
+            def get_diffs(self, fnames=None):
+                self.get_diffs_calls.append(list(fnames or []))
+                # Uncommitted remainder only — the cosmetic trailing edit
+                return (
+                    "diff --git a/cache.hpp b/cache.hpp\n"
+                    "-size_t n\n"
+                    "+std::size_t n\n"
+                )
+
+            def get_diffs_since(self, from_commit, fnames=None):
+                self.get_diffs_since_calls.append((from_commit, list(fnames or [])))
+                # Full session: committed leak fix + trailing cosmetic edit
+                return (
+                    "diff --git a/cache.hpp b/cache.hpp\n"
+                    "-entry->refcount++;\n"
+                    "+entry->refcount.fetch_add(1);\n"
+                    "-size_t n\n"
+                    "+std::size_t n\n"
+                )
+
+        coder = Coder.__new__(Coder)
+        coder.io = FakeIO()
+        coder.verbose = False
+        coder.aider_edited_files = {"cache.hpp"}
+        coder.last_verification = None
+        coder.last_aider_commit_hash = "c0ffee"
+        coder._z_gate_hold_dirty = False
+        coder.root = None
+        coder.commit_before_message = ["sessionstartsha"]
+        coder.repo = FakeRepo()
+        coder.get_rel_fname = lambda p: str(p)
+
+        captured = {}
+
+        def fake_build_grounding_pack(**kwargs):
+            captured["diff"] = kwargs.get("diff", "")
+            pack = mock.Mock()
+            pack.files = kwargs.get("files_changed") or ["cache.hpp"]
+            pack.diff = kwargs.get("diff") or ""
+            return pack
+
+        def fake_save_skill_from_task(*args, **kwargs):
+            captured["pack"] = kwargs.get("grounding_pack")
+            return mock.Mock(slug="test-skill", title="t", path="/tmp/x"), True
+
+        with mock.patch(
+            "aider.z.skills.grounding.build_grounding_pack",
+            side_effect=fake_build_grounding_pack,
+        ), mock.patch(
+            "aider.z.skills.cli.save_skill_from_task",
+            side_effect=fake_save_skill_from_task,
+        ), mock.patch(
+            "aider.z.skills.cli.offer_view_new_skill",
+            return_value=None,
+        ), mock.patch(
+            "aider.z.skills.router.task_is_bugfix_intent",
+            return_value=True,
+        ):
+            coder._maybe_suggest_skill(
+                "Fix LRU cache memory leak under concurrent eviction",
+                session_scoped_diff=session_scoped,
+            )
+        return coder, captured
+
+    def test_session_scoped_uses_diffs_since_session_start(self):
+        coder, captured = self._coder_for_capture(session_scoped=True)
+        self.assertEqual(len(coder.repo.get_diffs_since_calls), 1)
+        self.assertEqual(coder.repo.get_diffs_since_calls[0][0], "sessionstartsha")
+        self.assertEqual(coder.repo.get_diffs_calls, [])
+        self.assertIn("refcount.fetch_add", captured["diff"])
+        self.assertIn("std::size_t", captured["diff"])
+
+    def test_clean_exit_keeps_uncommitted_only_diff(self):
+        coder, captured = self._coder_for_capture(session_scoped=False)
+        self.assertEqual(len(coder.repo.get_diffs_calls), 1)
+        self.assertEqual(coder.repo.get_diffs_since_calls, [])
+        self.assertIn("std::size_t", captured["diff"])
+        self.assertNotIn("refcount.fetch_add", captured["diff"])
 
 
 if __name__ == "__main__":
