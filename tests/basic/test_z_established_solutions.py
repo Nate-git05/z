@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from pathlib import Path
 
 _HOME = tempfile.mkdtemp(prefix="z_established_")
 os.environ["Z_HOME"] = _HOME
@@ -78,6 +79,93 @@ class EstablishedTaxonomyTest(unittest.TestCase):
         )
         hits = scan_invention_in_diff(diff)
         self.assertFalse(any(h.category_id == "ipv4_parsing" for h in hits), hits)
+
+    def test_docstring_mention_does_not_suppress_lru_invention(self):
+        """Lucky wording in a docstring must not count as using the standard."""
+        diff = (
+            "diff --git a/cache.py b/cache.py\n"
+            "--- a/cache.py\n"
+            "+++ b/cache.py\n"
+            "@@ -0,0 +1,6 @@\n"
+            "+class SimpleLRUCache:\n"
+            '+    """avoids functools.lru_cache because we need eviction hooks"""\n'
+            "+    def __init__(self):\n"
+            "+        self._data = {}\n"
+        )
+        hits = scan_invention_in_diff(diff)
+        self.assertTrue(
+            any(h.category_id == "lru_cache" for h in hits),
+            hits,
+        )
+
+    def test_hash_comment_already_ignored_for_suppression(self):
+        """# comments are stripped in _added_lines — not the docstring path."""
+        diff = (
+            "diff --git a/cache.py b/cache.py\n"
+            "--- a/cache.py\n"
+            "+++ b/cache.py\n"
+            "@@ -0,0 +1,5 @@\n"
+            "+# avoids functools.lru_cache because we need eviction hooks\n"
+            "+class SimpleLRUCache:\n"
+            "+    def __init__(self):\n"
+            "+        self._data = {}\n"
+        )
+        hits = scan_invention_in_diff(diff)
+        self.assertTrue(any(h.category_id == "lru_cache" for h in hits), hits)
+
+    def test_invention_still_sees_regex_string_contents(self):
+        """String stripping must not apply to the invention check."""
+        diff = (
+            "diff --git a/x.py b/x.py\n"
+            "--- a/x.py\n"
+            "+++ b/x.py\n"
+            "@@ -0,0 +1,2 @@\n"
+            "+import re\n"
+            '+PAT = re.compile(r"\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}")\n'
+        )
+        hits = scan_invention_in_diff(diff)
+        self.assertTrue(any(h.category_id == "ipv4_parsing" for h in hits), hits)
+
+    def test_sibling_real_lru_usage_suppresses_via_repo_search(self):
+        """Untouched sibling with real @lru_cache must suppress (widened Fix 1)."""
+        root = Path(tempfile.mkdtemp(prefix="z_est_sib_"))
+        (root / "helpers.py").write_text(
+            "from functools import lru_cache\n"
+            "@lru_cache(maxsize=128)\n"
+            "def expensive(x):\n"
+            "    return x * 2\n",
+            encoding="utf-8",
+        )
+        (root / "cache.py").write_text(
+            "class SimpleLRUCache:\n"
+            "    def __init__(self):\n"
+            "        self._data = {}\n",
+            encoding="utf-8",
+        )
+        diff = (
+            "diff --git a/cache.py b/cache.py\n"
+            "--- a/cache.py\n"
+            "+++ b/cache.py\n"
+            "@@ -0,0 +1,4 @@\n"
+            "+class SimpleLRUCache:\n"
+            "+    def __init__(self):\n"
+            "+        self._data = {}\n"
+        )
+        # Without root → would flag; with root → sibling suppresses
+        alone = scan_invention_in_diff(diff)
+        self.assertTrue(any(h.category_id == "lru_cache" for h in alone), alone)
+        quiet = scan_invention_in_diff(
+            diff,
+            root=root,
+            focus_files=["cache.py"],
+            file_contents={
+                "cache.py": (root / "cache.py").read_text(encoding="utf-8"),
+            },
+        )
+        self.assertFalse(
+            any(h.category_id == "lru_cache" for h in quiet),
+            quiet,
+        )
 
 
 class EstablishedPlanningTest(unittest.TestCase):
