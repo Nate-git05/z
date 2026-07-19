@@ -306,15 +306,16 @@ class ProgressAndDetectTest(unittest.TestCase):
 
     def test_no_drift_when_checklist_progresses(self):
         cl = _react_checklist()
+        # With min_reflections=1 the window is the latest turn only
         history = [
             ReflectionTurn(
                 files={"packages/react-devtools-shared/src/bridge.js"},
-                progressed=True,
+                progressed=False,
                 off_scope=["packages/react-devtools-shared/src/bridge.js"],
             ),
             ReflectionTurn(
                 files={"packages/react-devtools-shared/src/bridge.js"},
-                progressed=False,
+                progressed=True,
                 off_scope=["packages/react-devtools-shared/src/bridge.js"],
             ),
         ]
@@ -347,9 +348,30 @@ class ProgressAndDetectTest(unittest.TestCase):
         ]
         signal = detect_drift(history, cl)
         self.assertIsNotNone(signal)
-        self.assertIn("bridge.js", ",".join(signal.off_scope_files))
+        self.assertIn("debugValue.ts", ",".join(signal.off_scope_files))
         self.assertTrue(signal.unresolved)
         self.assertIn("Possible drift", signal.summary)
+
+    def test_single_qualifying_reflection_is_enough(self):
+        """min_reflections=1: reachable inside max_reflections=3 budget."""
+        cl = _react_checklist()
+        history = [
+            ReflectionTurn(
+                files={"src/lru_cache.h"},
+                progressed=False,
+                off_scope=["src/lru_cache.h"],
+            ),
+        ]
+        signal = detect_drift(history, cl)
+        self.assertIsNotNone(signal)
+        self.assertIn("lru_cache.h", ",".join(signal.off_scope_files))
+        # Empty off_scope baseline turn alone must not flag
+        self.assertIsNone(
+            detect_drift(
+                [ReflectionTurn(files={"a.h"}, progressed=False, off_scope=[])],
+                cl,
+            )
+        )
 
     def test_mixed_in_and_off_scope_does_not_flag(self):
         """Legitimate large-but-in-scope work plus a stray file must not trip."""
@@ -702,6 +724,140 @@ class DriftGateInRunOneTest(unittest.TestCase):
         self.assertFalse(any("Still-unresolved checklist" in m for m in sent))
         # Loop stopped — did not keep reflecting forever
         self.assertLessEqual(send_n["n"], 3)
+
+
+class DriftBeforeExhaustionTest(unittest.TestCase):
+    """Drift must be reachable at the last reflection before the cap."""
+
+    def test_drift_checked_before_exhaustion_at_max(self):
+        from aider.coders.base_coder import Coder
+        from aider.z.uncertainty.engine import SessionContext, UncertaintyEngine
+        from aider.z.uncertainty.store import UncertaintyStore
+
+        root = Path(tempfile.mkdtemp(prefix="z_drift_budget_"))
+        store = UncertaintyStore(root=root, repo_key=str(root))
+        eng = UncertaintyEngine(SessionContext(root=root, store=store))
+        eng.ctx.checklist = _react_checklist()
+
+        confirms = []
+        detect_at = []
+
+        class FakeIO:
+            yes = None
+
+            def tool_output(self, *a, **k):
+                pass
+
+            def tool_warning(self, *a, **k):
+                pass
+
+            def tool_error(self, *a, **k):
+                pass
+
+            def confirm_ask(self, question, default="y", explicit_yes_required=False, **k):
+                confirms.append(
+                    {
+                        "q": question,
+                        "n": coder.num_reflections,
+                        "log": len(coder._drift_reflection_log),
+                    }
+                )
+                return True  # accept refocus — must continue, not exhaust
+
+        coder = Coder.__new__(Coder)
+        coder.io = FakeIO()
+        coder.verbose = False
+        coder.max_reflections = 3
+        coder.num_reflections = 0
+        coder.reflected_message = None
+        coder.aider_edited_files = set()
+        coder.last_aider_commit_hash = None
+        coder.last_verification = None
+        coder._z_gate_hold_dirty = False
+        coder.root = root
+        coder.uncertainty_engine = eng
+        coder.uncertainty_store = store
+        coder._drift_asked_this_task = False
+        coder._drift_reflection_log = []
+
+        send_n = {"n": 0}
+        exhausted = {"hit": False}
+
+        def fake_init():
+            coder.num_reflections = 0
+            coder.reflected_message = None
+            coder._drift_reflection_log = []
+            coder.aider_edited_files = set()
+
+        def fake_send(message):
+            send_n["n"] += 1
+            detect_at.append(
+                ("send", send_n["n"], coder.num_reflections, message)
+            )
+            edited = {str(root / "src/lru_cache.h")}
+            coder._last_send_edited_files = set(edited)
+            coder.aider_edited_files.update(edited)
+            # Keep reflecting until drift redirects or we stop
+            if "Still-unresolved checklist" in message or "Drift detected" in message:
+                coder.reflected_message = None
+            else:
+                coder.reflected_message = "lint again"
+            if False:
+                yield None
+
+        def fake_exhaust(*a, **k):
+            exhausted["hit"] = True
+
+        coder.init_before_message = fake_init
+        coder.send_message = fake_send
+        coder._maybe_pull_skills = lambda *a, **k: None
+        coder._maybe_begin_uncertainty_task = lambda *a, **k: None
+        coder._maybe_require_implementation_plan = lambda *a, **k: True
+        coder._maybe_suggest_skill = lambda *a, **k: None
+        coder._rescore_checklist_for_drift = lambda: None
+        coder.get_rel_fname = lambda p: os.path.relpath(str(p), str(root))
+
+        # Force off_scope on every recorded turn so min_reflections=1 can fire
+        real_record = coder._record_drift_reflection_turn
+
+        def record_with_off(**kwargs):
+            # Call through Coder unbound carefully — use manual append
+            if not kwargs.get("was_reflection"):
+                return
+            from aider.z.uncertainty.drift import ReflectionTurn
+
+            log = coder._drift_reflection_log
+            log.append(
+                ReflectionTurn(
+                    files={"src/lru_cache.h"},
+                    progressed=False,
+                    off_scope=["src/lru_cache.h"],
+                    stagnant_ids=set(),
+                )
+            )
+
+        coder._record_drift_reflection_turn = record_with_off
+
+        with mock.patch(
+            "aider.z.uncertainty.gate.report_auto_fix_exhaustion",
+            side_effect=fake_exhaust,
+        ):
+            coder.run_one(
+                "Fix encodeFormAction to pass debugValue through the edge client",
+                preproc=False,
+            )
+
+        self.assertTrue(confirms, "drift confirm must fire before exhaustion")
+        self.assertFalse(
+            exhausted["hit"],
+            "accepting refocus must continue instead of exhausting",
+        )
+        # Accepting refocus continues the loop with a rewritten message
+        self.assertGreaterEqual(send_n["n"], 3, detect_at)
+        self.assertTrue(
+            any(str(x[3]).startswith("Drift detected") for x in detect_at),
+            detect_at,
+        )
 
 
 class ReflectChecklistRescoreTest(unittest.TestCase):

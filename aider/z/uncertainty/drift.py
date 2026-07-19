@@ -282,9 +282,15 @@ def detect_drift(
     history: Sequence[ReflectionTurn],
     checklist: TaskChecklist,
     *,
-    min_reflections: int = 2,
+    min_reflections: int = 1,
 ) -> Optional[DriftSignal]:
-    """Flag drift when the last 2 reflections were off-scope with no progress."""
+    """Flag drift when recent reflection(s) were off-scope with no progress.
+
+    Default window is 1 so a single qualifying reflection can fire inside a
+    ``max_reflections=3`` budget (the first rescore turn often has empty
+    off_scope by construction; waiting for two consecutive qualifiers made
+    the detector unreachable before exhaustion).
+    """
     if len(history) < min_reflections:
         return None
     window = list(history[-min_reflections:])
@@ -308,19 +314,21 @@ def detect_drift(
                 combined_off.append(f)
     open_items = unresolved_items(checklist)
     files_preview = ", ".join(combined_off[:6])
+    n = min_reflections
+    refl_label = "reflection" if n == 1 else "reflections"
     if open_items:
         open_preview = "; ".join(
             (item.text or "").strip().replace("\n", " ")[:80]
             for item in open_items[:3]
         )
         summary = (
-            f"Possible drift: the last {min_reflections} reflections touched "
+            f"Possible drift: the last {n} {refl_label} touched "
             f"{files_preview} without resolving {open_preview}."
         )
     else:
         # Task already complete — unprompted scope-creep after the fix landed
         summary = (
-            f"Possible drift: the last {min_reflections} reflections touched "
+            f"Possible drift: the last {n} {refl_label} touched "
             f"{files_preview}, but every checklist item is already resolved — "
             "this looks like unrequested extra work."
         )
@@ -369,7 +377,7 @@ def confirm_prompt(signal: DriftSignal) -> str:
     files = ", ".join(signal.off_scope_files[:4]) or "off-scope files"
     if is_complete_task_creep(signal):
         return (
-            f"Possible drift: the last 2 reflections touched {files}, but the "
+            f"Possible drift: recent reflection(s) touched {files}, but the "
             "task appears complete — these edits go beyond what was requested. "
             "Stop here?"
         )
@@ -377,7 +385,7 @@ def confirm_prompt(signal: DriftSignal) -> str:
         (i.text or "").strip().replace("\n", " ")[:60] for i in signal.unresolved[:3]
     ) or "open checklist items"
     return (
-        f"Possible drift: the last 2 reflections touched {files} "
+        f"Possible drift: recent reflection(s) touched {files} "
         f"without resolving {items}. Refocus on the original task instead?"
     )
 
