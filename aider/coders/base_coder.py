@@ -1364,6 +1364,22 @@ class Coder:
         except Exception:
             pass
 
+    def _detector_debug_enabled(self) -> bool:
+        return os.environ.get("Z_DETECTOR_DEBUG", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+
+    def _detector_debug(self, msg: str) -> None:
+        """Env-gated cheap-detector instrumentation — print only, no behavior change."""
+        if not self._detector_debug_enabled():
+            return
+        try:
+            self.io.tool_output(f"[detector-debug] {msg}")
+        except Exception:
+            pass
+
     def _session_start_commit(self) -> Optional[str]:
         """HEAD SHA recorded at the start of this run_one() (if any)."""
         before = getattr(self, "commit_before_message", None) or []
@@ -1544,10 +1560,16 @@ class Coder:
     def _reflection_edited_rels(self) -> list[str]:
         """Repo-relative paths touched this send (fallback: session edits)."""
         last_send = getattr(self, "_last_send_edited_files", None)
+        used_fallback = not bool(last_send)
         edited = set(last_send or ())
         if not edited:
             edited = set(self.aider_edited_files or ())
         if not edited:
+            self._detector_debug(
+                f"_last_send_edited_files={sorted(last_send or []) or '[]'} "
+                f"aider_edited_files={sorted(self.aider_edited_files or []) or '[]'} "
+                f"rels=[] (empty)"
+            )
             return []
         rels = []
         for path in edited:
@@ -1555,6 +1577,12 @@ class Coder:
                 rels.append(self.get_rel_fname(path))
             except Exception:
                 rels.append(str(path))
+        self._detector_debug(
+            f"_last_send_edited_files={sorted(last_send or []) or '[]'} "
+            f"used_session_fallback={used_fallback} "
+            f"aider_edited_files={sorted(self.aider_edited_files or []) or '[]'} "
+            f"rels={sorted(rels) or '[]'}"
+        )
         return rels
 
     def _rescore_checklist_for_drift(self) -> None:
@@ -1597,9 +1625,21 @@ class Coder:
         """
         eng = getattr(self, "uncertainty_engine", None)
         if not eng:
+            self._detector_debug(
+                f"no uncertainty_engine, skipping cheap detector pass "
+                f"(n_reflections={getattr(self, 'num_reflections', 0)})"
+            )
             return
         rels = self._reflection_edited_rels()
+        n_ref = getattr(self, "num_reflections", 0)
+        self._detector_debug(
+            f"rels={sorted(rels) or '[]'} len={len(rels)} n_reflections={n_ref}"
+        )
         if not rels:
+            self._detector_debug(
+                f"rels empty, skipping cheap detector pass "
+                f"(n_reflections={n_ref})"
+            )
             return
         edited_abs = getattr(self, "_last_send_edited_files", None) or set(
             self.aider_edited_files or ()
@@ -1610,11 +1650,23 @@ class Coder:
                 eng.record_diff(repo.get_diffs(fnames=list(edited_abs)) or "")
         except Exception:
             pass
-        eng.analyze_edits(
+        self._detector_debug(
+            f"calling analyze_edits(cheap_only=True) "
+            f"rels={sorted(rels) or '[]'} n_reflections={n_ref}"
+        )
+        new_nodes = eng.analyze_edits(
             rels,
             tests_passed=getattr(self, "test_outcome", None),
             run_gap_analysis=False,
             cheap_only=True,
+        )
+        try:
+            n_nodes = len(new_nodes or [])
+        except TypeError:
+            n_nodes = 0
+        self._detector_debug(
+            f"analyze_edits returned n_nodes={n_nodes} "
+            f"n_reflections={n_ref}"
         )
 
     def _record_drift_reflection_turn(

@@ -184,18 +184,68 @@ class ReflectionHookTest(unittest.TestCase):
 
         coder = Coder.__new__(Coder)
         eng = mock.MagicMock()
+        eng.analyze_edits.return_value = []
         coder.uncertainty_engine = eng
         coder._last_send_edited_files = {"/repo/event_queue.py"}
         coder.aider_edited_files = set(coder._last_send_edited_files)
         coder.repo = None
         coder.test_outcome = None
         coder.get_rel_fname = lambda p: "event_queue.py"
+        coder.num_reflections = 1
 
+        class FakeIO:
+            def tool_output(self, *a, **k):
+                pass
+
+        coder.io = FakeIO()
         coder._run_cheap_detectors_for_reflection()
         eng.analyze_edits.assert_called_once()
         kwargs = eng.analyze_edits.call_args.kwargs
         self.assertTrue(kwargs.get("cheap_only"))
         self.assertFalse(kwargs.get("run_gap_analysis"))
+
+    def test_detector_debug_distinguishes_empty_rels_from_zero_nodes(self):
+        from aider.coders.base_coder import Coder
+
+        lines = []
+
+        class FakeIO:
+            def tool_output(self, *a, **k):
+                lines.append(" ".join(str(x) for x in a))
+
+        coder = Coder.__new__(Coder)
+        coder.io = FakeIO()
+        coder.num_reflections = 2
+        coder.uncertainty_engine = mock.MagicMock()
+        coder.uncertainty_engine.analyze_edits.return_value = []
+        coder.repo = None
+        coder.test_outcome = None
+        coder.get_rel_fname = lambda p: "event_queue.py"
+
+        with mock.patch.dict(os.environ, {"Z_DETECTOR_DEBUG": "1"}):
+            # Empty rels → bail-out is explicit
+            coder._last_send_edited_files = set()
+            coder.aider_edited_files = set()
+            coder._run_cheap_detectors_for_reflection()
+            self.assertTrue(
+                any("rels empty, skipping" in line for line in lines),
+                lines,
+            )
+            coder.uncertainty_engine.analyze_edits.assert_not_called()
+
+            # Non-empty rels → call ran, n_nodes printed
+            lines.clear()
+            coder._last_send_edited_files = {"/repo/event_queue.py"}
+            coder.aider_edited_files = set(coder._last_send_edited_files)
+            coder._run_cheap_detectors_for_reflection()
+            self.assertTrue(
+                any("calling analyze_edits" in line for line in lines),
+                lines,
+            )
+            self.assertTrue(
+                any("n_nodes=0" in line for line in lines),
+                lines,
+            )
 
 
 if __name__ == "__main__":
