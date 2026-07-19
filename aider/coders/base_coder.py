@@ -1162,6 +1162,14 @@ class Coder:
             except Exception:
                 pass
 
+            # Cheap deterministic detectors (absorption / siblings / established
+            # solutions) — same reflection-safe pattern. Full analyze_edits
+            # (incl. model-backed edge cases) still runs only on clean exit.
+            try:
+                self._run_cheap_detectors_for_reflection()
+            except Exception:
+                pass
+
             try:
                 self._record_drift_reflection_turn(
                     was_reflection=was_reflection,
@@ -1533,6 +1541,22 @@ class Coder:
         except Exception:
             pass
 
+    def _reflection_edited_rels(self) -> list[str]:
+        """Repo-relative paths touched this send (fallback: session edits)."""
+        last_send = getattr(self, "_last_send_edited_files", None)
+        edited = set(last_send or ())
+        if not edited:
+            edited = set(self.aider_edited_files or ())
+        if not edited:
+            return []
+        rels = []
+        for path in edited:
+            try:
+                rels.append(self.get_rel_fname(path))
+            except Exception:
+                rels.append(str(path))
+        return rels
+
     def _rescore_checklist_for_drift(self) -> None:
         """Bind evidence + rescore checklist during reflections (drift only).
 
@@ -1543,23 +1567,16 @@ class Coder:
         checklist = getattr(getattr(eng, "ctx", None), "checklist", None)
         if not eng or not checklist:
             return
-        last_send = getattr(self, "_last_send_edited_files", None)
-        edited = set(last_send or ())
-        if not edited:
-            # Idle lint/prose reflections: re-score against session edits
-            edited = set(self.aider_edited_files or ())
-        if not edited:
+        rels = self._reflection_edited_rels()
+        if not rels:
             return
-        rels = []
-        for path in edited:
-            try:
-                rels.append(self.get_rel_fname(path))
-            except Exception:
-                rels.append(str(path))
+        edited_abs = getattr(self, "_last_send_edited_files", None) or set(
+            self.aider_edited_files or ()
+        )
         try:
             repo = getattr(self, "repo", None)
-            if repo is not None and hasattr(repo, "get_diffs"):
-                eng.record_diff(repo.get_diffs(fnames=list(edited)) or "")
+            if repo is not None and hasattr(repo, "get_diffs") and edited_abs:
+                eng.record_diff(repo.get_diffs(fnames=list(edited_abs)) or "")
         except Exception:
             pass
         eng.rescore_checklist_light(
@@ -1569,6 +1586,35 @@ class Coder:
         self._drift_debug(
             "rescored checklist for drift "
             f"(files={len(rels)} n_reflections={getattr(self, 'num_reflections', 0)})"
+        )
+
+    def _run_cheap_detectors_for_reflection(self) -> None:
+        """Run deterministic detectors while reflections are still pending.
+
+        Closes the gap where exhaustion / never-clean-exit tasks skipped
+        ``analyze_edits`` entirely — so absorption / sibling / established-
+        solution checks never ran. Does not invoke model-backed edge cases.
+        """
+        eng = getattr(self, "uncertainty_engine", None)
+        if not eng:
+            return
+        rels = self._reflection_edited_rels()
+        if not rels:
+            return
+        edited_abs = getattr(self, "_last_send_edited_files", None) or set(
+            self.aider_edited_files or ()
+        )
+        try:
+            repo = getattr(self, "repo", None)
+            if repo is not None and hasattr(repo, "get_diffs") and edited_abs:
+                eng.record_diff(repo.get_diffs(fnames=list(edited_abs)) or "")
+        except Exception:
+            pass
+        eng.analyze_edits(
+            rels,
+            tests_passed=getattr(self, "test_outcome", None),
+            run_gap_analysis=False,
+            cheap_only=True,
         )
 
     def _record_drift_reflection_turn(
