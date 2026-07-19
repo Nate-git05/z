@@ -23,8 +23,12 @@ from aider.z.uncertainty.package_checks import (  # noqa: E402
     looks_like_root_test_guard,
 )
 from aider.z.uncertainty.type_members import (  # noqa: E402
+    _param_bindings,
+    _resolve_binding,
+    check_file_against_index,
     check_local_type_members,
     parse_type_declarations,
+    TypeDecl,
 )
 from aider.z.uncertainty.verify import (  # noqa: E402
     VerifyState,
@@ -234,6 +238,95 @@ class TypeMemberTest(unittest.TestCase):
             )
             result = check_local_type_members(root, ["src/tool.ts"])
             self.assertTrue(result.passed)
+
+    def test_resolve_binding_nearest_preceding(self):
+        text = (
+            "function a(retry: RetryOptions) { return retry.retryCount }\n"
+            "function b(retry: RetryableStatusOptions) { return retry.exclude }\n"
+        )
+        bindings = _param_bindings(text)
+        self.assertEqual(len(bindings), 2)
+        # Access inside first function → RetryOptions, not the later overwrite
+        pos_a = text.index("retry.retryCount")
+        pos_b = text.index("retry.exclude")
+        self.assertEqual(
+            _resolve_binding(bindings, "retry", pos_a), "RetryOptions"
+        )
+        self.assertEqual(
+            _resolve_binding(bindings, "retry", pos_b),
+            "RetryableStatusOptions",
+        )
+
+    def test_sibling_functions_reuse_param_name_no_false_positive(self):
+        """handler.ts live miss: later retry: RetryableStatusOptions must not
+        rebind earlier retry: RetryOptions accesses in sibling functions."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            src = root / "packages" / "console" / "app" / "src"
+            src.mkdir(parents=True)
+            (src / "types.ts").write_text(
+                "export interface RetryOptions {\n"
+                "  excludeProviders: string[]\n"
+                "  retryCount: number\n"
+                "}\n"
+                "export interface RetryableStatusOptions {\n"
+                "  statuses: number[]\n"
+                "  maxAttempts: number\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            handler = src / "handler.ts"
+            handler.write_text(
+                "import type { RetryOptions, RetryableStatusOptions } from './types'\n"
+                "\n"
+                "export async function retriableRequest(retry: RetryOptions) {\n"
+                "  const providers = retry.excludeProviders\n"
+                "  return retry.retryCount + providers.length\n"
+                "}\n"
+                "\n"
+                "export async function selectProvider(retry: RetryOptions) {\n"
+                "  return retry.excludeProviders.concat([])\n"
+                "}\n"
+                "\n"
+                "export async function fetchWithRetryableStatus(\n"
+                "  retry: RetryableStatusOptions,\n"
+                ") {\n"
+                "  return retry.statuses.length + retry.maxAttempts\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            result = check_local_type_members(
+                root, ["packages/console/app/src/handler.ts"]
+            )
+            self.assertTrue(
+                result.passed,
+                f"false positives: {[i.format() for i in result.issues]}",
+            )
+
+    def test_sibling_still_flags_real_missing_member(self):
+        """Nearest-binding fix must not suppress a true missing member."""
+        index = {
+            "RetryOptions": TypeDecl(
+                name="RetryOptions",
+                file="types.ts",
+                line=1,
+                members={"excludeProviders", "retryCount"},
+            ),
+            "RetryableStatusOptions": TypeDecl(
+                name="RetryableStatusOptions",
+                file="types.ts",
+                line=5,
+                members={"statuses", "maxAttempts"},
+            ),
+        }
+        text = (
+            "function a(retry: RetryOptions) { return retry.excludeProviders }\n"
+            "function b(retry: RetryableStatusOptions) { return retry.missing }\n"
+        )
+        issues = check_file_against_index("handler.ts", text, index)
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].member, "missing")
+        self.assertEqual(issues[0].receiver_type, "RetryableStatusOptions")
 
 
 class VerifyOrderTest(unittest.TestCase):
