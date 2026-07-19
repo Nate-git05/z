@@ -236,6 +236,27 @@ def _apply_pack_metadata(skill: Skill, pack: GroundingPack, result: GroundingRes
         skill.capability = pack.user_request.strip()[:80]
 
 
+def _is_category_compliance_miss(result: GroundingResult) -> bool:
+    """True when the model omitted/misnamed root_cause_category (not a taxonomy gap)."""
+    reason = (getattr(result, "reason", None) or "").strip().lower()
+    return (
+        "missing root_cause_category" in reason
+        or "unknown root_cause_category" in reason
+    )
+
+
+def _bug_pattern_category_retry_user(user_content: str) -> str:
+    from .bug_concepts import taxonomy_category_ids
+
+    cats = ", ".join(taxonomy_category_ids())
+    return (
+        user_content
+        + "\n\nYou did not return a valid root_cause_category last time. "
+        + f"It must be exactly one of: {cats}\n"
+        + "Rewrite the full bug_pattern JSON with a valid root_cause_category.\n"
+    )
+
+
 def generate_skill(
     topic: str,
     *,
@@ -343,15 +364,25 @@ def generate_skill(
             grounding_result = check_grounding(check_text, pack)
         _apply_pack_metadata(skill, pack, grounding_result)
         if not grounding_result.ok:
-            # One regenerate attempt with explicit missing-symbol feedback
-            missing = ", ".join(grounding_result.missing_symbols[:12])
-            retry_user = (
-                user_content
-                + "\n\nPREVIOUS DRAFT FAILED GROUNDING CHECK.\n"
-                + f"These names were NOT in the evidence — remove them: {missing}\n"
-                + "Rewrite the skill using ONLY symbols from the evidence list.\n"
-            )
-            raw2, err2 = _call_model(model, SKILL_SYSTEM, retry_user)
+            # One regenerate attempt. Category compliance misses get a targeted
+            # taxonomy reminder; other failures keep the symbol-grounding nudge.
+            if skill.kind == SKILL_KIND_BUG_PATTERN and _is_category_compliance_miss(
+                grounding_result
+            ):
+                retry_user = _bug_pattern_category_retry_user(user_content)
+                retry_system = BUG_PATTERN_SYSTEM
+            else:
+                missing = ", ".join(grounding_result.missing_symbols[:12])
+                retry_user = (
+                    user_content
+                    + "\n\nPREVIOUS DRAFT FAILED GROUNDING CHECK.\n"
+                    + f"These names were NOT in the evidence — remove them: {missing}\n"
+                    + "Rewrite the skill using ONLY symbols from the evidence list.\n"
+                )
+                retry_system = (
+                    BUG_PATTERN_SYSTEM if prefer_bug_pattern else SKILL_SYSTEM
+                )
+            raw2, err2 = _call_model(model, retry_system, retry_user)
             if not err2 and raw2:
                 data2 = _extract_json(raw2)
                 skill2 = _skill_from_data(

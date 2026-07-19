@@ -507,6 +507,139 @@ Use RAII.
         self.assertEqual(skill.root_cause_category, "resource_leak")
 
 
+class CategoryComplianceRetryTest(unittest.TestCase):
+    """Empty/invalid root_cause_category is a compliance miss — retry once."""
+
+    _LEAK_DIFF = (
+        "diff --git a/cache.cpp b/cache.cpp\n"
+        "--- a/cache.cpp\n"
+        "+++ b/cache.cpp\n"
+        "@@ -20,6 +20,8 @@\n"
+        "-    entry = malloc(sizeof(Entry));\n"
+        "+    auto entry = std::unique_ptr<Entry>(new Entry);\n"
+        "+    // RAII: free on all paths via unique_ptr destructor\n"
+    )
+
+    def _ok_json(self, category: str = "resource_leak") -> str:
+        return (
+            '{"title": "LRU leak", "description": "RSS grows",'
+            ' "content": "## Symptom\\nLeak under load\\n",'
+            ' "kind": "bug_pattern",'
+            ' "symptom_description": "RSS grows without bound under eviction",'
+            f' "root_cause_category": "{category}",'
+            ' "root_cause_explanation": "malloc without free on eviction path",'
+            ' "fix_technique": "RAII unique_ptr owns the entry",'
+            ' "verification_method": "LeakSanitizer before/after",'
+            ' "language": "cpp"}'
+        )
+
+    def _empty_category_json(self) -> str:
+        return (
+            '{"title": "LRU leak", "description": "RSS grows",'
+            ' "content": "## Symptom\\nLeak under load\\n",'
+            ' "kind": "bug_pattern",'
+            ' "symptom_description": "RSS grows without bound under eviction",'
+            ' "root_cause_category": "",'
+            ' "root_cause_explanation": "malloc without free on eviction path",'
+            ' "fix_technique": "RAII unique_ptr owns the entry",'
+            ' "verification_method": "LeakSanitizer before/after",'
+            ' "language": "cpp"}'
+        )
+
+    def test_retries_once_when_category_empty_then_succeeds(self):
+        from aider.z.skills.generate import generate_skill
+
+        calls = []
+
+        class FakeModel:
+            def simple_send_with_retries(self, messages):
+                calls.append(messages)
+                if len(calls) == 1:
+                    return self_outer._empty_category_json()
+                # Retry must still use bug-pattern system + taxonomy reminder
+                sys = messages[0]["content"]
+                user = messages[1]["content"]
+                assert "BUG-PATTERN" in sys or "bug_pattern" in sys.lower()
+                assert "You did not return a valid root_cause_category" in user
+                assert "resource_leak" in user
+                return self_outer._ok_json("resource_leak")
+
+        self_outer = self
+        pack = GroundingPack(diff=self._LEAK_DIFF, symbols=["Entry"])
+        with mock.patch(
+            "aider.z.skills.generate.resolve_model", return_value=FakeModel()
+        ):
+            skill, err, ground = generate_skill(
+                "Fix LRU cache memory leak under concurrent eviction",
+                grounding_pack=pack,
+                prefer_bug_pattern=True,
+                two_phase=False,
+            )
+        self.assertIsNone(err)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(skill.root_cause_category, "resource_leak")
+        self.assertTrue(ground.ok, ground.reason)
+        self.assertFalse(skill.needs_review)
+
+    def test_still_draft_after_retry_also_misses_category(self):
+        from aider.z.skills.generate import generate_skill
+
+        calls = []
+
+        class FakeModel:
+            def simple_send_with_retries(self, messages):
+                calls.append(messages)
+                return self_outer._empty_category_json()
+
+        self_outer = self
+        pack = GroundingPack(diff=self._LEAK_DIFF, symbols=["Entry"])
+        with mock.patch(
+            "aider.z.skills.generate.resolve_model", return_value=FakeModel()
+        ):
+            skill, err, ground = generate_skill(
+                "Fix LRU cache memory leak under concurrent eviction",
+                grounding_pack=pack,
+                prefer_bug_pattern=True,
+                two_phase=False,
+            )
+        self.assertIsNone(err)
+        self.assertEqual(len(calls), 2)  # bounded: exactly one retry
+        self.assertFalse(ground.ok)
+        self.assertIn("root_cause_category", ground.reason)
+        self.assertTrue(skill.needs_review)
+
+    def test_invalid_category_also_triggers_taxonomy_retry(self):
+        from aider.z.skills.generate import generate_skill
+
+        calls = []
+        bad = self._ok_json("not_a_real_taxonomy_id")
+
+        class FakeModel:
+            def simple_send_with_retries(self, messages):
+                calls.append(messages)
+                if len(calls) == 1:
+                    return bad
+                user = messages[1]["content"]
+                assert "You did not return a valid root_cause_category" in user
+                return self_outer._ok_json("resource_leak")
+
+        self_outer = self
+        pack = GroundingPack(diff=self._LEAK_DIFF, symbols=["Entry"])
+        with mock.patch(
+            "aider.z.skills.generate.resolve_model", return_value=FakeModel()
+        ):
+            skill, err, ground = generate_skill(
+                "Fix LRU cache memory leak under concurrent eviction",
+                grounding_pack=pack,
+                prefer_bug_pattern=True,
+                two_phase=False,
+            )
+        self.assertIsNone(err)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(skill.root_cause_category, "resource_leak")
+        self.assertTrue(ground.ok, ground.reason)
+
+
 class GateHoldClearTest(unittest.TestCase):
     def test_medium_ack_clears_hold(self):
         """Regression: medium-ack used to leave _z_gate_hold_dirty stuck."""
