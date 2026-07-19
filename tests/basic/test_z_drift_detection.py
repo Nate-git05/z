@@ -19,6 +19,7 @@ from aider.z.uncertainty.drift import (  # noqa: E402
     detect_drift,
     file_in_checklist_scope,
     format_refocus_message,
+    is_complete_task_creep,
     make_drift_observed_node,
     off_scope_edits,
     status_snapshot,
@@ -283,6 +284,44 @@ class ConfirmAndNodeTest(unittest.TestCase):
         prompt = confirm_prompt(signal)
         self.assertIn("Refocus on the original task instead?", prompt)
 
+    def test_complete_task_creep_still_flags(self):
+        """After every item is Fully Addressed, same-file creep must still fire."""
+        cl = TaskChecklist(
+            task_id="lru",
+            title="Fix LRU leak",
+            items=[
+                RequirementItem(
+                    id="fix",
+                    text="Fix memory leak in src/lru_cache.h",
+                    status=STATUS_FULLY,
+                    kind="product",
+                ),
+            ],
+        )
+        history = [
+            ReflectionTurn(
+                files={"src/lru_cache.h"},
+                progressed=False,
+                off_scope=["src/lru_cache.h"],
+            ),
+            ReflectionTurn(
+                files={"src/lru_cache.h"},
+                progressed=False,
+                off_scope=["src/lru_cache.h"],
+            ),
+        ]
+        signal = detect_drift(history, cl)
+        self.assertIsNotNone(signal)
+        self.assertTrue(is_complete_task_creep(signal))
+        self.assertEqual(signal.unresolved, [])
+        self.assertIn("already resolved", signal.summary)
+        self.assertIsNone(format_refocus_message(signal))
+        prompt = confirm_prompt(signal)
+        self.assertIn("Stop here?", prompt)
+        self.assertNotIn("Refocus on the original task", prompt)
+        node = make_drift_observed_node(signal, task_id="lru")
+        self.assertTrue(node.signals.get("complete_task_creep"))
+
     def test_declined_node_is_medium_requirement_gap(self):
         cl = _react_checklist()
         history = [
@@ -376,25 +415,32 @@ class DriftGateInRunOneTest(unittest.TestCase):
             # 2–3: off-scope reflection turns → drift window
             # 4+: stop (or consume refocus redirect)
             if send_n["n"] == 1:
-                coder.aider_edited_files.add(
+                edited = {
                     str(
                         root
                         / "packages/react-server-dom-webpack/src/client/"
                         / "ReactFlightDOMClient.js"
                     )
-                )
+                }
+                coder._last_send_edited_files = set(edited)
+                coder.aider_edited_files.update(edited)
                 coder.reflected_message = "Attempt to fix lint errors?\nunused"
             elif send_n["n"] == 2:
-                coder.aider_edited_files.add(
+                edited = {
                     str(root / "packages/react-devtools-shared/src/bridge.js")
-                )
+                }
+                coder._last_send_edited_files = set(edited)
+                coder.aider_edited_files.update(edited)
                 coder.reflected_message = "Attempt to fix lint errors?\nstill unused"
             elif send_n["n"] == 3:
                 # Clearly off-scope (not a checklist product path / strong target)
-                coder.aider_edited_files.add(str(root / "src/lru_cache.hpp"))
+                edited = {str(root / "src/lru_cache.hpp")}
+                coder._last_send_edited_files = set(edited)
+                coder.aider_edited_files.update(edited)
                 # Keep reflecting so the n→3 checkpoint can run detect_drift
                 coder.reflected_message = "Attempt to fix lint errors?\nagain"
             else:
+                coder._last_send_edited_files = set()
                 coder.reflected_message = None
             if False:
                 yield None
@@ -442,6 +488,110 @@ class DriftGateInRunOneTest(unittest.TestCase):
             len([n for n in store.list() if n.signals.get("drift_observed")]),
             0,
         )
+
+    def test_accept_stop_here_ends_loop_when_task_complete(self):
+        """Post-fix creep: accept 'Stop here?' clears reflection and ends turn."""
+        from aider.coders.base_coder import Coder
+        from aider.z.uncertainty.engine import SessionContext, UncertaintyEngine
+        from aider.z.uncertainty.store import UncertaintyStore
+
+        root = Path(tempfile.mkdtemp(prefix="z_drift_done_"))
+        store = UncertaintyStore(root=root, repo_key=str(root))
+        eng = UncertaintyEngine(SessionContext(root=root, store=store))
+        eng.ctx.checklist = TaskChecklist(
+            task_id="lru",
+            title="Fix LRU leak",
+            items=[
+                RequirementItem(
+                    id="fix",
+                    text="Fix memory leak in src/lru_cache.h",
+                    status=STATUS_FULLY,
+                    kind="product",
+                ),
+            ],
+        )
+
+        confirms = []
+        outputs = []
+
+        class FakeIO:
+            yes = None
+
+            def tool_output(self, *a, **k):
+                outputs.append(a[0] if a else "")
+
+            def tool_warning(self, *a, **k):
+                pass
+
+            def tool_error(self, *a, **k):
+                pass
+
+            def confirm_ask(self, question, default="y", explicit_yes_required=False, **k):
+                confirms.append(question)
+                return True  # accept stop-here
+
+        coder = Coder.__new__(Coder)
+        coder.io = FakeIO()
+        coder.verbose = False
+        coder.max_reflections = 3
+        coder.num_reflections = 0
+        coder.reflected_message = None
+        coder.aider_edited_files = set()
+        coder.last_aider_commit_hash = None
+        coder.last_verification = None
+        coder._z_gate_hold_dirty = False
+        coder.root = root
+        coder.uncertainty_engine = eng
+        coder.uncertainty_store = store
+        coder._drift_asked_this_task = False
+        coder._drift_reflection_log = []
+
+        send_n = {"n": 0}
+        sent = []
+
+        def fake_init():
+            coder.num_reflections = 0
+            coder.reflected_message = None
+            coder._drift_reflection_log = []
+            coder.aider_edited_files = set()
+
+        def fake_send(message):
+            sent.append(message)
+            send_n["n"] += 1
+            # Same file re-touched each reflection (the live LRU creep shape)
+            edited = {str(root / "src/lru_cache.h")}
+            coder._last_send_edited_files = set(edited)
+            coder.aider_edited_files.update(edited)
+            if send_n["n"] == 1:
+                coder.reflected_message = "lint leftover"
+            elif send_n["n"] <= 3:
+                coder.reflected_message = "more lint"
+            else:
+                coder.reflected_message = None
+            if False:
+                yield None
+
+        coder.init_before_message = fake_init
+        coder.send_message = fake_send
+        coder._maybe_pull_skills = lambda *a, **k: None
+        coder._maybe_begin_uncertainty_task = lambda *a, **k: None
+        coder._maybe_require_implementation_plan = lambda *a, **k: True
+        coder._maybe_suggest_skill = lambda *a, **k: None
+        coder.get_rel_fname = lambda p: os.path.relpath(str(p), str(root))
+
+        with mock.patch(
+            "aider.z.uncertainty.gate.report_auto_fix_exhaustion",
+            return_value=None,
+        ):
+            coder.run_one("Fix the LRU cache memory leak", preproc=False)
+
+        self.assertTrue(confirms)
+        self.assertIn("Stop here?", confirms[0])
+        self.assertTrue(any("stopping further" in o.lower() for o in outputs))
+        # No refocus rewrite pushed into a later send
+        self.assertFalse(any("Still-unresolved checklist" in m for m in sent))
+        # Loop stopped — did not keep reflecting forever
+        self.assertLessEqual(send_n["n"], 3)
 
 
 if __name__ == "__main__":

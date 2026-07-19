@@ -234,16 +234,23 @@ def detect_drift(
             if f not in combined_off:
                 combined_off.append(f)
     open_items = unresolved_items(checklist)
-    if not open_items:
-        return None
-    open_preview = "; ".join(
-        (item.text or "").strip().replace("\n", " ")[:80] for item in open_items[:3]
-    )
     files_preview = ", ".join(combined_off[:6])
-    summary = (
-        f"Possible drift: the last {min_reflections} reflections touched "
-        f"{files_preview} without resolving {open_preview}."
-    )
+    if open_items:
+        open_preview = "; ".join(
+            (item.text or "").strip().replace("\n", " ")[:80]
+            for item in open_items[:3]
+        )
+        summary = (
+            f"Possible drift: the last {min_reflections} reflections touched "
+            f"{files_preview} without resolving {open_preview}."
+        )
+    else:
+        # Task already complete — unprompted scope-creep after the fix landed
+        summary = (
+            f"Possible drift: the last {min_reflections} reflections touched "
+            f"{files_preview}, but every checklist item is already resolved — "
+            "this looks like unrequested extra work."
+        )
     return DriftSignal(
         off_scope_files=combined_off,
         unresolved=open_items,
@@ -251,8 +258,16 @@ def detect_drift(
     )
 
 
-def format_refocus_message(signal: DriftSignal) -> str:
-    """Replace the current reflection thread with still-open checklist work."""
+def is_complete_task_creep(signal: DriftSignal) -> bool:
+    """True when drift is post-completion scope-creep (nothing left to refocus on)."""
+    return not bool(signal.unresolved)
+
+
+def format_refocus_message(signal: DriftSignal) -> Optional[str]:
+    """Message for the next reflection, or None when accept means stop-here."""
+    if is_complete_task_creep(signal):
+        # Accepting "stop here" must not push another reflection turn.
+        return None
     lines = [
         "Drift detected — stop the current tangent and refocus on the original task.",
         "",
@@ -279,6 +294,12 @@ def format_refocus_message(signal: DriftSignal) -> str:
 
 def confirm_prompt(signal: DriftSignal) -> str:
     files = ", ".join(signal.off_scope_files[:4]) or "off-scope files"
+    if is_complete_task_creep(signal):
+        return (
+            f"Possible drift: the last 2 reflections touched {files}, but the "
+            "task appears complete — these edits go beyond what was requested. "
+            "Stop here?"
+        )
     items = "; ".join(
         (i.text or "").strip().replace("\n", " ")[:60] for i in signal.unresolved[:3]
     ) or "open checklist items"
@@ -286,6 +307,16 @@ def confirm_prompt(signal: DriftSignal) -> str:
         f"Possible drift: the last 2 reflections touched {files} "
         f"without resolving {items}. Refocus on the original task instead?"
     )
+
+
+@dataclass(frozen=True)
+class DriftConfirmResult:
+    """Outcome of the confirm gate after drift is flagged."""
+
+    # Accept + open items → rewrite next reflection
+    refocus_message: Optional[str] = None
+    # Accept + checklist complete → end the reflection loop
+    stop: bool = False
 
 
 def make_drift_observed_node(
@@ -297,31 +328,57 @@ def make_drift_observed_node(
 ) -> UncertaintyNode:
     """Medium node when the human declines / --yes-always defaults to no."""
     open_texts = [i.text for i in signal.unresolved[:6]]
+    complete = is_complete_task_creep(signal)
+    if complete:
+        explanation = (
+            "Consecutive reflections edited files after every checklist item "
+            "was already resolved. The operator chose to continue the "
+            "unrequested extra work."
+        )
+        why = (
+            "The assigned task looks done, but reflections kept changing "
+            "code beyond what was requested."
+        )
+        wrong = (
+            "Unprompted refactors and cosmetic tweaks burn the reflection "
+            "budget and risk regressing a finished fix."
+        )
+        fix = "Stop editing and end the turn — the checklist is already complete."
+        suggested = (
+            "The task appears complete. Do not continue unrequested edits to "
+            + ", ".join(signal.off_scope_files[:6])
+        )
+    else:
+        explanation = (
+            "Consecutive reflections edited files outside the checklist scope "
+            "while unresolved requirements stayed stuck. The operator chose to "
+            "continue without refocusing."
+        )
+        why = (
+            "Attention may be fixed on an adjacent tangent instead of the "
+            "assigned checklist items."
+        )
+        wrong = (
+            "Reflection budget is burned on unrequested work; the assigned "
+            "task remains unfinished when the cap hits."
+        )
+        fix = (
+            "Refocus edits on the still-open checklist items before further "
+            "tangential changes."
+        )
+        suggested = format_refocus_message(signal) or signal.summary
     return UncertaintyNode(
         title="Drift observed, continuing anyway",
         type=NodeType.REQUIREMENT_GAP,
         confidence_tier=Tier.MEDIUM,
         risk_tier=Tier.MEDIUM,
         summary=signal.summary,
-        explanation=(
-            "Consecutive reflections edited files outside the checklist scope "
-            "while unresolved requirements stayed stuck. The operator chose to "
-            "continue without refocusing."
-        ),
+        explanation=explanation,
         files_affected=list(signal.off_scope_files[:20]),
-        why_uncertain=(
-            "Attention may be fixed on an adjacent tangent instead of the "
-            "assigned checklist items."
-        ),
-        what_could_go_wrong=(
-            "Reflection budget is burned on unrequested work; the assigned "
-            "task remains unfinished when the cap hits."
-        ),
-        suggested_fix=(
-            "Refocus edits on the still-open checklist items before further "
-            "tangential changes."
-        ),
-        suggested_prompt=format_refocus_message(signal),
+        why_uncertain=why,
+        what_could_go_wrong=wrong,
+        suggested_fix=fix,
+        suggested_prompt=suggested,
         status=NodeStatus.NEEDS_HUMAN_REVIEW,
         task_id=task_id,
         task_title=task_title,
@@ -329,6 +386,7 @@ def make_drift_observed_node(
         signals={
             "drift_observed": True,
             "drift_continued": True,
+            "complete_task_creep": complete,
             "off_scope_files": list(signal.off_scope_files[:20]),
             "unresolved_items": open_texts,
         },
