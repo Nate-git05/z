@@ -388,6 +388,31 @@ def accept_skill(io, name: str = "") -> int:
     if (skill.quality_state or "") == "verified" and not skill.needs_review:
         io.tool_output(f"“{skill.title}” is already verified.")
         return 0
+    # Before flipping to verified: if this draft failed evidence grounding,
+    # confirm candidate taxonomy terms from the recorded miss blob (human
+    # still owns any edit to bug_concepts.py via `z taxonomy review`).
+    if getattr(skill, "grounding_miss_reason", None):
+        try:
+            from .taxonomy_candidates import (
+                latest_miss_for_skill,
+                record_confirmation_candidate,
+            )
+
+            miss = latest_miss_for_skill(skill.id)
+            blob = (miss or {}).get("added_diff_blob") or ""
+            recorded = record_confirmation_candidate(
+                skill.root_cause_category or "",
+                blob,
+                skill.id,
+                skill_title=skill.title or "",
+            )
+            if recorded:
+                io.tool_output(
+                    "Taxonomy candidates noted (review with: z taxonomy review): "
+                    + ", ".join(recorded[:12])
+                )
+        except Exception:
+            pass
     skill.quality_state = "verified"
     skill.needs_review = False
     store.save(skill)

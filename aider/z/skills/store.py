@@ -58,6 +58,8 @@ def _dump_frontmatter(skill: Skill) -> str:
         "verification_method": skill.verification_method or "",
         "language": skill.language or "",
     }
+    if skill.grounding_miss_reason:
+        meta["grounding_miss_reason"] = skill.grounding_miss_reason
     if skill.grounded_at:
         meta["grounded_at"] = skill.grounded_at
     if skill.content_hash:
@@ -153,6 +155,9 @@ def skill_from_markdown(text: str, *, filename: Optional[str] = None) -> Skill:
         fix_technique=str(meta.get("fix_technique") or "").strip(),
         verification_method=str(meta.get("verification_method") or "").strip(),
         language=language or (languages[0] if languages else ""),
+        grounding_miss_reason=(
+            str(meta.get("grounding_miss_reason") or "").strip() or None
+        ),
     )
 
 
