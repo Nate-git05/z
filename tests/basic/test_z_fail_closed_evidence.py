@@ -261,6 +261,59 @@ class AbsorptionTaxonomyTest(unittest.TestCase):
         self.assertFalse(abs_nodes[0].signals.get("absorption_hard_block"))
         self.assertEqual(_effective_gate_tier(abs_nodes[0]), Tier.MEDIUM)
 
+    def test_getattr_guidance_presents_both_explanations(self):
+        """Do not assert incomplete-wiring as fact — keep High hard-block."""
+        diff = (
+            "diff --git a/event_queue.py b/event_queue.py\n"
+            "--- a/event_queue.py\n"
+            "+++ b/event_queue.py\n"
+            "@@ -1,6 +1,9 @@\n"
+            " class Event:\n"
+            "-    def __init__(self, name):\n"
+            '+    def __init__(self, name, priority="normal"):\n'
+            "         self.name = name\n"
+            "+        self.priority = priority\n"
+            " def process(event):\n"
+            '+    return getattr(event, "priority", "normal")\n'
+        )
+        contents = {
+            "event_queue.py": (
+                "class Event:\n"
+                '    def __init__(self, name, priority="normal"):\n'
+                "        self.name = name\n"
+                "        self.priority = priority\n"
+                "def process(event):\n"
+                '    return getattr(event, "priority", "normal")\n'
+            )
+        }
+        sig = collect_base_signals(["event_queue.py"])
+        nodes = detect_failure_absorption(
+            sig, file_contents=contents, diff=diff
+        )
+        getattr_nodes = [
+            n
+            for n in nodes
+            if n.signals.get("absorption_pattern_id") == "getattr_new_param_default"
+        ]
+        self.assertTrue(getattr_nodes)
+        node = getattr_nodes[0]
+        self.assertTrue(node.signals.get("absorption_hard_block"))
+        self.assertEqual(node.risk_tier, Tier.HIGH)
+        blob = " ".join(
+            [
+                node.explanation or "",
+                node.why_uncertain or "",
+                node.suggested_fix or "",
+                node.suggested_prompt or "",
+            ]
+        )
+        self.assertIn("incomplete wiring", blob.lower())
+        self.assertIn("compatibility", blob.lower())
+        self.assertNotIn(
+            "Fix the outdated test helper/fixture instead of weakening the contract",
+            node.explanation or "",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
