@@ -24,7 +24,7 @@ except ImportError:  # Babel not installed – we will fall back to a small mapp
     Locale = None
 from json.decoder import JSONDecodeError
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from rich.console import Console
 
@@ -1159,7 +1159,11 @@ class Coder:
                     and self.aider_edited_files
                 ):
                     try:
-                        self._maybe_suggest_skill(user_message)
+                        # Session-scoped diff: mid-turn commits + trailing dirty
+                        # edit, not just the uncommitted remainder.
+                        self._maybe_suggest_skill(
+                            user_message, session_scoped_diff=True
+                        )
                     except Exception:
                         pass
                 return
@@ -1266,12 +1270,25 @@ class Coder:
         ).strip().lower() in ("1", "true", "yes"):
             self.io.tool_output(f"Skill capture skipped: {reason}")
 
-    def _maybe_suggest_skill(self, user_message: str):
+    def _session_start_commit(self) -> Optional[str]:
+        """HEAD SHA recorded at the start of this run_one() (if any)."""
+        before = getattr(self, "commit_before_message", None) or []
+        if before:
+            sha = before[-1]
+            if sha:
+                return str(sha)
+        return None
+
+    def _maybe_suggest_skill(self, user_message: str, *, session_scoped_diff: bool = False):
         """After a task: ask to create a skill grounded in the real diff/files.
 
         Fires after a clean verify *or* a human-approved / force / manual commit.
         Earlier gating required meaningful_pass + cleared hold only — so force/
         medium-ack completions (most real-repo runs) never offered capture.
+
+        ``session_scoped_diff`` (exhaustion path): ground in the cumulative
+        diff since this turn started (mid-turn commits + trailing dirty edit),
+        not just ``git diff HEAD`` which misses already-committed work.
         """
         edited = self.aider_edited_files or set()
         if len(edited) < 1:
@@ -1351,8 +1368,15 @@ class Coder:
             diff = ""
             try:
                 repo = getattr(self, "repo", None)
-                if repo is not None and hasattr(repo, "get_diffs"):
-                    diff = repo.get_diffs(fnames=list(edited)) or ""
+                if repo is not None:
+                    if session_scoped_diff and hasattr(repo, "get_diffs_since"):
+                        start = self._session_start_commit()
+                        if start:
+                            diff = repo.get_diffs_since(start, fnames=list(edited)) or ""
+                        elif hasattr(repo, "get_diffs"):
+                            diff = repo.get_diffs(fnames=list(edited)) or ""
+                    elif hasattr(repo, "get_diffs"):
+                        diff = repo.get_diffs(fnames=list(edited)) or ""
             except Exception:
                 diff = ""
 

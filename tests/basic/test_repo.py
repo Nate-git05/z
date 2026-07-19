@@ -128,6 +128,37 @@ class TestRepo(unittest.TestCase):
             diffs = git_repo.diff_commits(False, "HEAD~1", "HEAD")
             self.assertIn("two", diffs)
 
+    def test_get_diffs_since_includes_commits_and_dirty(self):
+        """Session-scoped capture: mid-turn commits + trailing uncommitted edit."""
+        with GitTemporaryDirectory():
+            repo = git.Repo()
+            fname = Path("cache.hpp")
+            fname.write_text("entry->refcount++;\nsize_t n;\n")
+            repo.git.add(str(fname))
+            repo.git.commit("-m", "initial")
+            start = repo.head.commit.hexsha
+
+            # Mid-turn committed fix (the real work)
+            fname.write_text("entry->refcount.fetch_add(1);\nsize_t n;\n")
+            repo.git.add(str(fname))
+            repo.git.commit("-m", "fix: make refcount atomic")
+
+            # Trailing dirty cosmetic edit still uncommitted
+            fname.write_text("entry->refcount.fetch_add(1);\nstd::size_t n;\n")
+
+            git_repo = GitRepo(InputOutput(), None, ".")
+            # Uncommitted-only is the cosmetic trailing edit (leak fix already HEAD)
+            dirty_only = git_repo.get_diffs(fnames=[str(fname)])
+            self.assertIn("std::size_t", dirty_only)
+            self.assertNotIn("refcount++", dirty_only)
+            self.assertNotIn("+entry->refcount.fetch_add", dirty_only)
+
+            # Since session start: committed fix + dirty remainder
+            session = git_repo.get_diffs_since(start, fnames=[str(fname)])
+            self.assertIn("refcount++", session)
+            self.assertIn("fetch_add", session)
+            self.assertIn("std::size_t", session)
+
     @patch("aider.models.Model.simple_send_with_retries")
     def test_get_commit_message(self, mock_send):
         mock_send.side_effect = ["", "a good commit message"]

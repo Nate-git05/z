@@ -418,6 +418,36 @@ class GitRepo:
         except ANY_GIT_ERROR as err:
             self.io.tool_error(f"Unable to diff: {err}")
 
+    def get_diffs_since(self, from_commit, fnames=None):
+        """
+        Diff from *from_commit* to the current working tree.
+
+        Includes commits after *from_commit* **and** uncommitted changes — the
+        cumulative session fix when capture runs after mid-turn commits plus a
+        trailing dirty edit (exhaustion-path skill grounding).
+        """
+        if not from_commit:
+            return self.get_diffs(fnames=fnames)
+
+        if not fnames:
+            fnames = []
+
+        diffs = ""
+        for fname in fnames:
+            if not self.path_in_repo(fname):
+                diffs += f"Added {fname}\n"
+
+        try:
+            args = [str(from_commit), "--"] + list(fnames)
+            diffs += self.repo.git.diff(*args, stdout_as_string=False).decode(
+                self.io.encoding, "replace"
+            )
+            return diffs
+        except ANY_GIT_ERROR as err:
+            self.io.tool_error(f"Unable to diff since {from_commit}: {err}")
+            # Fall back to uncommitted-only rather than empty grounding
+            return self.get_diffs(fnames=fnames)
+
     def diff_commits(self, pretty, from_commit, to_commit):
         args = []
         if pretty:
