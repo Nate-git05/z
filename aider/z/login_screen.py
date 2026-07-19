@@ -41,6 +41,13 @@ LOGIN_OPTIONS = [
     ("phone", "Continue with Phone"),
 ]
 
+AUTH_MODE_OPTIONS = [
+    ("byok", "Bring your own API key"),
+    ("router", "Sign up / sign in (use Z's router)"),
+]
+
+OptionList = list[tuple[str, str]]
+
 
 @dataclass
 class LoginScreenState:
@@ -78,15 +85,21 @@ def _brand_lines(*, unicode_ok: bool | None = None) -> list[str]:
     return lines
 
 
-def _menu_inner_lines(state: LoginScreenState) -> list[tuple[str, str]]:
+def _menu_inner_lines(
+    state: LoginScreenState,
+    *,
+    options: OptionList | None = None,
+    prompt_text: str = "How would you like to sign in?",
+) -> list[tuple[str, str]]:
     """Return (plain_line, style_role) rows for the get-started box body."""
+    opts = options if options is not None else LOGIN_OPTIONS
     rows: list[tuple[str, str]] = [
         ("? Get started", "title"),
         ("", "blank"),
-        ("How would you like to sign in?", "text"),
+        (prompt_text, "text"),
         ("", "blank"),
     ]
-    for i, (_key, label) in enumerate(LOGIN_OPTIONS):
+    for i, (_key, label) in enumerate(opts):
         if i == state.selected:
             rows.append((f" > {i + 1}. {label}", "selected"))
         else:
@@ -141,7 +154,13 @@ def _ascii_box(inner: list[tuple[str, str]], *, inner_width: int) -> Text:
     return out
 
 
-def compose_login_text(state: LoginScreenState, *, terminal_width: int = 80) -> Text:
+def compose_login_text(
+    state: LoginScreenState,
+    *,
+    terminal_width: int = 80,
+    options: OptionList | None = None,
+    prompt_text: str = "How would you like to sign in?",
+) -> Text:
     """Build the full login screen as a single Text (no Live/Panel)."""
     out = Text()
     accent = Style(color=ACCENT, bold=True)
@@ -158,7 +177,7 @@ def compose_login_text(state: LoginScreenState, *, terminal_width: int = 80) -> 
         out.append(state.status_message + "\n", style=Style(color=ACCENT_DIM))
     out.append("\n")
 
-    inner = _menu_inner_lines(state)
+    inner = _menu_inner_lines(state, options=options, prompt_text=prompt_text)
     content_w = max((len(p) for p, _ in inner), default=40)
     # Fit terminal: borders take 4 cols ("| " + " |")
     max_inner = max(32, min(52, terminal_width - 4))
@@ -249,48 +268,69 @@ def interactive_login_select(
     version: str = "",
     status_message: str = "",
     animate: bool = True,
+    options: OptionList | None = None,
+    prompt_text: str = "How would you like to sign in?",
 ) -> str | None:
     """
     Render the login screen with arrow-key / number selection.
 
-    Returns the chosen provider key ("google" | "email" | "phone") or None.
+    Returns the chosen option key, or None if cancelled.
     """
     del animate  # no hop — static redraw only
+    opts = options if options is not None else LOGIN_OPTIONS
+    if not opts:
+        return None
     console = _login_console(console)
     state = LoginScreenState(version=version, status_message=status_message)
+    number_keys = {str(i + 1) for i in range(len(opts))}
 
     try:
         while True:
             _clear_screen()
             console.print(
-                compose_login_text(state, terminal_width=console.width or 80)
+                compose_login_text(
+                    state,
+                    terminal_width=console.width or 80,
+                    options=opts,
+                    prompt_text=prompt_text,
+                )
             )
             key = _read_key()
             if key == "up":
-                state.selected = (state.selected - 1) % len(LOGIN_OPTIONS)
+                state.selected = (state.selected - 1) % len(opts)
             elif key == "down":
-                state.selected = (state.selected + 1) % len(LOGIN_OPTIONS)
-            elif key in ("1", "2", "3"):
+                state.selected = (state.selected + 1) % len(opts)
+            elif key in number_keys:
                 state.selected = int(key) - 1
                 _clear_screen()
                 console.print(
-                    compose_login_text(state, terminal_width=console.width or 80)
+                    compose_login_text(
+                        state,
+                        terminal_width=console.width or 80,
+                        options=opts,
+                        prompt_text=prompt_text,
+                    )
                 )
                 time.sleep(0.05)
-                return LOGIN_OPTIONS[state.selected][0]
+                return opts[state.selected][0]
             elif key == "enter":
-                return LOGIN_OPTIONS[state.selected][0]
+                return opts[state.selected][0]
             elif key in ("q", "esc"):
                 return None
     except KeyboardInterrupt:
         return None
 
 
-def prompt_login_choice_plain(io) -> str | None:
-    """Non-TTY / non-pretty fallback: numbered menu via the standard prompt."""
+def _plain_choice_menu(
+    io,
+    *,
+    title: str,
+    options: OptionList,
+) -> str | None:
+    """Numbered menu via the standard prompt (non-TTY / non-pretty)."""
     io.tool_output("")
-    io.tool_output("Z CLI — sign in")
-    for i, (_key, label) in enumerate(LOGIN_OPTIONS):
+    io.tool_output(title)
+    for i, (_key, label) in enumerate(options):
         io.tool_output(f"  [{i + 1}] {label}")
     io.tool_output("  [q] Cancel")
     io.tool_output("")
@@ -298,18 +338,19 @@ def prompt_login_choice_plain(io) -> str | None:
     choice = (io.prompt_ask("Choose an option", default="1") or "").strip().lower()
     if choice in ("q", "quit", "cancel", "n", "no", "esc"):
         return None
-    mapping = {
-        "1": "google",
-        "g": "google",
-        "google": "google",
-        "2": "email",
-        "e": "email",
-        "email": "email",
-        "3": "phone",
-        "p": "phone",
-        "phone": "phone",
-    }
+    mapping: dict[str, str] = {}
+    for i, (key, _label) in enumerate(options):
+        mapping[str(i + 1)] = key
+        mapping[key.lower()] = key
+        # Single-letter shortcut from the option key when unambiguous
+        if key and key[0].lower() not in mapping:
+            mapping[key[0].lower()] = key
     return mapping.get(choice)
+
+
+def prompt_login_choice_plain(io) -> str | None:
+    """Non-TTY / non-pretty fallback: numbered menu via the standard prompt."""
+    return _plain_choice_menu(io, title="Z CLI — sign in", options=LOGIN_OPTIONS)
 
 
 def prompt_login_choice(io, *, version: str = "", status_message: str = "") -> str | None:
@@ -326,3 +367,33 @@ def prompt_login_choice(io, *, version: str = "", status_message: str = "") -> s
         except Exception:
             return prompt_login_choice_plain(io)
     return prompt_login_choice_plain(io)
+
+
+def prompt_auth_mode_choice_plain(io) -> str | None:
+    return _plain_choice_menu(
+        io,
+        title="How would you like to use Z?",
+        options=AUTH_MODE_OPTIONS,
+    )
+
+
+def prompt_auth_mode_choice(
+    io, *, version: str = "", status_message: str = ""
+) -> str | None:
+    """Ask BYOK vs Z router — same UI primitives as the login screen."""
+    pretty = bool(getattr(io, "pretty", False))
+    is_tty = sys.stdin.isatty() and sys.stdout.isatty()
+
+    if pretty and is_tty:
+        console = Console(force_terminal=True, color_system="auto", soft_wrap=False)
+        try:
+            return interactive_login_select(
+                console,
+                version=version,
+                status_message=status_message,
+                options=AUTH_MODE_OPTIONS,
+                prompt_text="How would you like to use Z?",
+            )
+        except Exception:
+            return prompt_auth_mode_choice_plain(io)
+    return prompt_auth_mode_choice_plain(io)

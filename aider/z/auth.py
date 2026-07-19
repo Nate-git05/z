@@ -578,6 +578,77 @@ def _find_available_port(start: int, end: int) -> int | None:
     return None
 
 
+def prompt_byok_setup(io) -> bool:
+    """Pick a foundation-model family, then a specific model within it,
+    then prompt only for the env var(s) that model actually needs."""
+    from .models_catalog import CURATED_SECTIONS
+
+    io.tool_output("")
+    io.tool_output("Which foundation model do you want to use?")
+    for i, (title, _models) in enumerate(CURATED_SECTIONS):
+        io.tool_output(f"  [{i + 1}] {title}")
+    io.tool_output(f"  [{len(CURATED_SECTIONS) + 1}] Other / type a model name")
+
+    choice = (io.prompt_ask("Choose", default="1") or "").strip()
+    try:
+        idx = int(choice) - 1
+    except ValueError:
+        idx = -1
+
+    if 0 <= idx < len(CURATED_SECTIONS):
+        title, models = CURATED_SECTIONS[idx]
+        io.tool_output("")
+        io.tool_output(f"{title} models:")
+        for j, name in enumerate(models):
+            io.tool_output(f"  [{j + 1}] {name}")
+        model_choice = (io.prompt_ask("Choose a model", default="1") or "").strip()
+        try:
+            model_name = models[int(model_choice) - 1]
+        except (ValueError, IndexError):
+            io.tool_error("Not a valid choice.")
+            return False
+    else:
+        model_name = (
+            io.prompt_ask("Type the exact model name", default="") or ""
+        ).strip()
+        if not model_name:
+            io.tool_error("No model entered.")
+            return False
+
+    from aider.models import Model, fuzzy_match_models
+
+    matches = fuzzy_match_models(model_name)
+    if model_name not in matches:
+        if matches:
+            io.tool_error(
+                f"'{model_name}' is not a recognized model. Did you mean: "
+                f"{', '.join(matches[:3])}?"
+            )
+        else:
+            io.tool_error(f"'{model_name}' is not a recognized model.")
+        return False
+
+    # Only construct Model() after fuzzy_match_models confirms it's real —
+    # Model() alone does not validate existence (fake names look "set up").
+    model = Model(model_name)
+
+    from .onboarding import save_byok_key, save_selected_model
+
+    if not model.missing_keys and model.keys_in_environment:
+        io.tool_output(f"'{model_name}' already has its required key(s) set.")
+    else:
+        for env_var in model.missing_keys:
+            key = io.prompt_ask(f"Paste your {env_var}", default="")
+            if not key or not key.strip():
+                io.tool_error("No key entered.")
+                return False
+            save_byok_key(env_var, key.strip())
+
+    save_selected_model(model_name)
+    io.tool_output(f"Saved. Using {model_name}.")
+    return True
+
+
 def whoami_text(creds: Credentials | None = None) -> str:
     creds = creds or current_session()
     if not creds or not creds.is_authenticated():
@@ -594,5 +665,7 @@ def whoami_text(creds: Credentials | None = None) -> str:
         ws = creds.workspace.name or creds.workspace.id
         role = f" ({creds.workspace.role})" if creds.workspace.role else ""
         lines.append(f"  workspace: {ws}{role}")
-    lines.append("  (Model API keys are separate — set OPENAI_API_KEY / ANTHROPIC_API_KEY etc.)")
+    lines.append(
+        "  (Model API keys are separate — use `z auth switch` or set provider env vars.)"
+    )
     return "\n".join(lines)
