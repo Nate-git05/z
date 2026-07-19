@@ -107,6 +107,10 @@ class Skill:
     fix_technique: str = ""
     verification_method: str = ""
     language: str = ""  # coarse applicability filter (also mirrored into languages)
+    # Set only when category is known but evidence_regex missed the diff —
+    # lets accept() confirm a taxonomy blind-spot candidate. Never auto-edits
+    # bug_concepts.py; humans review via `z taxonomy review`.
+    grounding_miss_reason: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -165,6 +169,7 @@ class Skill:
             "fix_technique": self.fix_technique or "",
             "verification_method": self.verification_method or "",
             "language": self.language or "",
+            "grounding_miss_reason": self.grounding_miss_reason or "",
         }
 
     def index_entry(self) -> dict[str, Any]:
@@ -199,6 +204,7 @@ class Skill:
             "fix_technique": self.fix_technique or "",
             "verification_method": self.verification_method or "",
             "language": self.language or "",
+            "grounding_miss_reason": self.grounding_miss_reason or "",
         }
 
     @classmethod
@@ -249,6 +255,9 @@ class Skill:
             fix_technique=(data.get("fix_technique") or "").strip(),
             verification_method=(data.get("verification_method") or "").strip(),
             language=language or (languages[0] if languages else ""),
+            grounding_miss_reason=(
+                (data.get("grounding_miss_reason") or "").strip() or None
+            ),
         )
 
 

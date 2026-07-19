@@ -110,6 +110,8 @@ _RE_METHOD_TYPED = re.compile(
 _RE_METHOD_LOOSE = re.compile(
     r"(?m)^\s+(?:async\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*[:{]"
 )
+# Call sites in added diff lines: entries_.pop_back() / handle.resolve(
+_RE_METHOD_CALL = re.compile(r"\.([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 
 # Tokens that introduce `name ( ... ) {` as *statements* in C-family / JS /
 # Go / Rust / etc. Closed grammatical set — not an English stopword list and
@@ -311,6 +313,19 @@ def extract_claimed_symbols(text: str) -> List[str]:
     return _dedupe(found)
 
 
+def extract_call_site_names(text: str) -> List[str]:
+    """Method/call-site names from source or added-diff text (``.foo(``)."""
+    names: List[str] = []
+    for m in _RE_METHOD_CALL.finditer(text or ""):
+        name = m.group(1) or ""
+        if not name or len(name) < 3:
+            continue
+        if name.lower() in _SYMBOL_STOP:
+            continue
+        names.append(name)
+    return _dedupe(names)
+
+
 def build_grounding_pack(
     *,
     user_request: str,
@@ -422,6 +437,25 @@ def check_bug_pattern_grounding(skill, pack: GroundingPack) -> GroundingResult:
         )
     ok, reason = category_grounded_in_diff(category, pack.diff or "")
     if not ok:
+        # Plausible category, evidence_regex miss — record blind-spot signal.
+        # Not for unknown/missing category (those return earlier above).
+        if (reason or "").startswith("diff lacks evidence"):
+            try:
+                from .bug_concepts import _added_blob
+                from .taxonomy_candidates import record_grounding_miss
+
+                record_grounding_miss(
+                    category,
+                    _added_blob(pack.diff or ""),
+                    getattr(skill, "id", "") or "",
+                    skill_title=getattr(skill, "title", "") or "",
+                )
+            except Exception:
+                pass
+            try:
+                skill.grounding_miss_reason = reason
+            except Exception:
+                pass
         return GroundingResult(
             ok=False,
             grounded_symbols=[],
@@ -429,6 +463,12 @@ def check_bug_pattern_grounding(skill, pack: GroundingPack) -> GroundingResult:
             invented_ratio=1.0,
             reason=reason,
         )
+    # Evidence matched — clear any prior miss stamp from a failed retry.
+    if getattr(skill, "grounding_miss_reason", None):
+        try:
+            skill.grounding_miss_reason = None
+        except Exception:
+            pass
     # Also run ordinary symbol grounding on content (soft — category is the hard gate).
     # grounded_symbols must stay code identifiers from the diff/AST — never append
     # root_cause_category taxonomy labels (those live on skill.root_cause_category).
