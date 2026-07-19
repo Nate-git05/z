@@ -1050,6 +1050,8 @@ class Coder:
         self.test_outcome = None
         self.shell_commands = []
         self.message_cost = 0
+        # Per-turn reflection log for drift detection (ask cooldown is per-task)
+        self._drift_reflection_log = []
 
         if self.repo:
             self.commit_before_message.append(self.repo.get_head_commit_sha())
@@ -1121,7 +1123,29 @@ class Coder:
 
         while message:
             self.reflected_message = None
+            # Track per-reflection edits + checklist movement for drift detection.
+            was_reflection = int(getattr(self, "num_reflections", 0) or 0) >= 1
+            files_before = set(self.aider_edited_files or ())
+            status_before = {}
+            try:
+                from aider.z.uncertainty.drift import status_snapshot
+
+                eng = getattr(self, "uncertainty_engine", None)
+                cl = getattr(getattr(eng, "ctx", None), "checklist", None)
+                status_before = status_snapshot(cl)
+            except Exception:
+                status_before = {}
+
             list(self.send_message(message))
+
+            try:
+                self._record_drift_reflection_turn(
+                    was_reflection=was_reflection,
+                    files_before=files_before,
+                    status_before=status_before,
+                )
+            except Exception:
+                pass
 
             if not self.reflected_message:
                 break
@@ -1179,6 +1203,14 @@ class Coder:
                     from aider.z.skills.session import note_scaffold_progress
 
                     note_scaffold_progress(root=getattr(self, "root", None))
+                except Exception:
+                    pass
+                # Drift/fixation: off-scope edits + checklist stagnation → confirm
+                try:
+                    redirected = self._maybe_detect_drift()
+                    if redirected:
+                        message = redirected
+                        self.reflected_message = redirected
                 except Exception:
                     pass
 
@@ -1437,12 +1469,128 @@ class Coder:
             from aider.z.uncertainty.checklist import format_checklist_for_user
 
             checklist = engine.begin_task(user_message)
+            # New task → allow one drift confirm again
+            self._drift_asked_this_task = False
+            self._drift_reflection_log = []
             if checklist.items:
                 self.io.tool_output("")
                 self.io.tool_output(format_checklist_for_user(checklist))
                 self.io.tool_output("")
         except Exception:
             pass
+
+    def _record_drift_reflection_turn(
+        self,
+        *,
+        was_reflection: bool,
+        files_before: set,
+        status_before: dict,
+    ) -> None:
+        """Append one reflection-turn sample after send_message returns."""
+        if not was_reflection:
+            return
+        from aider.z.uncertainty.drift import (
+            ReflectionTurn,
+            checklist_progressed,
+            off_scope_edits,
+            status_snapshot,
+        )
+
+        eng = getattr(self, "uncertainty_engine", None)
+        checklist = getattr(getattr(eng, "ctx", None), "checklist", None)
+        if not checklist:
+            return
+        files_delta = set(self.aider_edited_files or ()) - set(files_before or ())
+        # Prefer relative paths for scope matching
+        rels = set()
+        for f in files_delta:
+            try:
+                rels.add(self.get_rel_fname(f))
+            except Exception:
+                rels.add(str(f))
+        progressed = checklist_progressed(status_before, checklist)
+        # If prepare_commit didn't rescore, still compare current snapshot
+        if not progressed and status_before:
+            after = status_snapshot(checklist)
+            if after != status_before:
+                progressed = checklist_progressed(status_before, checklist)
+        off = off_scope_edits(rels, checklist)
+        log = getattr(self, "_drift_reflection_log", None)
+        if log is None:
+            self._drift_reflection_log = []
+            log = self._drift_reflection_log
+        log.append(
+            ReflectionTurn(files=rels, progressed=progressed, off_scope=list(off))
+        )
+
+    def _maybe_detect_drift(self) -> Optional[str]:
+        """Confirm-gated refocus when reflections drift off the checklist.
+
+        Returns a replacement reflected_message when the user accepts refocus;
+        otherwise None (and may record a Medium uncertainty node).
+        """
+        if int(getattr(self, "num_reflections", 0) or 0) < 2:
+            return None
+        if getattr(self, "_drift_asked_this_task", False):
+            return None
+        eng = getattr(self, "uncertainty_engine", None)
+        checklist = getattr(getattr(eng, "ctx", None), "checklist", None)
+        if not checklist or not checklist.items:
+            return None
+
+        from aider.z.uncertainty.drift import (
+            confirm_prompt,
+            detect_drift,
+            format_refocus_message,
+            make_drift_observed_node,
+        )
+
+        history = list(getattr(self, "_drift_reflection_log", None) or [])
+        signal = detect_drift(history, checklist)
+        if not signal:
+            return None
+
+        self._drift_asked_this_task = True
+        prompt = confirm_prompt(signal)
+        try:
+            accepted = self.io.confirm_ask(
+                prompt,
+                default="n",
+                explicit_yes_required=True,
+            )
+        except Exception:
+            accepted = False
+
+        if accepted:
+            refocus = format_refocus_message(signal)
+            try:
+                self.io.tool_output("Refocusing on still-open checklist items…")
+            except Exception:
+                pass
+            return refocus
+
+        # Declined / --yes-always default-n: continue, but leave a Medium breadcrumb
+        try:
+            node = make_drift_observed_node(
+                signal,
+                task_id=getattr(getattr(eng, "ctx", None), "current_task_id", None),
+                task_title=getattr(
+                    getattr(eng, "ctx", None), "current_task_title", None
+                ),
+                session_id=getattr(getattr(eng, "ctx", None), "session_id", None),
+            )
+            store = getattr(self, "uncertainty_store", None) or getattr(
+                eng, "store", None
+            )
+            if store is not None:
+                store.add(node)
+            self.io.tool_warning(
+                "Drift observed — continuing without refocus "
+                "(see /uncertainties)."
+            )
+        except Exception:
+            pass
+        return None
 
     def _maybe_require_implementation_plan(self, user_message: str) -> bool:
         """
