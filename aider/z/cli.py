@@ -22,7 +22,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip the menu and use this provider",
     )
 
-    sub.add_parser("auth", help="Alias for `z login`")
+    auth = sub.add_parser(
+        "auth",
+        help="Account auth (default: login) or re-choose BYOK vs Z router",
+    )
+    auth_sub = auth.add_subparsers(dest="auth_command")
+    auth_sub.add_parser(
+        "switch",
+        help="Re-choose between BYOK and Z router sign-in",
+    )
     sub.add_parser("logout", help="Sign out and clear ~/.z/credentials")
     sub.add_parser("whoami", help="Show the current Z account / workspace")
 
@@ -124,9 +132,12 @@ def _skip_account_gate() -> bool:
 
 
 def ensure_agent_session(io) -> bool:
-    """Require a Z account before starting the coding agent.
+    """Require a Z account, then (once) BYOK vs router model-source choice.
 
-    Shows the branded login flow when the user is not signed in.
+    Account login is always required — including for BYOK users — so
+    workspace/team features have an identity. Model-source choice is a
+    separate, persisted step after login.
+
     Set Z_SKIP_ACCOUNT=1 to bypass (automation / tests).
     """
     if _skip_account_gate():
@@ -134,12 +145,38 @@ def ensure_agent_session(io) -> bool:
 
     from aider.z.auth import current_session, run_login_flow
 
+    # Step 1: account login is ALWAYS required, regardless of BYOK/router.
     creds = current_session()
-    if creds and creds.is_authenticated():
+    if not (creds and creds.is_authenticated()):
+        creds = run_login_flow(io)
+        if not creds:
+            return False
+
+    # Step 2: BYOK vs router — asked once, persisted, not re-asked after.
+    from aider.z.onboarding import load_config, save_auth_mode
+
+    config = load_config()
+    if config.auth_mode in ("byok", "router"):
         return True
 
-    creds = run_login_flow(io)
-    return bool(creds)
+    from aider.z.auth import prompt_byok_setup
+    from aider.z.login_screen import prompt_auth_mode_choice
+
+    mode = prompt_auth_mode_choice(io)
+    if mode is None:
+        io.tool_output("Setup cancelled.")
+        return False
+    if mode == "byok":
+        if not prompt_byok_setup(io):
+            return False
+        save_auth_mode("byok")
+        return True
+    save_auth_mode("router")
+    return True
+
+
+def _has_explicit_model_flag(argv: list[str]) -> bool:
+    return any(a == "--model" or a.startswith("--model=") for a in argv)
 
 
 def _print_help() -> None:
@@ -150,6 +187,7 @@ def _print_help() -> None:
         "Examples:\n"
         "  z\n"
         "  z login\n"
+        "  z auth switch\n"
         "  z models\n"
         "  z mcp list\n"
         "  z skill add\n"
@@ -174,6 +212,15 @@ def _start_agent(argv: list[str]) -> int | None:
     io = InputOutput(pretty=True, fancy_input=True, yes=None)
     if not ensure_agent_session(io):
         return 1
+
+    # Inject persisted BYOK model — try_to_select_default_model() ignores
+    # AIDER_MODEL and hardcodes per-provider defaults (e.g. always "sonnet").
+    if not _has_explicit_model_flag(argv):
+        from aider.z.onboarding import load_config
+
+        config = load_config()
+        if config.auth_mode == "byok" and config.selected_model:
+            argv = list(argv) + ["--model", config.selected_model]
 
     from aider.main import main as agent_main
 
@@ -214,7 +261,12 @@ def dispatch(args) -> int:
     # yes=None → actually prompt; yes=False would auto-answer "no" to every ask
     io = InputOutput(pretty=True, fancy_input=True, yes=None)
 
-    if args.command in ("login", "auth"):
+    if args.command == "login":
+        return cmd_login(io, provider=getattr(args, "provider", None))
+    if args.command == "auth":
+        if getattr(args, "auth_command", None) == "switch":
+            return cmd_auth_switch(io)
+        # Bare `z auth` remains an alias for login.
         return cmd_login(io, provider=getattr(args, "provider", None))
     if args.command == "logout":
         from aider.z.auth import logout
@@ -317,6 +369,30 @@ def cmd_mcp(io, args) -> int:
         return 0
     io.tool_error(f"Unknown mcp subcommand: {sub}")
     io.tool_output("Usage: z mcp list")
+    return 1
+
+
+def cmd_auth_switch(io) -> int:
+    """Re-choose BYOK vs router without forcing a fresh account login."""
+    from aider.z.auth import current_session, prompt_byok_setup, run_login_flow
+    from aider.z.login_screen import prompt_auth_mode_choice
+    from aider.z.onboarding import save_auth_mode
+
+    creds = current_session()
+    if not (creds and creds.is_authenticated()):
+        creds = run_login_flow(io)
+        if not creds:
+            return 1
+
+    mode = prompt_auth_mode_choice(io)
+    if mode == "byok" and prompt_byok_setup(io):
+        save_auth_mode("byok")
+        return 0
+    if mode == "router":
+        save_auth_mode("router")
+        io.tool_output("Using Z's router for model access.")
+        return 0
+    io.tool_output("Switch cancelled.")
     return 1
 
 

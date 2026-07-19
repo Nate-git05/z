@@ -146,6 +146,15 @@ class TestModelsCatalog(unittest.TestCase):
 
 
 class TestZCli(unittest.TestCase):
+    def setUp(self):
+        self._prev_z_cli = os.environ.get("Z_CLI")
+
+    def tearDown(self):
+        if self._prev_z_cli is None:
+            os.environ.pop("Z_CLI", None)
+        else:
+            os.environ["Z_CLI"] = self._prev_z_cli
+
     def test_models_subcommand(self):
         from aider.z.cli import build_parser
 
@@ -154,6 +163,9 @@ class TestZCli(unittest.TestCase):
         args = build_parser().parse_args(["login", "--provider", "email"])
         self.assertEqual(args.command, "login")
         self.assertEqual(args.provider, "email")
+        args = build_parser().parse_args(["auth", "switch"])
+        self.assertEqual(args.command, "auth")
+        self.assertEqual(args.auth_command, "switch")
 
     def test_bare_z_starts_agent_after_session_gate(self):
         from aider.z import cli as z_cli
@@ -186,6 +198,7 @@ class TestZCli(unittest.TestCase):
     def test_ensure_agent_session_skips_when_already_authenticated(self):
         from aider.z.cli import ensure_agent_session
         from aider.z.credentials import Credentials, UserProfile
+        from aider.z.onboarding import OnboardingConfig
 
         creds = Credentials(
             access_token="tok",
@@ -197,13 +210,18 @@ class TestZCli(unittest.TestCase):
             os.environ.pop("Z_SKIP_ACCOUNT", None)
             with patch("aider.z.auth.current_session", return_value=creds):
                 with patch("aider.z.auth.run_login_flow") as login:
-                    ok = ensure_agent_session(io)
+                    with patch(
+                        "aider.z.onboarding.load_config",
+                        return_value=OnboardingConfig(auth_mode="router"),
+                    ):
+                        ok = ensure_agent_session(io)
         self.assertTrue(ok)
         login.assert_not_called()
 
     def test_ensure_agent_session_runs_login_when_signed_out(self):
         from aider.z.cli import ensure_agent_session
         from aider.z.credentials import Credentials, UserProfile
+        from aider.z.onboarding import OnboardingConfig
 
         creds = Credentials(
             access_token="tok",
@@ -215,7 +233,11 @@ class TestZCli(unittest.TestCase):
             os.environ.pop("Z_SKIP_ACCOUNT", None)
             with patch("aider.z.auth.current_session", return_value=None):
                 with patch("aider.z.auth.run_login_flow", return_value=creds) as login:
-                    ok = ensure_agent_session(io)
+                    with patch(
+                        "aider.z.onboarding.load_config",
+                        return_value=OnboardingConfig(auth_mode="router"),
+                    ):
+                        ok = ensure_agent_session(io)
         self.assertTrue(ok)
         login.assert_called_once()
 

@@ -63,9 +63,43 @@ OPENAI_CURRENT = [
     "gpt-4o-mini",
 ]
 
+# Common litellm / provider IDs for the BYOK family picker.
+DEEPSEEK_CURRENT = [
+    "deepseek/deepseek-chat",
+    "deepseek/deepseek-reasoner",
+    "deepseek-chat",
+    "deepseek-reasoner",
+]
+
+GROQ_CURRENT = [
+    "groq/llama-3.3-70b-versatile",
+    "groq/llama-3.1-8b-instant",
+    "groq/llama-3.1-70b-versatile",
+    "groq/mixtral-8x7b-32768",
+]
+
+GEMINI_CURRENT = [
+    "gemini/gemini-2.5-pro",
+    "gemini/gemini-2.5-flash",
+    "gemini/gemini-2.0-flash",
+    "gemini/gemini-1.5-pro",
+    "gemini/gemini-1.5-flash",
+]
+
+MOONSHOT_CURRENT = [
+    "moonshot/moonshot-v1-128k",
+    "moonshot/moonshot-v1-32k",
+    "moonshot/kimi-k2",
+    "moonshot/kimi-latest",
+]
+
 CURATED_SECTIONS = [
     ("Anthropic (Claude)", ANTHROPIC_CURRENT),
     ("OpenAI", OPENAI_CURRENT),
+    ("DeepSeek", DEEPSEEK_CURRENT),
+    ("Groq", GROQ_CURRENT),
+    ("Gemini", GEMINI_CURRENT),
+    ("Kimi / Moonshot", MOONSHOT_CURRENT),
 ]
 
 
