@@ -96,7 +96,11 @@ BUG_CONCEPTS: Tuple[BugConcept, ...] = (
             r"(?x)"
             r"\b(?:free|delete|delete\s*\[\]|Drop::drop|mem::drop|Box::from_raw)\b"
             r"|\b(?:std::move|std::unique_ptr|shared_ptr|weak_ptr)\b"
-            r"|\.reset\s*\(|take\s*\(",
+            r"|\.reset\s*\(|take\s*\("
+            # Handle + generation-counter indirection (slotmaps / registries / ECS)
+            r"|\.resolve\s*\("
+            r"|\w*Handle\b"
+            r"|generation\s*(?:count|id|counter)",
             re.IGNORECASE,
         ),
         symptom_keywords=(

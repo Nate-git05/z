@@ -247,6 +247,42 @@ class TaxonomyTest(unittest.TestCase):
         )
         self.assertTrue(ok, reason)
 
+    def test_use_after_free_grounds_handle_resolve_generation_idiom(self):
+        diff = (
+            "diff --git a/widget_registry.h b/widget_registry.h\n"
+            "--- a/widget_registry.h\n"
+            "+++ b/widget_registry.h\n"
+            "@@ -10,6 +10,15 @@\n"
+            "-Widget* get_widget(int id) {\n"
+            "-    return raw_widgets[id];\n"
+            "+class WidgetHandle {\n"
+            "+public:\n"
+            "+    WidgetHandle(int id, uint32_t generation) "
+            ": id_(id), generation_(generation) {}\n"
+            "+    Widget* resolve(WidgetRegistry& registry) const {\n"
+            "+        if (registry.generation_for(id_) != generation_) {\n"
+            "+            return nullptr;\n"
+            "+        }\n"
+            "+        return registry.raw_widgets[id_];\n"
+            "+    }\n"
+            "+private:\n"
+            "+    int id_;\n"
+            "+    uint32_t generation_;\n"
+            "+};\n"
+        )
+        grounded, reason = category_grounded_in_diff("use_after_free", diff)
+        self.assertTrue(grounded, reason)
+
+    def test_use_after_free_still_grounds_classic_raii_fix(self):
+        diff = "+auto ptr = std::unique_ptr<Widget>(new Widget());\n"
+        grounded, reason = category_grounded_in_diff("use_after_free", diff)
+        self.assertTrue(grounded, reason)
+
+    def test_use_after_free_still_rejects_unrelated_diff(self):
+        diff = "+int x = compute_something(a, b);\n"
+        grounded, reason = category_grounded_in_diff("use_after_free", diff)
+        self.assertFalse(grounded, reason)
+
     def test_boost_for_matching_keywords(self):
         boosted = boost_for_category(
             0.5,

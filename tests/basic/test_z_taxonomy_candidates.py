@@ -29,14 +29,15 @@ from aider.z.skills.taxonomy_candidates import (  # noqa: E402
 )
 
 
-# use_after_free evidence_regex does not cover resolve/handle — blind-spot shape.
-_RESOLVE_DIFF = (
-    "diff --git a/src/handle.cpp b/src/handle.cpp\n"
-    "--- a/src/handle.cpp\n"
-    "+++ b/src/handle.cpp\n"
+# Blind-spot shape still outside use_after_free evidence_regex after the
+# handle/resolve/generation expansion (lookup_live is not covered).
+_LOOKUP_LIVE_DIFF = (
+    "diff --git a/src/table.cpp b/src/table.cpp\n"
+    "--- a/src/table.cpp\n"
+    "+++ b/src/table.cpp\n"
     "@@ -10,6 +10,8 @@\n"
-    "+    // resolve-on-demand instead of caching a dangling pointer\n"
-    "+    auto *obj = handle.resolve();\n"
+    "+    // re-fetch live entry instead of caching a dangling pointer\n"
+    "+    auto *obj = table.lookup_live(id);\n"
     "+    return obj->value;\n"
 )
 
@@ -44,30 +45,30 @@ _RESOLVE_DIFF = (
 class CallSiteExtractTest(unittest.TestCase):
     def test_extracts_method_calls(self):
         names = extract_call_site_names(
-            "entries_.pop_back();\nhandle.resolve();\nx.clear();\n"
+            "entries_.pop_back();\ntable.lookup_live(id);\nx.clear();\n"
         )
         self.assertIn("pop_back", names)
-        self.assertIn("resolve", names)
+        self.assertIn("lookup_live", names)
         self.assertIn("clear", names)
 
 
 class GroundingMissHookTest(unittest.TestCase):
     def test_evidence_mismatch_records_miss_and_reason(self):
         skill = Skill(
-            title="Handle resolve UAF",
+            title="Lookup-live UAF",
             description="dangling",
-            content="Use handle.resolve()",
+            content="Use table.lookup_live()",
             kind=SKILL_KIND_BUG_PATTERN,
             root_cause_category="use_after_free",
             symptom_description="ASan use-after-free on cached pointer",
         )
         pack = GroundingPack(
             user_request="fix UAF",
-            diff=_RESOLVE_DIFF,
-            symbols=["resolve"],
+            diff=_LOOKUP_LIVE_DIFF,
+            symbols=["lookup_live"],
         )
         # Confirm category is known but regex does not ground this idiom
-        ok, reason = category_grounded_in_diff("use_after_free", _RESOLVE_DIFF)
+        ok, reason = category_grounded_in_diff("use_after_free", _LOOKUP_LIVE_DIFF)
         self.assertFalse(ok, reason)
 
         result = check_bug_pattern_grounding(skill, pack)
@@ -79,7 +80,7 @@ class GroundingMissHookTest(unittest.TestCase):
         miss = latest_miss_for_skill(skill.id)
         self.assertIsNotNone(miss)
         self.assertEqual(miss["category_id"], "use_after_free")
-        self.assertIn("resolve", miss["added_diff_blob"])
+        self.assertIn("lookup_live", miss["added_diff_blob"])
 
     def test_unknown_category_does_not_set_miss_reason(self):
         skill = Skill(
@@ -89,7 +90,7 @@ class GroundingMissHookTest(unittest.TestCase):
             kind=SKILL_KIND_BUG_PATTERN,
             root_cause_category="not_a_real_category",
         )
-        pack = GroundingPack(diff=_RESOLVE_DIFF)
+        pack = GroundingPack(diff=_LOOKUP_LIVE_DIFF)
         result = check_bug_pattern_grounding(skill, pack)
         self.assertFalse(result.ok)
         self.assertIsNone(skill.grounding_miss_reason)
@@ -134,7 +135,7 @@ class CandidateConfirmTest(unittest.TestCase):
         self.assertIn("resolve", terms)
 
     def test_confirmation_counts_distinct_skills_only(self):
-        blob = "auto *o = handle.resolve();\n"
+        blob = "auto *o = table.lookup_live(id);\n"
         record_confirmation_candidate(
             "use_after_free", blob, "skill-a", skill_title="A"
         )
@@ -147,9 +148,9 @@ class CandidateConfirmTest(unittest.TestCase):
         )
         by_cat = list_candidates(min_count=2)
         self.assertIn("use_after_free", by_cat)
-        resolve = next(c for c in by_cat["use_after_free"] if c.term == "resolve")
-        self.assertEqual(resolve.count, 2)
-        self.assertEqual(set(resolve.skill_ids), {"skill-a", "skill-b"})
+        live = next(c for c in by_cat["use_after_free"] if c.term == "lookup_live")
+        self.assertEqual(live.count, 2)
+        self.assertEqual(set(live.skill_ids), {"skill-a", "skill-b"})
 
     def test_list_candidates_respects_min_count(self):
         blob = "cache.refresh();\n"
@@ -181,7 +182,7 @@ class AcceptConfirmHookTest(unittest.TestCase):
         root = Path(tempfile.mkdtemp(prefix="z_accept_tax_"))
         store = LocalSkillStore(root=root)
         skill = Skill(
-            title="Resolve on demand",
+            title="Lookup-live on demand",
             description="UAF",
             content="body",
             kind=SKILL_KIND_BUG_PATTERN,
@@ -193,7 +194,7 @@ class AcceptConfirmHookTest(unittest.TestCase):
         store.save(skill)
         record_grounding_miss(
             "use_after_free",
-            "auto *o = handle.resolve();\n",
+            "auto *o = table.lookup_live(id);\n",
             skill.id,
             skill_title=skill.title,
         )
@@ -223,7 +224,7 @@ class AcceptConfirmHookTest(unittest.TestCase):
         self.assertEqual(list_candidates(min_count=2).get("use_after_free", []), [])
         # But the term was counted once
         one = list_candidates(min_count=1)["use_after_free"]
-        self.assertTrue(any(c.term == "resolve" and c.count == 1 for c in one))
+        self.assertTrue(any(c.term == "lookup_live" and c.count == 1 for c in one))
         self.assertTrue(
             any("Taxonomy candidates" in line for line in io.lines),
             io.lines,
