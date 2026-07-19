@@ -1207,10 +1207,15 @@ class Coder:
                     pass
                 # Drift/fixation: off-scope edits + checklist stagnation → confirm
                 try:
-                    redirected = self._maybe_detect_drift()
-                    if redirected:
-                        message = redirected
-                        self.reflected_message = redirected
+                    drift_result = self._maybe_detect_drift()
+                    if drift_result is not None:
+                        if getattr(drift_result, "stop", False):
+                            # Task already complete — end the reflection loop
+                            self.reflected_message = None
+                            break
+                        if drift_result.refocus_message:
+                            message = drift_result.refocus_message
+                            self.reflected_message = drift_result.refocus_message
                 except Exception:
                     pass
 
@@ -1500,7 +1505,13 @@ class Coder:
         checklist = getattr(getattr(eng, "ctx", None), "checklist", None)
         if not checklist:
             return
-        files_delta = set(self.aider_edited_files or ()) - set(files_before or ())
+        # Prefer this send's apply_updates() set so re-editing an already-touched
+        # file (post-fix creep in the same path) still counts as a turn edit.
+        last_send = getattr(self, "_last_send_edited_files", None)
+        if last_send is not None:
+            files_delta = set(last_send)
+        else:
+            files_delta = set(self.aider_edited_files or ()) - set(files_before or ())
         # Prefer relative paths for scope matching
         rels = set()
         for f in files_delta:
@@ -1523,11 +1534,12 @@ class Coder:
             ReflectionTurn(files=rels, progressed=progressed, off_scope=list(off))
         )
 
-    def _maybe_detect_drift(self) -> Optional[str]:
-        """Confirm-gated refocus when reflections drift off the checklist.
+    def _maybe_detect_drift(self):
+        """Confirm-gated drift response when reflections leave the checklist.
 
-        Returns a replacement reflected_message when the user accepts refocus;
-        otherwise None (and may record a Medium uncertainty node).
+        Returns ``DriftConfirmResult`` when the user accepts (refocus message
+        and/or ``stop=True`` for post-completion creep), else ``None`` (and may
+        record a Medium uncertainty node on decline).
         """
         if int(getattr(self, "num_reflections", 0) or 0) < 2:
             return None
@@ -1539,9 +1551,11 @@ class Coder:
             return None
 
         from aider.z.uncertainty.drift import (
+            DriftConfirmResult,
             confirm_prompt,
             detect_drift,
             format_refocus_message,
+            is_complete_task_creep,
             make_drift_observed_node,
         )
 
@@ -1562,12 +1576,20 @@ class Coder:
             accepted = False
 
         if accepted:
+            if is_complete_task_creep(signal):
+                try:
+                    self.io.tool_output(
+                        "Task looks complete — stopping further unrequested edits."
+                    )
+                except Exception:
+                    pass
+                return DriftConfirmResult(stop=True)
             refocus = format_refocus_message(signal)
             try:
                 self.io.tool_output("Refocusing on still-open checklist items…")
             except Exception:
                 pass
-            return refocus
+            return DriftConfirmResult(refocus_message=refocus)
 
         # Declined / --yes-always default-n: continue, but leave a Medium breadcrumb
         try:
@@ -2175,6 +2197,7 @@ class Coder:
 
     def send_message(self, inp):
         self.event("message_send_starting")
+        self._last_send_edited_files = set()
 
         # Notify IO that LLM processing is starting
         self.io.llm_started()
@@ -2344,6 +2367,8 @@ class Coder:
             return
 
         edited = self.apply_updates()
+        # Per-send edit set for drift detection (same file re-touched still counts)
+        self._last_send_edited_files = set(edited or ())
 
         if edited:
             self.aider_edited_files.update(edited)
