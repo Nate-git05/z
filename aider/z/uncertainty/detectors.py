@@ -1854,10 +1854,17 @@ def detect_failure_absorption(
     """
     from .absorption_taxonomy import ABSORPTION_TAXONOMY, scan_failure_absorption
     from .context import is_scaffold_file
+    from .detector_debug import detector_debug
 
     nodes: List[UncertaintyNode] = []
     new_params = _new_params_from_diff(diff)
+    detector_debug(
+        f"absorption new_params={sorted(new_params) or '[]'} "
+        f"diff_len={len(diff or '')}"
+    )
     pattern_by_id = {p.pattern_id: p for p in ABSORPTION_TAXONOMY}
+    # Per-file getattr match stats for the zero-nodes summary line
+    getattr_hits_by_file: dict[str, dict[str, object]] = {}
 
     # --- getattr_new_param_default: refine with new-params cross-check --------
     # Still uses file_contents so we catch getattr even when the helper line
@@ -1869,11 +1876,26 @@ def detect_failure_absorption(
             rel = fpath.replace("\\", "/")
             if any(p in rel for p in ("/tests/", "test_", "_test.py", "conftest.py")):
                 continue
+            raw_matches = list(_GETATTR_DEFAULT_RE.finditer(text))
             hits = []
-            for m in _GETATTR_DEFAULT_RE.finditer(text):
+            for m in raw_matches:
                 attr = _normalize_param_name(m.group(1))
                 if attr in new_params:
                     hits.append(attr)
+            getattr_hits_by_file[rel] = {
+                "raw_matches": len(raw_matches),
+                "hits": list(hits),
+                "raw_attrs": [
+                    _normalize_param_name(m.group(1)) for m in raw_matches
+                ],
+            }
+            detector_debug(
+                f"absorption getattr file={rel} "
+                f"raw_matches={len(raw_matches)} "
+                f"hits_after_new_params_filter={len(hits)} "
+                f"raw_attrs={[_normalize_param_name(m.group(1)) for m in raw_matches]} "
+                f"hits={hits}"
+            )
             if not hits:
                 continue
             uniq = sorted(set(hits))
@@ -2004,6 +2026,11 @@ def detect_failure_absorption(
         node.confidence_tier = Tier.LOW
         nodes.append(node)
 
+    if not nodes:
+        detector_debug(
+            f"absorption scan: new_params={sorted(new_params) or '[]'}, "
+            f"getattr_hits_by_file={getattr_hits_by_file}, nodes=0"
+        )
     return nodes
 
 

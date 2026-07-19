@@ -1365,20 +1365,15 @@ class Coder:
             pass
 
     def _detector_debug_enabled(self) -> bool:
-        return os.environ.get("Z_DETECTOR_DEBUG", "").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-        )
+        from aider.z.uncertainty.detector_debug import detector_debug_enabled
+
+        return detector_debug_enabled()
 
     def _detector_debug(self, msg: str) -> None:
         """Env-gated cheap-detector instrumentation — print only, no behavior change."""
-        if not self._detector_debug_enabled():
-            return
-        try:
-            self.io.tool_output(f"[detector-debug] {msg}")
-        except Exception:
-            pass
+        from aider.z.uncertainty.detector_debug import detector_debug
+
+        detector_debug(msg, io=getattr(self, "io", None))
 
     def _session_start_commit(self) -> Optional[str]:
         """HEAD SHA recorded at the start of this run_one() (if any)."""

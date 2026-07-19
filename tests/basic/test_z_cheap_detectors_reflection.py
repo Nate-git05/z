@@ -248,5 +248,83 @@ class ReflectionHookTest(unittest.TestCase):
             )
 
 
+class AbsorptionInnerDebugTest(unittest.TestCase):
+    def test_absorption_debug_prints_new_params_and_getattr_stats(self):
+        from aider.z.uncertainty.detectors import detect_failure_absorption
+        from aider.z.uncertainty.risk import collect_base_signals
+
+        diff = (
+            "diff --git a/event_queue.py b/event_queue.py\n"
+            "--- a/event_queue.py\n"
+            "+++ b/event_queue.py\n"
+            "@@ -1,6 +1,9 @@\n"
+            " class Event:\n"
+            "-    def __init__(self, name):\n"
+            '+    def __init__(self, name, priority="normal"):\n'
+            "         self.name = name\n"
+            "+        self.priority = priority\n"
+            " def process(event):\n"
+            '+    return getattr(event, "priority", "normal")\n'
+        )
+        contents = {
+            "event_queue.py": (
+                "class Event:\n"
+                '    def __init__(self, name, priority="normal"):\n'
+                "        self.name = name\n"
+                "        self.priority = priority\n"
+                "def process(event):\n"
+                '    return getattr(event, "priority", "normal")\n'
+            )
+        }
+        printed: list[str] = []
+
+        def fake_print(line, flush=False):
+            printed.append(str(line))
+
+        with mock.patch.dict(os.environ, {"Z_DETECTOR_DEBUG": "1"}), mock.patch(
+            "aider.z.uncertainty.detector_debug.print",
+            side_effect=fake_print,
+        ):
+            # detector_debug uses builtin print — patch at that module
+            with mock.patch(
+                "builtins.print", side_effect=fake_print
+            ):
+                nodes = detect_failure_absorption(
+                    collect_base_signals(["event_queue.py"]),
+                    file_contents=contents,
+                    diff=diff,
+                )
+        self.assertTrue(nodes)
+        joined = "\n".join(printed)
+        self.assertIn("absorption new_params=", joined)
+        self.assertIn("priority", joined)
+        self.assertIn("raw_matches=", joined)
+        # Fired successfully → no zero-nodes summary
+        self.assertNotIn("nodes=0", joined)
+
+    def test_absorption_debug_summary_when_zero_nodes(self):
+        from aider.z.uncertainty.detectors import detect_failure_absorption
+        from aider.z.uncertainty.risk import collect_base_signals
+
+        printed: list[str] = []
+
+        def fake_print(line, flush=False):
+            printed.append(str(line))
+
+        with mock.patch.dict(os.environ, {"Z_DETECTOR_DEBUG": "1"}), mock.patch(
+            "builtins.print", side_effect=fake_print
+        ):
+            nodes = detect_failure_absorption(
+                collect_base_signals(["x.py"]),
+                file_contents={"x.py": "x = 1\n"},
+                diff="diff --git a/x.py b/x.py\n+x = 1\n",
+            )
+        self.assertEqual(nodes, [])
+        self.assertTrue(
+            any("absorption scan:" in line and "nodes=0" in line for line in printed),
+            printed,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
