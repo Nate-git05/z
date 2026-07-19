@@ -13,11 +13,28 @@ from .schema import NodeStatus, NodeType, Tier, UncertaintyNode
 from .store import UncertaintyStore
 
 # Types the agent can try to fix automatically (reflect loop).
+# Opt-in via Z_UNCERTAINTY_AUTO_ACT — this set only widens what runs once enabled.
+#
+# Deliberately excluded:
+# - DEPENDENCY_FABRICATION: has its own stricter typed human-ack in gate.py
+# - MEMORY_SAFETY / LEAK_ANALYSIS / CONCURRENCY_RACE / DYNAMIC_ANALYSIS:
+#   sanitizer/tool reruns, not a text-based reflect loop
+# - SHARED_LOGIC: prompt exists but is too scope-expanding for auto-act
 _AUTO_FIXABLE = {
     NodeType.MISSING_TEST,
     NodeType.REQUIREMENT_GAP,
     NodeType.FAILURE_BLIND_SPOT,
     NodeType.EDGE_CASE,
+    # Had prompt branches already; previously unreachable via this set.
+    NodeType.API_ASSUMPTION,
+    NodeType.HIGH_STAKES,
+    NodeType.FRAGILE_LOGIC,
+    NodeType.PATTERN_INCONSISTENCY,
+    # Mechanical checkers with concrete next actions.
+    NodeType.ESTABLISHED_SOLUTION_GAP,
+    NodeType.FAILURE_ABSORPTION,
+    NodeType.GETATTR_SHORTCUT,
+    NodeType.PATTERN_COMPANION_GAP,
 }
 
 
@@ -89,6 +106,28 @@ def default_prompt_for_node(node: UncertaintyNode) -> str:
             f"Pattern misfit in {files}: {node.summary}. "
             "Align with the canonical peer pattern or document why not."
         )
+    if node.type == NodeType.ESTABLISHED_SOLUTION_GAP:
+        return (
+            f"Reinvented established solution in {files}: {node.summary}. "
+            f"Replace the custom implementation with the standard approach. {base}"
+        )
+    if node.type == NodeType.FAILURE_ABSORPTION:
+        return (
+            f"Failure-absorption pattern in {files}: {node.summary}. "
+            f"Surface or handle the error explicitly instead of silently absorbing it. {base}"
+        )
+    if node.type == NodeType.GETATTR_SHORTCUT:
+        return (
+            f"Permissive getattr shortcut in {files}: {node.summary}. "
+            f"Wire the new parameter through properly, or confirm it's a deliberate "
+            f"compatibility shim and document why. {base}"
+        )
+    if node.type == NodeType.PATTERN_COMPANION_GAP:
+        return (
+            f"Missing sibling registration for {files}: {node.summary}. "
+            f"Add the new file to the shared companion (registry/__all__/index) "
+            f"the way its siblings already are. {base}"
+        )
     return base
 
 
@@ -108,12 +147,21 @@ def select_auto_act_targets(
             candidates.append(n)
         elif n.type == NodeType.REQUIREMENT_GAP and n.signals.get("requirement_status") == "Not Addressed":
             candidates.append(n)
-    # Prefer verification / tests, then requirement gaps
+    # Verification/tests first, then hardened mechanical checkers, then
+    # model-judgment-heavier categories; stylistic pattern-misfit last.
     order = {
         NodeType.MISSING_TEST: 0,
         NodeType.REQUIREMENT_GAP: 1,
         NodeType.EDGE_CASE: 2,
         NodeType.FAILURE_BLIND_SPOT: 3,
+        NodeType.GETATTR_SHORTCUT: 4,
+        NodeType.FAILURE_ABSORPTION: 4,
+        NodeType.ESTABLISHED_SOLUTION_GAP: 4,
+        NodeType.PATTERN_COMPANION_GAP: 4,
+        NodeType.API_ASSUMPTION: 5,
+        NodeType.HIGH_STAKES: 5,
+        NodeType.FRAGILE_LOGIC: 6,
+        NodeType.PATTERN_INCONSISTENCY: 7,
     }
     candidates.sort(key=lambda n: (order.get(n.type, 9), n.title))
     return candidates[:max_targets]
