@@ -46,6 +46,17 @@ _ATOMIC_DIFF = (
     "+    size.store(n, std::memory_order_release);\n"
 )
 
+# LRU-style leak fix: release via container removal, not free/delete/Close.
+_CONTAINER_ERASE_DIFF = (
+    "diff --git a/src/lru_cache.h b/src/lru_cache.h\n"
+    "--- a/src/lru_cache.h\n"
+    "+++ b/src/lru_cache.h\n"
+    "@@ -40,6 +40,9 @@\n"
+    "+    // Evict oldest entries so the leaked nodes are released\n"
+    "+    entries_.pop_back();\n"
+    "+    entries_.erase(it);\n"
+)
+
 
 class CaptureGateTest(unittest.TestCase):
     def test_suggest_allows_commit_without_meaningful_pass(self):
@@ -228,6 +239,13 @@ class TaxonomyTest(unittest.TestCase):
             "diff --git a/x.py b/x.py\n+def add(a,b): return a+b\n",
         )
         self.assertFalse(ok, reason)
+
+    def test_category_grounded_on_container_erase_diff(self):
+        """resource_leak must ground on erase/pop_back, not only free/delete."""
+        ok, reason = category_grounded_in_diff(
+            "resource_leak", _CONTAINER_ERASE_DIFF
+        )
+        self.assertTrue(ok, reason)
 
     def test_boost_for_matching_keywords(self):
         boosted = boost_for_category(
