@@ -1640,7 +1640,33 @@ class Coder:
                 f"exclude_ids={sorted(exclude_ids) or '[]'} "
                 f"log_len={len(log)} recent=[{'; '.join(recent) or 'none'}]"
             )
-        off = off_scope_edits(rels, checklist, stagnant_ids=exclude_ids)
+        # Per-file +/- changed lines so off_scope_edits can reject
+        # right-file / wrong-reason edits (symbol/hunk match).
+        diff_by_file = None
+        try:
+            repo = getattr(self, "repo", None)
+            if repo is not None and hasattr(repo, "get_diffs") and files_delta:
+                from aider.z.uncertainty.checklist import _diff_changed_by_file
+
+                combined = repo.get_diffs(fnames=list(files_delta)) or ""
+                raw = _diff_changed_by_file(combined)
+                if raw:
+                    diff_by_file = {}
+                    for path, blob in raw.items():
+                        try:
+                            rel = self.get_rel_fname(path)
+                        except Exception:
+                            rel = str(path)
+                        diff_by_file[str(path)] = blob
+                        diff_by_file[str(rel)] = blob
+        except Exception:
+            diff_by_file = None
+        off = off_scope_edits(
+            rels,
+            checklist,
+            stagnant_ids=exclude_ids,
+            diff_by_file=diff_by_file,
+        )
         self._drift_debug(
             f"rels={sorted(rels) or '[]'} off_scope={sorted(off) or '[]'} "
             f"progressed={progressed}"
