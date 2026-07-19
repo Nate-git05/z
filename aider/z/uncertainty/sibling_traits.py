@@ -215,6 +215,20 @@ def _token_in_text(token: str, text: str) -> bool:
     return re.search(rf"(?<![A-Za-z0-9_]){re.escape(token)}(?![A-Za-z0-9_])", text) is not None
 
 
+def _read_cached(root: Path, rel: str, cache: Dict[str, str]) -> Optional[str]:
+    text = cache.get(rel)
+    if text is not None:
+        return text
+    try:
+        text = (root / rel).read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+    if len(text) > 400_000:
+        text = text[:400_000]
+    cache[rel] = text
+    return text
+
+
 def _classify_trait(companion_text: str, companion_rel: str) -> str:
     name = Path(companion_rel).name
     if name == "__init__.py":
@@ -280,6 +294,17 @@ def find_sibling_companion_gaps(
     contents_cache = dict(file_contents or {})
 
     min_hits = max(2, math.ceil(len(sib_ids) * 0.67))
+
+    # If most siblings already import/inherit/reference the new file's ids in
+    # their own source, the new file is shared family infrastructure (e.g. an
+    # abstract base), not a peer that belongs in the registry.
+    depended_on = 0
+    for sid in sib_ids:
+        text = _read_cached(root, sid.rel, contents_cache)
+        if text and any(_token_in_text(t, text) for t in new_ids.tokens):
+            depended_on += 1
+    new_file_is_shared_dependency = depended_on >= min_hits
+
     gaps: List[CompanionGap] = []
 
     for cand in candidates:
@@ -297,16 +322,9 @@ def find_sibling_companion_gaps(
         ):
             continue
 
-        text = contents_cache.get(crel)
+        text = _read_cached(root, crel, contents_cache)
         if text is None:
-            try:
-                text = cand.read_text(encoding="utf-8", errors="ignore")
-            except OSError:
-                continue
-            # Cap huge files
-            if len(text) > 400_000:
-                text = text[:400_000]
-            contents_cache[crel] = text
+            continue
 
         hit_sibs: List[str] = []
         hit_tokens: List[str] = []
@@ -323,6 +341,8 @@ def find_sibling_companion_gaps(
         # Require a registry-ish signal OR family __init__ — plain co-occurrence
         # in a random util file is too noisy.
         if trait == "cooccurrence":
+            continue
+        if new_file_is_shared_dependency:
             continue
 
         # Does the companion already mention the new file?
