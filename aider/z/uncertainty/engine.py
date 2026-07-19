@@ -294,8 +294,16 @@ class UncertaintyEngine:
         run_gap_analysis: bool = True,
         diff: Optional[str] = None,
         discussed_text: Optional[str] = None,
+        cheap_only: bool = False,
     ) -> List[UncertaintyNode]:
-        """Run all concrete detectors for a batch of edited files."""
+        """Run detectors for a batch of edited files.
+
+        ``cheap_only=True`` runs only the deterministic regex/AST-lite suite
+        safe during multi-reflection sessions (failure absorption, sibling
+        companions, established-solution gaps). Model-backed work such as
+        ``detect_edge_cases`` and checklist gap analysis stays clean-exit-only
+        via the default full pipeline.
+        """
         root = self.ctx.root
         files = [self._rel(f) for f in files_changed]
         symbols = list(symbols)
@@ -360,7 +368,62 @@ class UncertaintyEngine:
         if maturity == "greenfield":
             signals.blast_radius_threshold = max(signals.blast_radius_threshold, 20)
 
+        from .sibling_traits import new_files_from_diff
+
+        diff_text = diff if diff is not None else self.ctx.last_diff
+        diff_new = new_files_from_diff(diff_text or "")
+        # Track newly introduced paths so sibling-companion checks can run even
+        # when the file already has same-dir pattern matches.
+        for nf in diff_new:
+            if nf not in self.ctx.new_files_this_turn:
+                self.ctx.new_files_this_turn.append(nf)
+            if nf not in new_files:
+                new_files.append(nf)
+
         nodes: List[UncertaintyNode] = []
+
+        if cheap_only:
+            # Reflection-safe suite only — never call model-backed detectors.
+            companion_candidates = filter_scaffold_files(
+                list(dict.fromkeys([*diff_new, *self.ctx.new_files_this_turn]))
+            )
+            for nf in companion_candidates:
+                if nf not in self.ctx.pattern_results:
+                    self.ctx.pattern_results[nf] = self._search_patterns(nf)
+            if companion_candidates and maturity != "greenfield":
+                nodes.extend(
+                    detect_missing_sibling_companions(
+                        signals,
+                        root=root,
+                        new_files=companion_candidates,
+                        pattern_results=self.ctx.pattern_results,
+                        diff=diff_text or "",
+                        files_changed=files,
+                        file_contents=contents,
+                        **meta,
+                    )
+                )
+            nodes.extend(
+                detect_failure_absorption(
+                    signals,
+                    file_contents=contents,
+                    diff=diff_text or "",
+                    **meta,
+                )
+            )
+            nodes.extend(
+                detect_established_solution_gaps(
+                    signals,
+                    diff=diff_text or "",
+                    plan=self.ctx.plan,
+                    **meta,
+                )
+            )
+            deduped = self._dedupe(nodes)
+            deduped = apply_uncertainty_budget(deduped, max_blocking=3)
+            deduped = prioritize_nodes(deduped, limit=8)
+            self.store.add_many(deduped)
+            return deduped
 
         # Tests → Untested Path
         relevant = find_relevant_tests(root, files, symbols)
@@ -423,18 +486,8 @@ class UncertaintyEngine:
         )
 
         # Patterns / new files (context-aware noise)
-        from .sibling_traits import new_files_from_diff
-
-        diff_text = diff if diff is not None else self.ctx.last_diff
-        diff_new = new_files_from_diff(diff_text or "")
-        # Track newly introduced paths so sibling-companion checks can run even
-        # when the file already has same-dir pattern matches.
-        for nf in diff_new:
-            if nf not in self.ctx.new_files_this_turn:
-                self.ctx.new_files_this_turn.append(nf)
-            if nf not in new_files:
-                new_files.append(nf)
-
+        # diff_text / diff_new / new_files tracking already done above (shared
+        # with the cheap_only path).
         candidate_new = new_files or [
             f
             for f in files
@@ -550,7 +603,8 @@ class UncertaintyEngine:
             )
         )
 
-        # Edge case blind spots — structural AST/regex first; model list supplements
+        # Edge case blind spots — structural AST/regex first; model list supplements.
+        # Stays clean-exit-only (skipped under cheap_only via early return above).
         test_blob = ""
         try:
             for tpath in relevant or []:
