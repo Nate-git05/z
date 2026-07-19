@@ -372,6 +372,29 @@ def save_skill_from_task(
     return skill, True
 
 
+def _resolve_skill_for_state_change(io, store: LocalSkillStore, name: str):
+    """Resolve accept/reject targets; surface title collisions instead of silent pick."""
+    skill, candidates = store.resolve_by_name(name)
+    if skill is None and candidates:
+        io.tool_error(
+            f"Multiple skills share the title “{name}” — specify one by id:"
+        )
+        for c in candidates:
+            io.tool_output(
+                f"  {c.id[:8]}  [{c.quality_state}]  {c.title}"
+            )
+        return None
+    if skill is None:
+        io.tool_error(f"No skill found for “{name}”.")
+        return None
+    if len(candidates) > 1:
+        io.tool_output(
+            f"Note: {len(candidates)} skills share this title — "
+            f"resolved to the draft one ({skill.id[:8]})."
+        )
+    return skill
+
+
 def accept_skill(io, name: str = "") -> int:
     """Promote a draft skill to verified so it can auto-apply."""
     name = (name or "").strip()
@@ -381,9 +404,8 @@ def accept_skill(io, name: str = "") -> int:
         io.tool_error("Skill name or id required.")
         return 1
     store = LocalSkillStore()
-    skill = store.get(name)
+    skill = _resolve_skill_for_state_change(io, store, name)
     if not skill:
-        io.tool_error(f"No skill found for “{name}”.")
         return 1
     if (skill.quality_state or "") == "verified" and not skill.needs_review:
         io.tool_output(f"“{skill.title}” is already verified.")
@@ -431,9 +453,8 @@ def reject_skill(io, name: str = "") -> int:
         io.tool_error("Skill name or id required.")
         return 1
     store = LocalSkillStore()
-    skill = store.get(name)
+    skill = _resolve_skill_for_state_change(io, store, name)
     if not skill:
-        io.tool_error(f"No skill found for “{name}”.")
         return 1
     skill.quality_state = "rejected"
     skill.needs_review = True

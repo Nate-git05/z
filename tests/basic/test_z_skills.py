@@ -101,6 +101,137 @@ class LocalStoreTest(unittest.TestCase):
         self.assertEqual(idx[0]["title"], "A")
         self.assertIn("path", idx[0])
 
+    def test_resolve_by_name_id_is_unambiguous(self):
+        a = Skill(title="Same", description="d", content="a", quality_state="verified")
+        b = Skill(title="Same", description="d", content="b", quality_state="draft")
+        self.store.save(a)
+        self.store.save(b)
+        skill, candidates = self.store.resolve_by_name(b.id)
+        self.assertEqual(skill.id, b.id)
+        self.assertEqual(candidates, [])
+
+    def test_resolve_by_name_single_draft_among_title_collisions(self):
+        verified = Skill(
+            title="LRU leak",
+            description="d",
+            content="old",
+            quality_state="verified",
+        )
+        draft = Skill(
+            title="LRU leak",
+            description="d",
+            content="new",
+            quality_state="draft",
+            needs_review=True,
+        )
+        self.store.save(verified)
+        self.store.save(draft)
+        skill, candidates = self.store.resolve_by_name("LRU leak")
+        self.assertIsNotNone(skill)
+        self.assertEqual(skill.id, draft.id)
+        self.assertEqual(len(candidates), 2)
+
+    def test_resolve_by_name_ambiguous_when_multiple_drafts(self):
+        d1 = Skill(title="Race", description="d", content="1", quality_state="draft")
+        d2 = Skill(title="Race", description="d", content="2", quality_state="draft")
+        self.store.save(d1)
+        self.store.save(d2)
+        skill, candidates = self.store.resolve_by_name("Race")
+        self.assertIsNone(skill)
+        self.assertEqual(len(candidates), 2)
+
+
+class SkillAcceptCollisionTest(unittest.TestCase):
+    def test_accept_by_title_picks_sole_draft_with_note(self):
+        root = Path(tempfile.mkdtemp(prefix="z_accept_collide_"))
+        store = LocalSkillStore(root=root)
+        verified = Skill(
+            title="LRU leak",
+            description="d",
+            content="old",
+            quality_state="verified",
+        )
+        draft = Skill(
+            title="LRU leak",
+            description="d",
+            content="new",
+            quality_state="draft",
+            needs_review=True,
+        )
+        store.save(verified)
+        store.save(draft)
+
+        class FakeIO:
+            def __init__(self):
+                self.out = []
+                self.err = []
+
+            def tool_output(self, *a, **k):
+                self.out.append(" ".join(str(x) for x in a))
+
+            def tool_error(self, *a, **k):
+                self.err.append(" ".join(str(x) for x in a))
+
+            def prompt_ask(self, *a, **k):
+                return ""
+
+        from aider.z.skills.cli import accept_skill
+
+        io = FakeIO()
+        with mock.patch("aider.z.skills.cli.LocalSkillStore", return_value=store), mock.patch(
+            "aider.z.skills.cli.upsert_skill_vector"
+        ):
+            rc = accept_skill(io, "LRU leak")
+        self.assertEqual(rc, 0)
+        self.assertTrue(
+            any("resolved to the draft one" in line for line in io.out),
+            io.out,
+        )
+        loaded = store.get(draft.id)
+        self.assertEqual(loaded.quality_state, "verified")
+        # Verified sibling must remain untouched
+        other = store.get(verified.id)
+        self.assertEqual(other.quality_state, "verified")
+        self.assertEqual(other.content.strip(), "old")
+
+    def test_accept_ambiguous_titles_lists_ids(self):
+        root = Path(tempfile.mkdtemp(prefix="z_accept_ambig_"))
+        store = LocalSkillStore(root=root)
+        store.save(
+            Skill(title="Race", description="d", content="1", quality_state="draft")
+        )
+        store.save(
+            Skill(title="Race", description="d", content="2", quality_state="draft")
+        )
+
+        class FakeIO:
+            def __init__(self):
+                self.out = []
+                self.err = []
+
+            def tool_output(self, *a, **k):
+                self.out.append(" ".join(str(x) for x in a))
+
+            def tool_error(self, *a, **k):
+                self.err.append(" ".join(str(x) for x in a))
+
+            def prompt_ask(self, *a, **k):
+                return ""
+
+        from aider.z.skills.cli import accept_skill
+
+        io = FakeIO()
+        with mock.patch("aider.z.skills.cli.LocalSkillStore", return_value=store), mock.patch(
+            "aider.z.skills.cli.upsert_skill_vector"
+        ):
+            rc = accept_skill(io, "Race")
+        self.assertEqual(rc, 1)
+        self.assertTrue(
+            any("Multiple skills share the title" in line for line in io.err),
+            io.err,
+        )
+        self.assertEqual(sum(1 for line in io.out if "[draft]" in line), 2)
+
 
 class InferMetadataTest(unittest.TestCase):
     def test_infer_from_paste_body(self):
