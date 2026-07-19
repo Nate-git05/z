@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from datetime import datetime, timezone
 from typing import Optional, Tuple
 
@@ -89,25 +88,10 @@ Do not invent symbols. If a name is not in the evidence, omit it.
 
 
 def _extract_json(text: str) -> Optional[dict]:
-    if not text:
-        return None
-    text = text.strip()
-    # Strip optional fences
-    fence = re.match(r"^```(?:json)?\s*([\s\S]*?)\s*```$", text)
-    if fence:
-        text = fence.group(1).strip()
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        # Try to find first { ... }
-        start = text.find("{")
-        end = text.rfind("}")
-        if start >= 0 and end > start:
-            try:
-                return json.loads(text[start : end + 1])
-            except json.JSONDecodeError:
-                return None
-    return None
+    """Pull a JSON object from a model response (shared hardened extractor)."""
+    from aider.z.llm_json import extract_json_from_response
+
+    return extract_json_from_response(text)
 
 
 def resolve_model(model_name: Optional[str] = None):
