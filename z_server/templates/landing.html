@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Z — coding agent with an uncertainty tree</title>
-  <meta name="description" content="Z is a coding agent that surfaces structured uncertainty as you work — and learns reusable skills from your repo. Open for early testing." />
+  <title>Z — coding agent with verify-before-commit uncertainty</title>
+  <meta name="description" content="Z is a coding agent that binds every requirement to real evidence, gates commits on verification, and learns reusable skills from your repo. Open for early testing." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Source+Sans+3:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -21,7 +21,7 @@
         <a href="#why">Why</a>
         <a href="#how">How it works</a>
         <a href="#skills">Skills</a>
-        <a href="#detectors">Detectors</a>
+        <a href="#gate">Commit gate</a>
         <a href="#install">Try it</a>
         {% if user %}
           <a href="/app/integrations">App</a>
@@ -40,26 +40,25 @@
           <span class="lp-pulse" aria-hidden="true"></span>
           Open for early testing
         </p>
-        <h1>A coding agent that <span class="muted">knows what it doesn’t know</span></h1>
+        <h1>Z <span class="muted">won't commit what it can't verify</span></h1>
         <p class="lp-subhead">
-          Z attaches structured, reviewable uncertainty to the code it touches —
-          and learns reusable skills from your work so it doesn’t ask the same
-          questions twice.
+          A coding agent that binds every requirement to real evidence,
+          gates the commit on a passing suite, and remembers how your repo works.
         </p>
         <div class="lp-hero-ctas">
-          <a class="lp-btn" href="#install">Try early testing</a>
+          <a class="lp-btn" href="#install">Install Z</a>
           <a class="lp-btn lp-btn-outline" href="#waitlist">Join the waitlist</a>
         </div>
       </div>
 
-      <div class="term" aria-label="Uncertainty tree demo" role="img">
+      <div class="term" aria-label="Z verify and uncertainty demo" role="img">
         <div class="term-bar">
           <span class="term-dots" aria-hidden="true">
             <span class="term-dot"></span>
             <span class="term-dot"></span>
             <span class="term-dot"></span>
           </span>
-          <span class="term-title">z — uncertainty tree</span>
+          <span class="term-title">z — verify · uncertainty</span>
         </div>
         <div class="term-body" id="term-demo"></div>
       </div>
@@ -67,96 +66,97 @@
 
     <section class="lp-section" id="why">
       <p class="lp-label">Why Z</p>
-      <h2>Wrong changes look like correct ones until something breaks</h2>
+      <h2>Wrong changes look correct until something breaks</h2>
       <p class="lp-lede">
-        Agents get more autonomy every month. The failure mode isn’t occasional
-        mistakes — it’s that a bad edit is indistinguishable from a good one
-        until production. Z makes the difference visible before you ship.
+        Agents edit whole repos in one pass. A bad diff often looks identical to a
+        good one until CI or production fails. Z makes the missing evidence visible
+        before you ship — and won't treat a failed suite as “no tests.”
       </p>
       <div class="lp-cards">
         <article class="lp-card">
-          <p class="lp-card-eyebrow">01 — Visibility</p>
-          <h3>Review what needs it</h3>
-          <p>Risk and confidence stay separate. High-risk nodes rise even when the agent is “sure.”</p>
+          <p class="lp-card-eyebrow">01 — Evidence</p>
+          <h3>Facts before judgment</h3>
+          <p>Exit codes, discovered tests, README sections, symbols — not model vibes or fake confidence %.</p>
         </article>
         <article class="lp-card">
-          <p class="lp-card-eyebrow">02 — Signals</p>
-          <h3>Checkable, not vibes</h3>
-          <p>Detectors read tests, paths, APIs, and blast radius — not fake confidence percentages.</p>
+          <p class="lp-card-eyebrow">02 — Gate</p>
+          <h3>Verify before commit</h3>
+          <p>High blockers hard-stop. Medium needs an explicit ack. Process noise never invents product features.</p>
         </article>
         <article class="lp-card">
           <p class="lp-card-eyebrow">03 — Memory</p>
-          <h3>Teach once, reuse</h3>
-          <p>Skills capture how your repo actually works so the same conventions aren’t re-explained every session.</p>
+          <h3>Skills you accept</h3>
+          <p>Playbooks grounded in real diffs. Draft until you accept — wrong skills stay quarantined.</p>
         </article>
       </div>
     </section>
 
     <section class="lp-section" id="how">
       <p class="lp-label">How it works</p>
-      <h2>Detectors build a tree you can act on</h2>
+      <h2>Typed requirements, then proof</h2>
       <p class="lp-lede">
-        As Z edits your repo, it runs checkable detectors — tests, path keywords,
-        live API verification, blast radius — and builds a tree you can act on.
+        Every task becomes a checklist. Each line is classified — product, process,
+        verification, documentation, quality — and scored only against the evidence
+        that kind accepts.
       </p>
       <div class="lp-cards">
         <article class="lp-card">
           <p class="lp-card-eyebrow">01</p>
-          <h3>You describe the task</h3>
-          <p>Z decomposes the request into a checklist so requirement gaps surface before they ship.</p>
+          <h3>Decompose the ask</h3>
+          <p>“Run the tests” is verification. “Don’t commit until verified” is process. “Document in README” is documentation — not a product feature hunt.</p>
         </article>
         <article class="lp-card">
           <p class="lp-card-eyebrow">02</p>
-          <h3>Detectors fire on real signals</h3>
-          <p>Missing tests, unverified APIs, migrations, TODOs, shared logic — each becomes a typed node.</p>
+          <h3>Bind the right proof</h3>
+          <p>Product needs symbols and behavioral tests. Process needs the session verify log. Docs need the README section. No cross-wiring.</p>
         </article>
         <article class="lp-card">
           <p class="lp-card-eyebrow">03</p>
-          <h3>You act from the tree</h3>
-          <p>Browse risk-first. Fix, add a test, explain, or ignore — each action scopes a follow-up.</p>
+          <h3>Gate, then commit</h3>
+          <p>Suite runs. Detectors fire. At most a few blockers surface. You review with <code class="mono">/uncertainties</code> — then the tree can clear.</p>
         </article>
       </div>
     </section>
 
     <section class="lp-section" id="skills">
       <p class="lp-label">Skills</p>
-      <h2>Reusable skills</h2>
+      <h2>Teach the repo once</h2>
       <p class="lp-lede">
-        Coding agents forget your project’s rules the moment the chat ends.
-        You re-explain Stripe signatures, migration rules, and auth patterns
-        every session. Teach Z once how your repo works — it remembers, and
-        applies the right playbook on the next matching task.
+        Coding agents forget your project’s rules when the chat ends.
+        Capture how this repo actually works — grounded in the files and symbols
+        that changed — and Z routes the right playbook on the next matching task.
       </p>
       <div class="lp-cards">
         <article class="lp-card">
-          <p class="lp-card-eyebrow">01 — Create</p>
-          <h3>Paste or capture</h3>
+          <p class="lp-card-eyebrow">01 — Capture</p>
+          <h3>From a real turn</h3>
           <p>
-            Drop in a playbook with <code class="mono">/skills add</code>,
-            generate one with <code class="mono">z skill create</code>, or let Z
-            offer to save after a solid turn.
+            Paste with <code class="mono">/skills add</code>, generate with
+            <code class="mono">z skill create</code>, or save after a solid edit.
+            Captures start as <strong>draft</strong>.
           </p>
         </article>
         <article class="lp-card">
-          <p class="lp-card-eyebrow">02 — Index</p>
-          <h3>Metadata inferred for you</h3>
+          <p class="lp-card-eyebrow">02 — Accept</p>
+          <h3>You promote what fits</h3>
           <p>
-            Z writes when to use it, what triggers it, and where the body lives —
-            so you don’t fill out a form. You write the playbook; Z handles the rest.
+            Draft and rejected skills never auto-apply.
+            Review with <code class="mono">z skill show</code>, then
+            <code class="mono">z skill accept</code> when it’s right.
           </p>
         </article>
         <article class="lp-card">
-          <p class="lp-card-eyebrow">03 — Apply</p>
-          <h3>Auto-applied later</h3>
+          <p class="lp-card-eyebrow">03 — Route</p>
+          <h3>Matched by repo signals</h3>
           <p>
-            On a matching task, Z pulls the skill in automatically. No manual attach.
-            No re-explaining Stripe webhooks every session.
+            On a later task, Z scores languages, paths, and intent — not just a title —
+            so an unrelated playbook stays out of the way.
           </p>
         </article>
       </div>
 
       <div class="lp-skills-extra">
-        <p class="lp-label">What you can capture</p>
+        <p class="lp-label">What people capture</p>
         <div class="lp-chips lp-chips-compact">
           <div class="lp-chip">
             <strong>Stripe webhooks</strong>
@@ -176,52 +176,72 @@
           </div>
         </div>
         <p class="lp-skills-note">
-          After a non-trivial turn, Z can ask to save a skill — then optionally show
-          name and metadata only. Two opt-ins. No surprise dumps.
-          Use <code class="mono">z skill list</code> and <code class="mono">z skill show</code>
-          anytime.
+          After a non-trivial turn, Z can offer to save a skill — two opt-ins, no surprise dumps.
+          List anytime with <code class="mono">z skill list</code>.
         </p>
       </div>
     </section>
 
-    <section class="lp-section" id="detectors">
-      <p class="lp-label">Detectors</p>
-      <h2>What gets flagged</h2>
+    <section class="lp-section" id="gate">
+      <p class="lp-label">Commit gate</p>
+      <h2>What blocks a commit</h2>
       <p class="lp-lede">
-        Risk and confidence stay separate. High-risk nodes rise to the top even when confidence is high.
+        Risk and confidence stay separate. High means hard stop.
+        Process and decision gaps stay informational — they never invent product work.
       </p>
-      <div class="lp-chips">
-        <div class="lp-chip">
-          <strong>Payment / auth / security</strong>
-          <span>Path and symbol keyword match — auto Medium risk at minimum.</span>
-        </div>
-        <div class="lp-chip">
-          <strong>Missing or failing tests</strong>
-          <span>Relevant suite by module/symbol — fail escalates; none flags Missing Test.</span>
-        </div>
-        <div class="lp-chip">
-          <strong>API assumption</strong>
-          <span>No live-verified call this session, or unverifiable MCP result.</span>
-        </div>
-        <div class="lp-chip">
-          <strong>Pattern inconsistency</strong>
-          <span>No match or conflicting conventions for a new file.</span>
-        </div>
-        <div class="lp-chip">
-          <strong>Shared logic / blast radius</strong>
-          <span>Reference count above a configurable threshold.</span>
-        </div>
-        <div class="lp-chip">
-          <strong>Unverifiable config</strong>
-          <span>Env vars and secrets the agent cannot inspect.</span>
-        </div>
-        <div class="lp-chip">
-          <strong>Migration risk</strong>
-          <span>Schema changes plus explicit existing-data impact.</span>
-        </div>
-        <div class="lp-chip">
-          <strong>High confidence</strong>
-          <span>Positive signal when a change matches a tested pattern and passes.</span>
+      <div class="lp-cards">
+        <article class="lp-card">
+          <p class="lp-card-eyebrow">High</p>
+          <h3>Hard block</h3>
+          <p>Failed or zero tests. Unfinished core product requirements. Verification never meaningfully passed. Ignore does not clear these.</p>
+        </article>
+        <article class="lp-card">
+          <p class="lp-card-eyebrow">Medium</p>
+          <h3>Explicit ack</h3>
+          <p>Partial gaps, API assumptions, migrations, edge cases — you acknowledge before the commit lands.</p>
+        </article>
+        <article class="lp-card">
+          <p class="lp-card-eyebrow">Low</p>
+          <h3>Visible, not blocking</h3>
+          <p>Process rules already proven by the session, scaffolding noise, and notes you can browse later.</p>
+        </article>
+      </div>
+
+      <div class="lp-skills-extra">
+        <p class="lp-label">What gets flagged</p>
+        <div class="lp-chips">
+          <div class="lp-chip">
+            <strong>Untested path</strong>
+            <span>Missing co-located tests — or suite failed. Never “no tests” when seven actually ran.</span>
+          </div>
+          <div class="lp-chip">
+            <strong>Requirement gap</strong>
+            <span>Evidence-bound: code for product, verify log for process, README for docs.</span>
+          </div>
+          <div class="lp-chip">
+            <strong>Edge case blind spot</strong>
+            <span>Structural branches (else / except / None) undiscussed and untested.</span>
+          </div>
+          <div class="lp-chip">
+            <strong>Unverified assumption</strong>
+            <span>External API or MCP result without a live check this session.</span>
+          </div>
+          <div class="lp-chip">
+            <strong>High-stakes surface</strong>
+            <span>Payment, auth, security, data-loss paths — raised even when confidence is high.</span>
+          </div>
+          <div class="lp-chip">
+            <strong>Migration risk</strong>
+            <span>Schema changes without a clear existing-data impact story.</span>
+          </div>
+          <div class="lp-chip">
+            <strong>Integration ripple</strong>
+            <span>Widely referenced symbols changed — blast radius above threshold.</span>
+          </div>
+          <div class="lp-chip">
+            <strong>Evidence of safety</strong>
+            <span>Positive signal when a change matches a tested pattern and the suite passes.</span>
+          </div>
         </div>
       </div>
     </section>
@@ -249,6 +269,8 @@
       <p class="lp-lede lp-lede-after">
         macOS / Linux. Puts <code class="mono">z</code> on your PATH.
         Then set your API key and run <code class="mono">z</code> in a project.
+        Browse findings with <code class="mono">/uncertainties</code> ·
+        detector noise with <code class="mono">z uncertainty stats</code>.
       </p>
     </section>
 
@@ -259,7 +281,7 @@
           <h2>Join the waitlist</h2>
           <p>
             Want updates on workspace sharing, MCP integrations, and what’s next?
-            Join the list — you can still try early testing above right now.
+            Join the list — you can still install and try Z above right now.
           </p>
         </div>
         <div class="lp-convert-form">
@@ -298,7 +320,7 @@
       <span class="lp-logo-mark" aria-hidden="true">Z</span>
       <span class="lp-logo-word">Z</span>
     </a>
-    <p>Early testing · Model keys stay yours · Account unlocks workspace features</p>
+    <p>Early testing · Model keys stay yours · Verify before commit · Skills stay draft until you accept</p>
   </footer>
 
   <script src="/static/js/landing.js" defer></script>
