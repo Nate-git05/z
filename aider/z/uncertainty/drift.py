@@ -15,8 +15,10 @@ from typing import Iterable, List, Optional, Sequence, Set, Tuple
 from .checklist import (
     extract_investigation_targets,
     extract_product_file_paths,
+    _FILE_LIST_CHANGE_STOP,
     _normalize_repo_path,
     _path_matches_required,
+    _target_in_text,
 )
 from .evidence_strategy import (
     STATUS_FULLY,
@@ -211,17 +213,70 @@ def file_in_checklist_scope(
     return False
 
 
+def _content_discriminator_symbols(symbol_needles: Sequence[str]) -> List[str]:
+    """Symbols that can decide whether a path-scoped edit is on-reason.
+
+    Path-like needles already decide file membership via
+    ``file_in_checklist_scope``; they rarely appear in +/- lines and must not
+    vacuously fail the hunk check. Sentence-verb leftovers (``Update``,
+    ``Change``) are also dropped — same stop-list used for product file-list
+    change tokens — so path-only items fall back to file-level matching.
+    """
+    out: List[str] = []
+    for sym in symbol_needles or []:
+        s = (sym or "").strip()
+        if not s:
+            continue
+        if "/" in s or "\\" in s:
+            continue
+        leaf = s.split("::")[-1]
+        # Bare filenames (ReactFlightDOMClientEdge.js) are path scope, not
+        # content discriminators.
+        if "." in leaf and Path(leaf).suffix:
+            continue
+        if leaf.lower() in _FILE_LIST_CHANGE_STOP:
+            continue
+        if s not in out:
+            out.append(s)
+    return out
+
+
+def _changed_blob_for_file(
+    path: str, diff_by_file: dict[str, str]
+) -> str:
+    """Lookup +/- changed lines for *path* under exact or fuzzy path keys."""
+    if not diff_by_file:
+        return ""
+    key = str(path)
+    if key in diff_by_file:
+        return diff_by_file[key] or ""
+    norm = _normalize_repo_path(key)
+    if norm in diff_by_file:
+        return diff_by_file[norm] or ""
+    for cand, blob in diff_by_file.items():
+        if _path_matches_required(norm, cand) or _path_matches_required(cand, norm):
+            return blob or ""
+    return ""
+
+
 def off_scope_edits(
     edited_files: Iterable[str],
     checklist: TaskChecklist,
     *,
     stagnant_ids: Optional[Set[str]] = None,
+    diff_by_file: Optional[dict[str, str]] = None,
 ) -> List[str]:
     """Edited paths not covered by any still-active checklist item's scope.
 
     Scope comes from open + non-stagnant items (see ``checklist_scope``).
 
     - Active items name paths/symbols → flag edits outside that set.
+    - When a touched file matches path scope *and* the checklist names
+      content symbols, also require those symbols to appear in the file's
+      +/- changed lines (``diff_by_file``). Right file / wrong reason — e.g.
+      editing ``ReactFlightDOMClientEdge.js`` for ``startReadingFromStream``
+      while the item is about ``EncodeFormActionCallback`` — is still drift.
+      Path-only items (no content symbols) keep file-level matching.
     - Active items name nothing, but *resolved/stagnant* items did → every
       edit is off-scope (LRU refactor-creep after the fix stopped producing
       new evidence, even if stuck at Partial for lack of tests).
@@ -231,10 +286,21 @@ def off_scope_edits(
         checklist, open_only=True, stagnant_ids=stagnant_ids
     )
     if path_needles or symbol_needles:
+        content_syms = _content_discriminator_symbols(symbol_needles)
         out: List[str] = []
         for f in edited_files or []:
             if not file_in_checklist_scope(f, path_needles, symbol_needles):
                 out.append(str(f))
+                continue
+            # File path matches, but does the actual changed content relate to
+            # why it's in scope? Same changed-lines-only symbol check used for
+            # investigation-kind evidence (fmtlog3 dual-site / context lines).
+            if content_syms and diff_by_file is not None:
+                hunk = _changed_blob_for_file(str(f), diff_by_file)
+                if hunk and not any(
+                    _target_in_text(sym, hunk.lower()) for sym in content_syms
+                ):
+                    out.append(str(f))  # right file, wrong reason — still drift
         return out
 
     # No active scope — only flag when *some* checklist item named

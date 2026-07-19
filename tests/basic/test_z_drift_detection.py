@@ -68,6 +68,28 @@ def _react_checklist() -> TaskChecklist:
     )
 
 
+def _encode_form_action_checklist() -> TaskChecklist:
+    """React live miss: named Edge client files for EncodeFormActionCallback."""
+    return TaskChecklist(
+        task_id="t-efa",
+        title="EncodeFormActionCallback",
+        items=[
+            RequirementItem(
+                id="i1",
+                text=(
+                    "Update EncodeFormActionCallback type in "
+                    "packages/react-server-dom-webpack/src/client/"
+                    "ReactFlightDOMClientEdge.js and "
+                    "packages/react-server-dom-turbopack/src/client/"
+                    "ReactFlightDOMClientEdge.js"
+                ),
+                status=STATUS_NOT,
+                kind="product",
+            ),
+        ],
+    )
+
+
 class ScopeMatchingTest(unittest.TestCase):
     def test_product_paths_are_in_scope(self):
         cl = _react_checklist()
@@ -90,6 +112,72 @@ class ScopeMatchingTest(unittest.TestCase):
         )
         self.assertIn("packages/react-devtools-shared/src/bridge.js", off)
         self.assertIn("src/lru_cache.hpp", off)
+
+    def test_right_file_wrong_symbol_is_off_scope(self):
+        """Same named file, unrelated hunk → drift (EncodeFormAction live miss)."""
+        cl = _encode_form_action_checklist()
+        edge = (
+            "packages/react-server-dom-webpack/src/client/"
+            "ReactFlightDOMClientEdge.js"
+        )
+        # Without per-file diff, path match alone still counts as in-scope
+        self.assertEqual(off_scope_edits([edge], cl), [])
+        wrong_reason = {
+            edge: (
+                "function startReadingFromStream(stream) {\n"
+                "  const debugValue = stream.debugValue;\n"
+                "  return readChunk(stream, debugValue);\n"
+                "}\n"
+            ),
+        }
+        off = off_scope_edits([edge], cl, diff_by_file=wrong_reason)
+        self.assertEqual(off, [edge])
+
+    def test_right_file_right_symbol_stays_in_scope(self):
+        cl = _encode_form_action_checklist()
+        edge = (
+            "packages/react-server-dom-webpack/src/client/"
+            "ReactFlightDOMClientEdge.js"
+        )
+        on_reason = {
+            edge: (
+                "export type EncodeFormActionCallback = (\n"
+                "  id: string,\n"
+                "  args: FormData,\n"
+                ") => string;\n"
+            ),
+        }
+        self.assertEqual(
+            off_scope_edits([edge], cl, diff_by_file=on_reason),
+            [],
+        )
+
+    def test_path_only_checklist_skips_hunk_symbol_check(self):
+        """No content symbols → file-level only, even when diff_by_file given."""
+        from aider.z.uncertainty.drift import _content_discriminator_symbols
+
+        cl = TaskChecklist(
+            task_id="t",
+            title="touch files",
+            items=[
+                RequirementItem(
+                    id="a",
+                    text="Update these files: src/a.py and src/b.py",
+                    status=STATUS_NOT,
+                    kind="product",
+                ),
+            ],
+        )
+        paths, symbols = checklist_scope(cl)
+        self.assertIn("src/a.py", paths)
+        self.assertEqual(_content_discriminator_symbols(symbols), [])
+        # Unrelated hunk content is fine — nothing finer to discriminate by
+        off = off_scope_edits(
+            ["src/a.py"],
+            cl,
+            diff_by_file={"src/a.py": "print('hello')\n"},
+        )
+        self.assertEqual(off, [])
 
     def test_empty_scope_checklist_cannot_judge_off_scope(self):
         cl = TaskChecklist(
