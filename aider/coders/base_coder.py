@@ -1154,6 +1154,14 @@ class Coder:
 
             list(self.send_message(message))
 
+            # Lightweight checklist rescore for drift — independent of the
+            # clean-exit-only full uncertainty pipeline. Without this,
+            # multi-reflection sessions never update last_evidence/status.
+            try:
+                self._rescore_checklist_for_drift()
+            except Exception:
+                pass
+
             try:
                 self._record_drift_reflection_turn(
                     was_reflection=was_reflection,
@@ -1516,6 +1524,44 @@ class Coder:
                 self.io.tool_output("")
         except Exception:
             pass
+
+    def _rescore_checklist_for_drift(self) -> None:
+        """Bind evidence + rescore checklist during reflections (drift only).
+
+        Does not run edge-case detectors, create nodes, or print summaries —
+        that stays behind the clean-exit ``_run_uncertainty_analysis`` gate.
+        """
+        eng = getattr(self, "uncertainty_engine", None)
+        checklist = getattr(getattr(eng, "ctx", None), "checklist", None)
+        if not eng or not checklist:
+            return
+        last_send = getattr(self, "_last_send_edited_files", None)
+        edited = set(last_send or ())
+        if not edited:
+            # Idle lint/prose reflections: re-score against session edits
+            edited = set(self.aider_edited_files or ())
+        if not edited:
+            return
+        rels = []
+        for path in edited:
+            try:
+                rels.append(self.get_rel_fname(path))
+            except Exception:
+                rels.append(str(path))
+        try:
+            repo = getattr(self, "repo", None)
+            if repo is not None and hasattr(repo, "get_diffs"):
+                eng.record_diff(repo.get_diffs(fnames=list(edited)) or "")
+        except Exception:
+            pass
+        eng.rescore_checklist_light(
+            rels,
+            tests_passed=getattr(self, "test_outcome", None),
+        )
+        self._drift_debug(
+            "rescored checklist for drift "
+            f"(files={len(rels)} n_reflections={getattr(self, 'num_reflections', 0)})"
+        )
 
     def _record_drift_reflection_turn(
         self,
