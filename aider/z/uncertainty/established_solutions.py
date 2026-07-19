@@ -19,6 +19,17 @@ _REPO_WIDE_STANDARD_CATEGORIES = frozenset(
     {"lru_cache", "priority_queue", "concurrency_primitives"}
 )
 
+# Pure-shape invention regexes (digit-dot / word@word / …) — require a domain
+# anchor via request_regex so semver ≠ IPv4 and SSH user@host ≠ email.
+_SHAPE_DOMAIN_ANCHOR_CATEGORIES = frozenset(
+    {
+        "ipv4_parsing",
+        "email_parsing",
+        "url_parsing",
+        "datetime_parsing",
+    }
+)
+
 _SKIP_DIR_PARTS = frozenset(
     {
         "node_modules",
@@ -90,9 +101,13 @@ ESTABLISHED_SOLUTIONS: Tuple[EstablishedSolutionCategory, ...] = (
             "JS/TS: prefer a vetted IP library over a custom regex",
         ),
         request_regex=re.compile(
-            r"(?i)\b(ipv4|ip\s*v4|ip[- ]?address|dotted[- ]quad|"
+            r"(?i)(?:"
+            r"\b(?:ipv4|ip\s*v4|ip[- ]?address|dotted[- ]quad|"
             r"redact(?:ion)?\s+(?:of\s+)?ip|ip\s+redact|"
             r"validate\s+ip|parse\s+ip|ip\s+validat)\b"
+            # Identifier forms: _IPV4, redact_ipv4, validate_ip, ip_address
+            r"|_?ipv4\b|\bipv4_|\bvalidate_ip\b|\bparse_ip\b|\bip_address\b"
+            r")"
         ),
         invention_regex=re.compile(
             r"(?:"
@@ -120,7 +135,12 @@ ESTABLISHED_SOLUTIONS: Tuple[EstablishedSolutionCategory, ...] = (
             "Prefer RFC-aware libraries over a single regex",
         ),
         request_regex=re.compile(
-            r"(?i)\b(email\s*(?:address|validat|pars)|validate\s+email|parse\s+email)\b"
+            r"(?i)(?:"
+            r"\b(?:email\s*(?:address|validat|pars)|validate\s+email|"
+            r"parse\s+email)\b"
+            r"|\bvalidate_email\b|\bparse_email\b|\bemail_address\b"
+            r"|\bcheck_email\b"
+            r")"
         ),
         invention_regex=re.compile(
             r"re\.(?:compile|match|search|fullmatch)\s*\([^)]*@"
@@ -128,9 +148,9 @@ ESTABLISHED_SOLUTIONS: Tuple[EstablishedSolutionCategory, ...] = (
             r"r?['\"][^'\"]*@[^'\"]*\\.[^'\"]*['\"]"
         ),
         standard_import_regex=re.compile(
-            r"(?i)\b(?:from\s+email(?:\.utils)?\s+import|import\s+email|"
-            r"email\.utils\.parseaddr|import\s+email_validator|"
-            r"validate_email\s*\()\b"
+            r"(?i)\b(?:from\s+email(?:\.utils)?\s+import|import\s+email(?:\.utils)?|"
+            r"email\.utils\.parseaddr|from\s+email_validator\s+import|"
+            r"import\s+email_validator|email_validator\.validate_email)\b"
         ),
     ),
     EstablishedSolutionCategory(
@@ -496,6 +516,16 @@ def scan_invention_in_diff(
         # (hand-rolled re.compile(r"...ipv4...") lives inside quotes).
         m = cat.invention_regex.search(blob)
         if not m:
+            continue
+        # Shape-only categories need a domain anchor: the surrounding diff must
+        # also look like it's actually about this domain, not just share the shape
+        # (semver ≠ IPv4, SSH user@host ≠ email). Class/function-name categories
+        # (lru_cache, …) already self-anchor via invention_regex — skip this.
+        if (
+            cat.category_id in _SHAPE_DOMAIN_ANCHOR_CATEGORIES
+            and cat.request_regex
+            and not cat.request_regex.search(blob)
+        ):
             continue
         hits.append(
             EstablishedSolutionHit(

@@ -121,7 +121,7 @@ class EstablishedTaxonomyTest(unittest.TestCase):
             "+++ b/x.py\n"
             "@@ -0,0 +1,2 @@\n"
             "+import re\n"
-            '+PAT = re.compile(r"\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}")\n'
+            '+_IPV4 = re.compile(r"\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}")\n'
         )
         hits = scan_invention_in_diff(diff)
         self.assertTrue(any(h.category_id == "ipv4_parsing" for h in hits), hits)
@@ -167,6 +167,44 @@ class EstablishedTaxonomyTest(unittest.TestCase):
             quiet,
         )
 
+    def test_semver_regex_not_flagged_as_ipv4(self):
+        diff = '+VERSION_RE = re.compile(r"(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})")\n'
+        hits = scan_invention_in_diff(diff)
+        self.assertFalse(
+            any(h.category_id == "ipv4_parsing" for h in hits),
+            hits,
+        )
+
+    def test_ssh_target_regex_not_flagged_as_email(self):
+        diff = '+TARGET_RE = re.compile(r"(\\w+)@([\\w.-]+)")\n'
+        hits = scan_invention_in_diff(diff)
+        self.assertFalse(
+            any(h.category_id == "email_parsing" for h in hits),
+            hits,
+        )
+
+    def test_genuine_ipv4_invention_still_flagged(self):
+        diff = (
+            "+def validate_ip(addr):\n"
+            '+    return re.match(r"(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})", addr)\n'
+        )
+        hits = scan_invention_in_diff(diff)
+        self.assertTrue(
+            any(h.category_id == "ipv4_parsing" for h in hits),
+            hits,
+        )
+
+    def test_genuine_email_invention_still_flagged(self):
+        diff = (
+            "+def validate_email(addr):\n"
+            '+    return re.match(r"[\\w.]+@[\\w.]+", addr)\n'
+        )
+        hits = scan_invention_in_diff(diff)
+        self.assertTrue(
+            any(h.category_id == "email_parsing" for h in hits),
+            hits,
+        )
+
 
 class EstablishedPlanningTest(unittest.TestCase):
     def test_ipv4_request_triggers_gated_plan(self):
@@ -205,7 +243,7 @@ class EstablishedDetectorTest(unittest.TestCase):
             "+++ b/x.py\n"
             "@@ -0,0 +1,3 @@\n"
             "+import re\n"
-            '+PAT = re.compile(r"\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}")\n'
+            '+_IPV4 = re.compile(r"\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}")\n'
         )
         sig = collect_base_signals(["x.py"])
         nodes = detect_established_solution_gaps(sig, diff=diff, plan=None)
@@ -222,7 +260,7 @@ class EstablishedDetectorTest(unittest.TestCase):
             "--- a/x.py\n"
             "+++ b/x.py\n"
             "@@ -0,0 +1,2 @@\n"
-            '+PAT = re.compile(r"\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}")\n'
+            '+_IPV4 = re.compile(r"\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}")\n'
         )
         plan = PlanningArtifact(
             task_id="t1",
@@ -249,7 +287,7 @@ class EstablishedDetectorTest(unittest.TestCase):
             "--- a/x.py\n"
             "+++ b/x.py\n"
             "@@ -0,0 +1,2 @@\n"
-            '+PAT = re.compile(r"\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}")\n'
+            '+_IPV4 = re.compile(r"\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}")\n'
         )
         plan = PlanningArtifact(
             task_id="t1",
