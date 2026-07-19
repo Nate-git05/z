@@ -220,6 +220,9 @@ class RequirementItem:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     # product | process | verification | decision | documentation | quality | external_assumption
     kind: str = "product"
+    # Latest ItemEvidence from rescore (transient; not serialized). Used by
+    # drift detection to spot evidence stagnation on Partial-forever items.
+    last_evidence: Any = field(default=None, repr=False, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {

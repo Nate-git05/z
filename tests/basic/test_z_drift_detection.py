@@ -12,15 +12,20 @@ from unittest.mock import MagicMock
 _HOME = tempfile.mkdtemp(prefix="z_drift_")
 os.environ["Z_HOME"] = _HOME
 
+from aider.z.uncertainty.checklist import ItemEvidence  # noqa: E402
 from aider.z.uncertainty.drift import (  # noqa: E402
     ReflectionTurn,
     checklist_progressed,
+    checklist_scope,
     confirm_prompt,
     detect_drift,
+    evidence_snapshot,
+    evidence_stagnant,
     file_in_checklist_scope,
     format_refocus_message,
     is_complete_task_creep,
     make_drift_observed_node,
+    multi_turn_stagnant,
     off_scope_edits,
     status_snapshot,
 )
@@ -170,8 +175,6 @@ class ScopeMatchingTest(unittest.TestCase):
 
     def test_regression_reopens_file_scope(self):
         """If rescoring drops Fully → Partial, the file is in-scope again."""
-        from aider.z.uncertainty.drift import checklist_scope
-
         cl = TaskChecklist(
             task_id="lru",
             title="Fix LRU leak",
@@ -189,6 +192,109 @@ class ScopeMatchingTest(unittest.TestCase):
         paths, _ = checklist_scope(cl)
         self.assertIn("src/lru_cache.h", paths)
         self.assertEqual(off_scope_edits(["src/lru_cache.h"], cl), [])
+
+    def test_evidence_stagnation_excludes_partial_forever_item(self):
+        """No-test repos: Partial forever + stagnant evidence → leave scope."""
+        from aider.z.uncertainty.checklist import rescore_checklist_with_evidence
+
+        item = RequirementItem(
+            id="fix",
+            text="Fix memory leak in src/lru_cache.h under concurrent eviction",
+            status=STATUS_PARTIAL,
+            kind="product",
+        )
+        cl = TaskChecklist(task_id="lru", title="Fix LRU leak", items=[item])
+        ev = ItemEvidence(
+            item_id="fix",
+            item_text=item.text,
+            kind="product",
+            file_hits=["src/lru_cache.h"],
+            symbol_hits=["LruCache"],
+            # no test_hits → cannot reach Fully
+        )
+        rescore_checklist_with_evidence(cl, [ev])
+        self.assertEqual(item.status, STATUS_PARTIAL)
+        self.assertIsNotNone(item.last_evidence)
+
+        before = evidence_snapshot(cl)
+        # Same evidence again → stagnant
+        rescore_checklist_with_evidence(cl, [ev])
+        self.assertEqual(evidence_stagnant(before, cl), {"fix"})
+
+        # Single-turn stagnant is not enough to leave scope
+        self.assertIn(
+            "src/lru_cache.h",
+            checklist_scope(cl, open_only=True, stagnant_ids=set())[0],
+        )
+        # After 2-turn window, exclude → file no longer anchors
+        paths, _ = checklist_scope(cl, open_only=True, stagnant_ids={"fix"})
+        self.assertNotIn("src/lru_cache.h", paths)
+        off = off_scope_edits(
+            ["src/lru_cache.h"], cl, stagnant_ids={"fix"}
+        )
+        self.assertEqual(off, ["src/lru_cache.h"])
+
+        # detect_drift with two off-scope stagnant turns still fires while Partial
+        history = [
+            ReflectionTurn(
+                files={"src/lru_cache.h"},
+                progressed=False,
+                off_scope=["src/lru_cache.h"],
+                stagnant_ids={"fix"},
+            ),
+            ReflectionTurn(
+                files={"src/lru_cache.h"},
+                progressed=False,
+                off_scope=["src/lru_cache.h"],
+                stagnant_ids={"fix"},
+            ),
+        ]
+        signal = detect_drift(history, cl)
+        self.assertIsNotNone(signal)
+        self.assertFalse(is_complete_task_creep(signal))  # still Partial open
+        self.assertIn("lru_cache.h", ",".join(signal.off_scope_files))
+
+    def test_multi_turn_stagnant_requires_window(self):
+        history = [
+            ReflectionTurn(stagnant_ids={"a"}),
+        ]
+        self.assertEqual(multi_turn_stagnant(history, {"a"}, window=2), {"a"})
+        self.assertEqual(multi_turn_stagnant([], {"a"}, window=2), set())
+        history2 = [
+            ReflectionTurn(stagnant_ids={"a"}),
+            ReflectionTurn(stagnant_ids={"b"}),
+        ]
+        # Intersection across prior+current: prior has a, current has a → {a}
+        # with history[-1:] = last turn only for window-1
+        self.assertEqual(
+            multi_turn_stagnant(history2[-1:], {"a"}, window=2), set()
+        )
+        self.assertEqual(
+            multi_turn_stagnant(history2[-1:], {"b"}, window=2), {"b"}
+        )
+
+    def test_evidence_growth_clears_stagnation(self):
+        item = RequirementItem(
+            id="fix",
+            text="Fix memory leak in src/lru_cache.h",
+            status=STATUS_PARTIAL,
+            kind="product",
+        )
+        cl = TaskChecklist(task_id="lru", title="t", items=[item])
+        item.last_evidence = ItemEvidence(
+            item_id="fix",
+            item_text=item.text,
+            file_hits=["src/lru_cache.h"],
+            symbol_hits=["LruCache"],
+        )
+        before = evidence_snapshot(cl)
+        item.last_evidence = ItemEvidence(
+            item_id="fix",
+            item_text=item.text,
+            file_hits=["src/lru_cache.h", "src/lru_cache.cpp"],
+            symbol_hits=["LruCache", "evict"],
+        )
+        self.assertEqual(evidence_stagnant(before, cl), set())
 
 
 class ProgressAndDetectTest(unittest.TestCase):
