@@ -164,6 +164,48 @@ class ExhaustiveRegistryTest(unittest.TestCase):
             evidence[0].evidence_notes,
         )
 
+    def test_checklist_rescore_survives_stray_brace_in_model_response(self):
+        """Incidental braces in model prose must not discard a valid JSON score.
+
+        Fail-closed ceilings may keep status at mechanical Not Addressed when
+        the model claims Partial/Full without evidence — but the parsed
+        ``missing`` field must still be applied. The old greedy ``{...}``
+        regex raised JSONDecodeError and silently left evidence untouched.
+        """
+        checklist = TaskChecklist(
+            task_id="t1",
+            title="Concurrency",
+            items=[
+                RequirementItem(
+                    id="req_1",
+                    text="Protect shared state with a mutex",
+                    kind="product",
+                    status="Not Addressed",
+                )
+            ],
+        )
+        evidence = bind_evidence(
+            checklist,
+            files_changed=["sync.cpp"],
+            file_contents={"sync.cpp": "void lock() {}\n"},
+            symbols=[],
+            test_files=[],
+        )
+        prior_missing = evidence[0].missing
+
+        def fake_model(_prompt: str) -> str:
+            return (
+                "The mutex pattern here uses std::lock_guard{mtx} for safety.\n\n"
+                '{"items": [{"id": "req_1", "status": "Partially Addressed", '
+                '"evidence": ["lock present"], "missing": "no test yet"}]}'
+            )
+
+        rescore_checklist_with_model(
+            checklist, evidence, model_complete=fake_model
+        )
+        self.assertEqual(evidence[0].missing, "no test yet")
+        self.assertNotEqual(evidence[0].missing, prior_missing)
+
     def test_decision_requires_decision_hits_not_process_log(self):
         ev = ItemEvidence(
             item_id="1",
@@ -260,6 +302,59 @@ class AbsorptionTaxonomyTest(unittest.TestCase):
         self.assertTrue(abs_nodes)
         self.assertFalse(abs_nodes[0].signals.get("absorption_hard_block"))
         self.assertEqual(_effective_gate_tier(abs_nodes[0]), Tier.MEDIUM)
+
+    def test_getattr_guidance_presents_both_explanations(self):
+        """Do not assert incomplete-wiring as fact — keep High hard-block."""
+        diff = (
+            "diff --git a/event_queue.py b/event_queue.py\n"
+            "--- a/event_queue.py\n"
+            "+++ b/event_queue.py\n"
+            "@@ -1,6 +1,9 @@\n"
+            " class Event:\n"
+            "-    def __init__(self, name):\n"
+            '+    def __init__(self, name, priority="normal"):\n'
+            "         self.name = name\n"
+            "+        self.priority = priority\n"
+            " def process(event):\n"
+            '+    return getattr(event, "priority", "normal")\n'
+        )
+        contents = {
+            "event_queue.py": (
+                "class Event:\n"
+                '    def __init__(self, name, priority="normal"):\n'
+                "        self.name = name\n"
+                "        self.priority = priority\n"
+                "def process(event):\n"
+                '    return getattr(event, "priority", "normal")\n'
+            )
+        }
+        sig = collect_base_signals(["event_queue.py"])
+        nodes = detect_failure_absorption(
+            sig, file_contents=contents, diff=diff
+        )
+        getattr_nodes = [
+            n
+            for n in nodes
+            if n.signals.get("absorption_pattern_id") == "getattr_new_param_default"
+        ]
+        self.assertTrue(getattr_nodes)
+        node = getattr_nodes[0]
+        self.assertTrue(node.signals.get("absorption_hard_block"))
+        self.assertEqual(node.risk_tier, Tier.HIGH)
+        blob = " ".join(
+            [
+                node.explanation or "",
+                node.why_uncertain or "",
+                node.suggested_fix or "",
+                node.suggested_prompt or "",
+            ]
+        )
+        self.assertIn("incomplete wiring", blob.lower())
+        self.assertIn("compatibility", blob.lower())
+        self.assertNotIn(
+            "Fix the outdated test helper/fixture instead of weakening the contract",
+            node.explanation or "",
+        )
 
 
 if __name__ == "__main__":

@@ -96,7 +96,11 @@ BUG_CONCEPTS: Tuple[BugConcept, ...] = (
             r"(?x)"
             r"\b(?:free|delete|delete\s*\[\]|Drop::drop|mem::drop|Box::from_raw)\b"
             r"|\b(?:std::move|std::unique_ptr|shared_ptr|weak_ptr)\b"
-            r"|\.reset\s*\(|take\s*\(",
+            r"|\.reset\s*\(|take\s*\("
+            # Handle + generation-counter indirection (slotmaps / registries / ECS)
+            r"|\.resolve\s*\("
+            r"|\w*Handle\b"
+            r"|generation\s*(?:count|id|counter)",
             re.IGNORECASE,
         ),
         symptom_keywords=(
@@ -215,8 +219,14 @@ BUG_CONCEPTS: Tuple[BugConcept, ...] = (
         description="Allocation without a matching free/close on all paths.",
         evidence_regex=re.compile(
             r"(?x)"
+            r"(?:"
             r"\b(?:free|delete|Close|close|Dispose|defer\s+\w+\.Close|"
-            r"unique_ptr|shared_ptr|RAII|contextlib|with\s+)\b",
+            r"unique_ptr|shared_ptr|RAII|contextlib|with\s+|"
+            r"erase|pop_back|pop_front|remove)\b"
+            # .clear() can't sit inside \b...\b — ')' is non-word so the
+            # trailing boundary never matches.
+            r"|\.clear\s*\("
+            r")",
             re.IGNORECASE,
         ),
         symptom_keywords=(

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple
 
 import yaml
 
@@ -58,6 +58,8 @@ def _dump_frontmatter(skill: Skill) -> str:
         "verification_method": skill.verification_method or "",
         "language": skill.language or "",
     }
+    if skill.grounding_miss_reason:
+        meta["grounding_miss_reason"] = skill.grounding_miss_reason
     if skill.grounded_at:
         meta["grounded_at"] = skill.grounded_at
     if skill.content_hash:
@@ -153,6 +155,9 @@ def skill_from_markdown(text: str, *, filename: Optional[str] = None) -> Skill:
         fix_technique=str(meta.get("fix_technique") or "").strip(),
         verification_method=str(meta.get("verification_method") or "").strip(),
         language=language or (languages[0] if languages else ""),
+        grounding_miss_reason=(
+            str(meta.get("grounding_miss_reason") or "").strip() or None
+        ),
     )
 
 
@@ -204,6 +209,50 @@ class LocalSkillStore:
         for path in self.root.glob(f"*-{skill_id[:8]}.md"):
             return self.read_file(path)
         return None
+
+    def resolve_by_name(self, name: str) -> Tuple[Optional[Skill], List[Skill]]:
+        """Resolve by id/filename/remote_id (unique) or title (may collide).
+
+        Returns ``(skill, [])`` unambiguous, ``(None, [])`` no match, or
+        ``(None, candidates)`` when multiple skills share a title and none/multiple
+        are draft — caller must ask for an explicit id.
+
+        When exactly one same-titled skill is draft, returns that draft plus the
+        full candidate list so accept/reject can disclose the collision.
+        """
+        name = (name or "").strip()
+        if not name:
+            return None, []
+
+        # id / filename / remote_id — inherently unique
+        for skill in self.list_skills():
+            if skill.id == name or skill.filename == f"{name}.md":
+                return skill, []
+            if skill.remote_id and skill.remote_id == name:
+                return skill, []
+        path = self.root / f"{name}.md"
+        if path.is_file():
+            skill = self.read_file(path)
+            return skill, []
+        for path in self.root.glob(f"*-{name[:8]}.md"):
+            skill = self.read_file(path)
+            if skill:
+                return skill, []
+
+        # Title match — may collide, so collect every match first.
+        title_matches = [
+            s for s in self.list_skills() if s.title.lower() == name.lower()
+        ]
+        if not title_matches:
+            return None, []
+        if len(title_matches) == 1:
+            return title_matches[0], []
+        drafts = [
+            s for s in title_matches if (s.quality_state or "") == "draft"
+        ]
+        if len(drafts) == 1:
+            return drafts[0], title_matches  # resolved, but flag the collision
+        return None, title_matches  # genuinely ambiguous
 
     def get_by_path(self, path: str | Path) -> Optional[Skill]:
         p = Path(path)

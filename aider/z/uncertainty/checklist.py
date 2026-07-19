@@ -1390,10 +1390,11 @@ def rescore_checklist_with_model(
         raw = model_complete(prompt)
         if not raw:
             return checklist
-        m = re.search(r"\{[\s\S]*\}", raw)
-        if not m:
+        from aider.z.llm_json import extract_json_from_response
+
+        data = extract_json_from_response(raw)
+        if not data:
             return checklist
-        data = json.loads(m.group(0))
         by_ev = {e.item_id: e for e in evidence}
         for row in data.get("items") or []:
             item = next((i for i in checklist.items if i.id == row.get("id")), None)

@@ -53,6 +53,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show per-detector disposition rates (ignored / force-commit / resolved)",
     )
 
+    taxonomy = sub.add_parser(
+        "taxonomy",
+        help="Bug-concept taxonomy blind-spot candidates (read-only)",
+    )
+    taxonomy_sub = taxonomy.add_subparsers(dest="taxonomy_command")
+    review = taxonomy_sub.add_parser(
+        "review",
+        help="List evidence_regex gap candidates confirmed across multiple skills",
+    )
+    review.add_argument(
+        "--min-count",
+        type=int,
+        default=2,
+        help="Minimum independently confirmed skills per term (default: 2)",
+    )
+
     skill = sub.add_parser("skill", help="Reusable skills (paste, generate, auto-retrieve)")
     skill_sub = skill.add_subparsers(dest="skill_command")
 
@@ -141,6 +157,7 @@ def _print_help() -> None:
         "  z skill list\n"
         "  z skill show stripe\n"
         "  z skill accept stripe\n"
+        "  z taxonomy review\n"
         "  z uncertainty stats\n"
         "  z --model sonnet\n"
     )
@@ -178,6 +195,7 @@ def main(argv: list[str] | None = None) -> int | None:
         "models",
         "mcp",
         "skill",
+        "taxonomy",
         "uncertainty",
     }
 
@@ -214,8 +232,23 @@ def dispatch(args) -> int:
         return cmd_mcp(io, args)
     if args.command == "skill":
         return cmd_skill(io, args)
+    if args.command == "taxonomy":
+        return cmd_taxonomy(io, args)
     if args.command == "uncertainty":
         return cmd_uncertainty(io, args)
+    return 1
+
+
+def cmd_taxonomy(io, args) -> int:
+    sub = getattr(args, "taxonomy_command", None) or "review"
+    if sub == "review":
+        from aider.z.skills.taxonomy_candidates import format_taxonomy_review
+
+        min_count = int(getattr(args, "min_count", 2) or 2)
+        io.tool_output(format_taxonomy_review(min_count=min_count).rstrip())
+        return 0
+    io.tool_error(f"Unknown taxonomy subcommand: {sub}")
+    io.tool_output("Usage: z taxonomy review [--min-count N]")
     return 1
 
 

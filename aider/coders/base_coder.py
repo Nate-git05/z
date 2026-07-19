@@ -1162,6 +1162,14 @@ class Coder:
             except Exception:
                 pass
 
+            # Cheap deterministic detectors (absorption / siblings / established
+            # solutions) — same reflection-safe pattern. Full analyze_edits
+            # (incl. model-backed edge cases) still runs only on clean exit.
+            try:
+                self._run_cheap_detectors_for_reflection()
+            except Exception:
+                pass
+
             try:
                 self._record_drift_reflection_turn(
                     was_reflection=was_reflection,
@@ -1356,6 +1364,17 @@ class Coder:
         except Exception:
             pass
 
+    def _detector_debug_enabled(self) -> bool:
+        from aider.z.uncertainty.detector_debug import detector_debug_enabled
+
+        return detector_debug_enabled()
+
+    def _detector_debug(self, msg: str) -> None:
+        """Env-gated cheap-detector instrumentation — print only, no behavior change."""
+        from aider.z.uncertainty.detector_debug import detector_debug
+
+        detector_debug(msg, io=getattr(self, "io", None))
+
     def _session_start_commit(self) -> Optional[str]:
         """HEAD SHA recorded at the start of this run_one() (if any)."""
         before = getattr(self, "commit_before_message", None) or []
@@ -1533,6 +1552,34 @@ class Coder:
         except Exception:
             pass
 
+    def _reflection_edited_rels(self) -> list[str]:
+        """Repo-relative paths touched this send (fallback: session edits)."""
+        last_send = getattr(self, "_last_send_edited_files", None)
+        used_fallback = not bool(last_send)
+        edited = set(last_send or ())
+        if not edited:
+            edited = set(self.aider_edited_files or ())
+        if not edited:
+            self._detector_debug(
+                f"_last_send_edited_files={sorted(last_send or []) or '[]'} "
+                f"aider_edited_files={sorted(self.aider_edited_files or []) or '[]'} "
+                f"rels=[] (empty)"
+            )
+            return []
+        rels = []
+        for path in edited:
+            try:
+                rels.append(self.get_rel_fname(path))
+            except Exception:
+                rels.append(str(path))
+        self._detector_debug(
+            f"_last_send_edited_files={sorted(last_send or []) or '[]'} "
+            f"used_session_fallback={used_fallback} "
+            f"aider_edited_files={sorted(self.aider_edited_files or []) or '[]'} "
+            f"rels={sorted(rels) or '[]'}"
+        )
+        return rels
+
     def _rescore_checklist_for_drift(self) -> None:
         """Bind evidence + rescore checklist during reflections (drift only).
 
@@ -1543,23 +1590,16 @@ class Coder:
         checklist = getattr(getattr(eng, "ctx", None), "checklist", None)
         if not eng or not checklist:
             return
-        last_send = getattr(self, "_last_send_edited_files", None)
-        edited = set(last_send or ())
-        if not edited:
-            # Idle lint/prose reflections: re-score against session edits
-            edited = set(self.aider_edited_files or ())
-        if not edited:
+        rels = self._reflection_edited_rels()
+        if not rels:
             return
-        rels = []
-        for path in edited:
-            try:
-                rels.append(self.get_rel_fname(path))
-            except Exception:
-                rels.append(str(path))
+        edited_abs = getattr(self, "_last_send_edited_files", None) or set(
+            self.aider_edited_files or ()
+        )
         try:
             repo = getattr(self, "repo", None)
-            if repo is not None and hasattr(repo, "get_diffs"):
-                eng.record_diff(repo.get_diffs(fnames=list(edited)) or "")
+            if repo is not None and hasattr(repo, "get_diffs") and edited_abs:
+                eng.record_diff(repo.get_diffs(fnames=list(edited_abs)) or "")
         except Exception:
             pass
         eng.rescore_checklist_light(
@@ -1569,6 +1609,59 @@ class Coder:
         self._drift_debug(
             "rescored checklist for drift "
             f"(files={len(rels)} n_reflections={getattr(self, 'num_reflections', 0)})"
+        )
+
+    def _run_cheap_detectors_for_reflection(self) -> None:
+        """Run deterministic detectors while reflections are still pending.
+
+        Closes the gap where exhaustion / never-clean-exit tasks skipped
+        ``analyze_edits`` entirely — so absorption / sibling / established-
+        solution checks never ran. Does not invoke model-backed edge cases.
+        """
+        eng = getattr(self, "uncertainty_engine", None)
+        if not eng:
+            self._detector_debug(
+                f"no uncertainty_engine, skipping cheap detector pass "
+                f"(n_reflections={getattr(self, 'num_reflections', 0)})"
+            )
+            return
+        rels = self._reflection_edited_rels()
+        n_ref = getattr(self, "num_reflections", 0)
+        self._detector_debug(
+            f"rels={sorted(rels) or '[]'} len={len(rels)} n_reflections={n_ref}"
+        )
+        if not rels:
+            self._detector_debug(
+                f"rels empty, skipping cheap detector pass "
+                f"(n_reflections={n_ref})"
+            )
+            return
+        edited_abs = getattr(self, "_last_send_edited_files", None) or set(
+            self.aider_edited_files or ()
+        )
+        try:
+            repo = getattr(self, "repo", None)
+            if repo is not None and hasattr(repo, "get_diffs") and edited_abs:
+                eng.record_diff(repo.get_diffs(fnames=list(edited_abs)) or "")
+        except Exception:
+            pass
+        self._detector_debug(
+            f"calling analyze_edits(cheap_only=True) "
+            f"rels={sorted(rels) or '[]'} n_reflections={n_ref}"
+        )
+        new_nodes = eng.analyze_edits(
+            rels,
+            tests_passed=getattr(self, "test_outcome", None),
+            run_gap_analysis=False,
+            cheap_only=True,
+        )
+        try:
+            n_nodes = len(new_nodes or [])
+        except TypeError:
+            n_nodes = 0
+        self._detector_debug(
+            f"analyze_edits returned n_nodes={n_nodes} "
+            f"n_reflections={n_ref}"
         )
 
     def _record_drift_reflection_turn(

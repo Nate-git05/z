@@ -187,6 +187,121 @@ class SiblingCompanionTest(unittest.TestCase):
             self.assertTrue(gaps)
             self.assertTrue(any(g.companion_file.endswith("__init__.py") for g in gaps))
 
+    def test_shared_base_class_not_flagged_as_missing_registration(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            plugins = root / "plugins"
+            plugins.mkdir()
+            (plugins / "base_plugin.py").write_text(
+                "class BasePlugin:\n"
+                "    def run(self):\n"
+                "        raise NotImplementedError\n",
+                encoding="utf-8",
+            )
+            (plugins / "foo_plugin.py").write_text(
+                "from plugins.base_plugin import BasePlugin\n\n"
+                "class FooPlugin(BasePlugin):\n"
+                "    def run(self):\n"
+                "        return 'foo'\n",
+                encoding="utf-8",
+            )
+            (plugins / "bar_plugin.py").write_text(
+                "from plugins.base_plugin import BasePlugin\n\n"
+                "class BarPlugin(BasePlugin):\n"
+                "    def run(self):\n"
+                "        return 'bar'\n",
+                encoding="utf-8",
+            )
+            (plugins / "baz_plugin.py").write_text(
+                "from plugins.base_plugin import BasePlugin\n\n"
+                "class BazPlugin(BasePlugin):\n"
+                "    def run(self):\n"
+                "        return 'baz'\n",
+                encoding="utf-8",
+            )
+            (plugins / "registry.py").write_text(
+                "from plugins.foo_plugin import FooPlugin\n"
+                "from plugins.bar_plugin import BarPlugin\n"
+                "from plugins.baz_plugin import BazPlugin\n\n"
+                "PLUGINS = {'foo': FooPlugin, 'bar': BarPlugin, 'baz': BazPlugin}\n",
+                encoding="utf-8",
+            )
+            diff = (
+                "diff --git a/plugins/base_plugin.py b/plugins/base_plugin.py\n"
+                "new file mode 100644\n"
+                "--- /dev/null\n"
+                "+++ b/plugins/base_plugin.py\n"
+                "@@ -0,0 +1,3 @@\n"
+                "+class BasePlugin:\n"
+                "+    def run(self):\n"
+                "+        raise NotImplementedError\n"
+            )
+            gaps = find_sibling_companion_gaps(
+                root,
+                new_file="plugins/base_plugin.py",
+                sibling_matches=[
+                    "plugins/foo_plugin.py",
+                    "plugins/bar_plugin.py",
+                    "plugins/baz_plugin.py",
+                ],
+                diff=diff,
+            )
+            self.assertEqual(gaps, [])
+
+    def test_genuine_new_peer_still_flagged_when_missing_registration(self):
+        """Regression: shared-dependency suppress must not disable this family."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            plugins = root / "plugins"
+            plugins.mkdir()
+            (plugins / "foo_plugin.py").write_text(
+                "class FooPlugin:\n    def run(self):\n        return 'foo'\n",
+                encoding="utf-8",
+            )
+            (plugins / "bar_plugin.py").write_text(
+                "class BarPlugin:\n    def run(self):\n        return 'bar'\n",
+                encoding="utf-8",
+            )
+            (plugins / "baz_plugin.py").write_text(
+                "class BazPlugin:\n    def run(self):\n        return 'baz'\n",
+                encoding="utf-8",
+            )
+            (plugins / "registry.py").write_text(
+                "from plugins.foo_plugin import FooPlugin\n"
+                "from plugins.bar_plugin import BarPlugin\n"
+                "from plugins.baz_plugin import BazPlugin\n\n"
+                "PLUGINS = {'foo': FooPlugin, 'bar': BarPlugin, 'baz': BazPlugin}\n",
+                encoding="utf-8",
+            )
+            (plugins / "qux_plugin.py").write_text(
+                "class QuxPlugin:\n    def run(self):\n        return 'qux'\n",
+                encoding="utf-8",
+            )
+            diff = (
+                "diff --git a/plugins/qux_plugin.py b/plugins/qux_plugin.py\n"
+                "new file mode 100644\n"
+                "--- /dev/null\n"
+                "+++ b/plugins/qux_plugin.py\n"
+                "@@ -0,0 +1,3 @@\n"
+                "+class QuxPlugin:\n"
+                "+    def run(self):\n"
+                "+        return 'qux'\n"
+            )
+            gaps = find_sibling_companion_gaps(
+                root,
+                new_file="plugins/qux_plugin.py",
+                sibling_matches=[
+                    "plugins/foo_plugin.py",
+                    "plugins/bar_plugin.py",
+                    "plugins/baz_plugin.py",
+                ],
+                diff=diff,
+            )
+            self.assertTrue(
+                any(g.companion_file == "plugins/registry.py" for g in gaps),
+                gaps,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

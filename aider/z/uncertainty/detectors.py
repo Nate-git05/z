@@ -1854,10 +1854,17 @@ def detect_failure_absorption(
     """
     from .absorption_taxonomy import ABSORPTION_TAXONOMY, scan_failure_absorption
     from .context import is_scaffold_file
+    from .detector_debug import detector_debug
 
     nodes: List[UncertaintyNode] = []
     new_params = _new_params_from_diff(diff)
+    detector_debug(
+        f"absorption new_params={sorted(new_params) or '[]'} "
+        f"diff_len={len(diff or '')}"
+    )
     pattern_by_id = {p.pattern_id: p for p in ABSORPTION_TAXONOMY}
+    # Per-file getattr match stats for the zero-nodes summary line
+    getattr_hits_by_file: dict[str, dict[str, object]] = {}
 
     # --- getattr_new_param_default: refine with new-params cross-check --------
     # Still uses file_contents so we catch getattr even when the helper line
@@ -1869,11 +1876,26 @@ def detect_failure_absorption(
             rel = fpath.replace("\\", "/")
             if any(p in rel for p in ("/tests/", "test_", "_test.py", "conftest.py")):
                 continue
+            raw_matches = list(_GETATTR_DEFAULT_RE.finditer(text))
             hits = []
-            for m in _GETATTR_DEFAULT_RE.finditer(text):
+            for m in raw_matches:
                 attr = _normalize_param_name(m.group(1))
                 if attr in new_params:
                     hits.append(attr)
+            getattr_hits_by_file[rel] = {
+                "raw_matches": len(raw_matches),
+                "hits": list(hits),
+                "raw_attrs": [
+                    _normalize_param_name(m.group(1)) for m in raw_matches
+                ],
+            }
+            detector_debug(
+                f"absorption getattr file={rel} "
+                f"raw_matches={len(raw_matches)} "
+                f"hits_after_new_params_filter={len(hits)} "
+                f"raw_attrs={[_normalize_param_name(m.group(1)) for m in raw_matches]} "
+                f"hits={hits}"
+            )
             if not hits:
                 continue
             uniq = sorted(set(hits))
@@ -1884,30 +1906,42 @@ def detect_failure_absorption(
                 signals=signals,
                 summary=(
                     "Production code uses getattr(..., default) for a parameter "
-                    "this same diff just introduced — likely papering over a red test."
+                    "this same diff just introduced — confirm incomplete wiring vs "
+                    "a deliberate compatibility shim."
                 ),
                 explanation=(
-                    f"{fpath}: getattr fallback for {', '.join(uniq)}. "
-                    "Those names appear as new constructor/CLI parameters in the diff. "
-                    "Fix the outdated test helper/fixture instead of weakening the contract. "
+                    f"{fpath}: getattr fallback for {', '.join(uniq)}, matching a "
+                    "parameter this same diff just introduced. This is either "
+                    "(a) incomplete wiring — some call site should pass the new "
+                    "field explicitly but doesn't — or (b) a deliberate "
+                    "compatibility shim for values that can never go through the "
+                    "updated constructor (e.g. deserializing objects persisted "
+                    "before this field existed). Confirm which applies before "
+                    "treating this as a bug. "
                     f"[taxonomy:{pat.pattern_id if pat else 'getattr_new_param_default'}]"
                 ),
                 why_uncertain=(
-                    "A permissive default hides AttributeError from callers that should "
-                    "provide the new field (often a hand-built test args() namespace)."
+                    "Regex cannot tell incomplete wiring from a permanent "
+                    "compatibility default — both use the same getattr shape. "
+                    "A human has to distinguish them."
                 ),
                 what_could_go_wrong=(
-                    "The real bug (stale test helper / incomplete call site) stays; "
-                    "production silently accepts missing fields forever."
+                    "If (a): the real bug (stale helper / missing call site) stays "
+                    "and production silently accepts missing fields. "
+                    "If (b): removing the default breaks legitimate old payloads."
                 ),
                 suggested_fix=(
-                    "Remove the getattr default; update call sites and test helpers to "
-                    "pass the new parameter explicitly."
+                    "If (a): remove the getattr default and update the missing "
+                    "call site. If (b): this is expected — no fix needed, but "
+                    "consider a comment noting why the default is permanent, not "
+                    "temporary."
                 ),
                 suggested_prompt=(
-                    f"In {fpath}, remove getattr(..., default) for newly added "
-                    f"param(s) {', '.join(uniq)}. Update the test helper / call sites "
-                    "to include the field — do not absorb AttributeError in production."
+                    f"In {fpath}, getattr(..., default) covers newly added "
+                    f"param(s) {', '.join(uniq)}. Decide: (a) incomplete wiring "
+                    "→ remove the default and update the missing call site / "
+                    "test helper; or (b) deliberate compatibility shim → leave "
+                    "it and document why the default is permanent."
                 ),
                 files=[fpath],
                 task_id=task_id,
@@ -1992,6 +2026,11 @@ def detect_failure_absorption(
         node.confidence_tier = Tier.LOW
         nodes.append(node)
 
+    if not nodes:
+        detector_debug(
+            f"absorption scan: new_params={sorted(new_params) or '[]'}, "
+            f"getattr_hits_by_file={getattr_hits_by_file}, nodes=0"
+        )
     return nodes
 
 
@@ -2023,6 +2062,8 @@ def detect_established_solution_gaps(
     *,
     diff: str = "",
     plan: Optional[object] = None,
+    file_contents: Optional[dict[str, str]] = None,
+    root: Optional[Path] = None,
     task_id: Optional[str] = None,
     task_title: Optional[str] = None,
     created_by_session: Optional[str] = None,
@@ -2032,14 +2073,19 @@ def detect_established_solution_gaps(
     Flag diffs that invent a custom solution for a well-known problem
     (IP/email/URL/date/UUID, heaps, caches, concurrency) without evidence the
     plan considered the established approach — or without using the standard
-    in the diff itself.
+    in real code (diff / touched files / bounded repo search for some cats).
     """
     from .established_solutions import (
         plan_allows_custom_invention,
         scan_invention_in_diff,
     )
 
-    hits = scan_invention_in_diff(diff or "")
+    hits = scan_invention_in_diff(
+        diff or "",
+        file_contents=file_contents,
+        root=root,
+        focus_files=list(signals.files_changed or []),
+    )
     if not hits:
         return []
 

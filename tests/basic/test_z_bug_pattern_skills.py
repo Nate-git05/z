@@ -46,6 +46,17 @@ _ATOMIC_DIFF = (
     "+    size.store(n, std::memory_order_release);\n"
 )
 
+# LRU-style leak fix: release via container removal, not free/delete/Close.
+_CONTAINER_ERASE_DIFF = (
+    "diff --git a/src/lru_cache.h b/src/lru_cache.h\n"
+    "--- a/src/lru_cache.h\n"
+    "+++ b/src/lru_cache.h\n"
+    "@@ -40,6 +40,9 @@\n"
+    "+    // Evict oldest entries so the leaked nodes are released\n"
+    "+    entries_.pop_back();\n"
+    "+    entries_.erase(it);\n"
+)
+
 
 class CaptureGateTest(unittest.TestCase):
     def test_suggest_allows_commit_without_meaningful_pass(self):
@@ -228,6 +239,49 @@ class TaxonomyTest(unittest.TestCase):
             "diff --git a/x.py b/x.py\n+def add(a,b): return a+b\n",
         )
         self.assertFalse(ok, reason)
+
+    def test_category_grounded_on_container_erase_diff(self):
+        """resource_leak must ground on erase/pop_back, not only free/delete."""
+        ok, reason = category_grounded_in_diff(
+            "resource_leak", _CONTAINER_ERASE_DIFF
+        )
+        self.assertTrue(ok, reason)
+
+    def test_use_after_free_grounds_handle_resolve_generation_idiom(self):
+        diff = (
+            "diff --git a/widget_registry.h b/widget_registry.h\n"
+            "--- a/widget_registry.h\n"
+            "+++ b/widget_registry.h\n"
+            "@@ -10,6 +10,15 @@\n"
+            "-Widget* get_widget(int id) {\n"
+            "-    return raw_widgets[id];\n"
+            "+class WidgetHandle {\n"
+            "+public:\n"
+            "+    WidgetHandle(int id, uint32_t generation) "
+            ": id_(id), generation_(generation) {}\n"
+            "+    Widget* resolve(WidgetRegistry& registry) const {\n"
+            "+        if (registry.generation_for(id_) != generation_) {\n"
+            "+            return nullptr;\n"
+            "+        }\n"
+            "+        return registry.raw_widgets[id_];\n"
+            "+    }\n"
+            "+private:\n"
+            "+    int id_;\n"
+            "+    uint32_t generation_;\n"
+            "+};\n"
+        )
+        grounded, reason = category_grounded_in_diff("use_after_free", diff)
+        self.assertTrue(grounded, reason)
+
+    def test_use_after_free_still_grounds_classic_raii_fix(self):
+        diff = "+auto ptr = std::unique_ptr<Widget>(new Widget());\n"
+        grounded, reason = category_grounded_in_diff("use_after_free", diff)
+        self.assertTrue(grounded, reason)
+
+    def test_use_after_free_still_rejects_unrelated_diff(self):
+        diff = "+int x = compute_something(a, b);\n"
+        grounded, reason = category_grounded_in_diff("use_after_free", diff)
+        self.assertFalse(grounded, reason)
 
     def test_boost_for_matching_keywords(self):
         boosted = boost_for_category(
