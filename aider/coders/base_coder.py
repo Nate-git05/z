@@ -1175,6 +1175,27 @@ class Coder:
             if not self.reflected_message:
                 break
 
+            # Drift BEFORE exhaustion — the reflection that would otherwise
+            # trip the cap gets one last chance to redirect/stop first.
+            # Recording already happened above; this only evaluates the decision.
+            if isinstance(self.reflected_message, str) and not self.reflected_message.startswith(
+                "/"
+            ):
+                try:
+                    drift_result = self._maybe_detect_drift()
+                    if drift_result is not None:
+                        if getattr(drift_result, "stop", False):
+                            self.reflected_message = None
+                            break
+                        if drift_result.refocus_message:
+                            self.reflected_message = drift_result.refocus_message
+                            self.num_reflections += 1
+                            message = self.reflected_message
+                            # Continue as a normal reflection, not exhaustion
+                            continue
+                except Exception:
+                    pass
+
             if self.num_reflections >= self.max_reflections:
                 # Control-flow fix: do not silently drop a still-failing auto-fix
                 # loop — raise the same commit-blocked / uncertainty reporting
@@ -1228,19 +1249,6 @@ class Coder:
                     from aider.z.skills.session import note_scaffold_progress
 
                     note_scaffold_progress(root=getattr(self, "root", None))
-                except Exception:
-                    pass
-                # Drift/fixation: off-scope edits + checklist stagnation → confirm
-                try:
-                    drift_result = self._maybe_detect_drift()
-                    if drift_result is not None:
-                        if getattr(drift_result, "stop", False):
-                            # Task already complete — end the reflection loop
-                            self.reflected_message = None
-                            break
-                        if drift_result.refocus_message:
-                            message = drift_result.refocus_message
-                            self.reflected_message = drift_result.refocus_message
                 except Exception:
                     pass
 
@@ -1653,7 +1661,8 @@ class Coder:
         and/or ``stop=True`` for post-completion creep), else ``None`` (and may
         record a Medium uncertainty node on decline).
         """
-        if int(getattr(self, "num_reflections", 0) or 0) < 2:
+        # Need at least one completed reflection turn in the log (was_reflection)
+        if int(getattr(self, "num_reflections", 0) or 0) < 1:
             return None
         if getattr(self, "_drift_asked_this_task", False):
             return None
@@ -1672,6 +1681,8 @@ class Coder:
         )
 
         history = list(getattr(self, "_drift_reflection_log", None) or [])
+        if not history:
+            return None
         signal = detect_drift(history, checklist)
         if self._drift_debug_enabled():
             if signal is None:
