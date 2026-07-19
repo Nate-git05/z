@@ -11,6 +11,7 @@ _Z_HOME = tempfile.mkdtemp(prefix="z_human_unc_")
 os.environ["Z_HOME"] = _Z_HOME
 
 from aider.z.uncertainty.auto_act import (  # noqa: E402
+    _AUTO_FIXABLE,
     default_prompt_for_node,
     plan_auto_act,
     select_auto_act_targets,
@@ -232,6 +233,81 @@ class AutoActTest(unittest.TestCase):
         # Second attempt exhausted
         result2 = plan_auto_act(store, [node], attempts=1, max_attempts=1)
         self.assertIsNone(result2.reflect_message)
+
+    def _auto_node(self, node_type, *, tier=Tier.HIGH, status=NodeStatus.OPEN, **kw):
+        return UncertaintyNode(
+            id=kw.get("id", "n1"),
+            type=node_type,
+            title=kw.get("title", "t"),
+            summary=kw.get("summary", "s"),
+            risk_tier=tier,
+            confidence_tier=Tier.HIGH,
+            status=status,
+            suggested_fix=kw.get("suggested_fix", ""),
+            files_affected=kw.get("files_affected", []),
+        )
+
+    def test_established_solution_gap_now_auto_fixable(self):
+        self.assertIn(NodeType.ESTABLISHED_SOLUTION_GAP, _AUTO_FIXABLE)
+        node = self._auto_node(
+            NodeType.ESTABLISHED_SOLUTION_GAP, summary="reinvented LRU cache"
+        )
+        targets = select_auto_act_targets([node])
+        self.assertIn(node, targets)
+        prompt = default_prompt_for_node(node)
+        self.assertIn("standard approach", prompt)
+
+    def test_getattr_shortcut_and_pattern_companion_gap_auto_fixable(self):
+        for nt in (NodeType.GETATTR_SHORTCUT, NodeType.PATTERN_COMPANION_GAP):
+            node = self._auto_node(nt, summary="test", id=nt.value)
+            self.assertIn(node, select_auto_act_targets([node]))
+            prompt = default_prompt_for_node(node)
+            self.assertTrue(prompt)
+            if nt == NodeType.GETATTR_SHORTCUT:
+                self.assertIn("getattr", prompt.lower())
+            else:
+                self.assertIn("sibling", prompt.lower())
+
+    def test_dependency_fabrication_never_auto_fixable(self):
+        node = self._auto_node(
+            NodeType.DEPENDENCY_FABRICATION, summary="local shadow package"
+        )
+        self.assertNotIn(node, select_auto_act_targets([node]))
+
+    def test_sanitizer_types_never_auto_fixable(self):
+        for nt in (
+            NodeType.MEMORY_SAFETY,
+            NodeType.LEAK_ANALYSIS,
+            NodeType.CONCURRENCY_RACE,
+        ):
+            node = self._auto_node(nt, summary="test", id=nt.value)
+            self.assertNotIn(node, select_auto_act_targets([node]))
+
+    def test_ordering_prefers_original_types_but_still_includes_new_ones(self):
+        original = self._auto_node(NodeType.MISSING_TEST, id="orig", title="a")
+        new_type = self._auto_node(
+            NodeType.ESTABLISHED_SOLUTION_GAP, id="new", title="b"
+        )
+        targets = select_auto_act_targets([new_type, original], max_targets=2)
+        self.assertIn(original, targets)
+        self.assertIn(new_type, targets)
+        self.assertIs(targets[0], original)
+
+    def test_plan_auto_act_builds_reflect_message_for_new_type(self):
+        store = UncertaintyStore(repo_key="auto-act-absorption")
+        node = self._auto_node(
+            NodeType.FAILURE_ABSORPTION,
+            summary="bare except pass absorbing an error",
+            id="abs1",
+        )
+        store.add(node, sync=False)
+        result = plan_auto_act(store, [node], attempts=0, max_attempts=1)
+        self.assertIsNotNone(result.reflect_message)
+        self.assertTrue(
+            "Failure-absorption" in result.reflect_message
+            or node.summary in result.reflect_message,
+            result.reflect_message,
+        )
 
 
 if __name__ == "__main__":
