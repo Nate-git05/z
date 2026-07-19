@@ -380,6 +380,13 @@ def load_dotenv_files(git_root, dotenv_fname, encoding="utf-8"):
         dotenv_files.insert(0, str(z_creds_env.resolve()))
         dotenv_files = list(dict.fromkeys(dotenv_files))
 
+    # BYOK provider keys (orthogonal to Z-account tokens in credentials.env)
+    z_home = Path(os.environ["Z_HOME"]) if os.environ.get("Z_HOME") else Path.home() / ".z"
+    byok_env = z_home / "byok.env"
+    if byok_env.exists():
+        dotenv_files.insert(0, str(byok_env.resolve()))
+        dotenv_files = list(dict.fromkeys(dotenv_files))
+
     loaded = []
     for fname in dotenv_files:
         try:

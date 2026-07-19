@@ -18,6 +18,10 @@ def _z_home() -> Path:
 Z_HOME = _z_home()
 CREDENTIALS_PATH = Z_HOME / "credentials"
 CREDENTIALS_ENV_PATH = Z_HOME / "credentials.env"
+# First-run BYOK/router choice + selected model (not account tokens).
+CONFIG_PATH = Z_HOME / "config.json"
+# Provider API keys for BYOK — separate from credentials.env (Z-account tokens).
+BYOK_ENV_PATH = Z_HOME / "byok.env"
 CACHE_DIR = Z_HOME / "caches"
 SKILLS_DIR = Z_HOME / "skills"
 
@@ -31,3 +35,13 @@ def ensure_z_home() -> Path:
     except OSError:
         pass
     return home
+
+
+def config_path() -> Path:
+    """Live path to config.json (honors current Z_HOME)."""
+    return _z_home() / "config.json"
+
+
+def byok_env_path() -> Path:
+    """Live path to byok.env (honors current Z_HOME)."""
+    return _z_home() / "byok.env"
