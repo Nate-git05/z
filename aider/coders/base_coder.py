@@ -1135,6 +1135,19 @@ class Coder:
                 cl = getattr(getattr(eng, "ctx", None), "checklist", None)
                 status_before = status_snapshot(cl)
                 evidence_before = evidence_snapshot(cl)
+                if self._drift_debug_enabled() and cl is not None:
+                    parts = []
+                    for item in cl.items or []:
+                        ev = getattr(item, "last_evidence", None)
+                        n_files = len(getattr(ev, "file_hits", None) or []) if ev else 0
+                        n_syms = len(getattr(ev, "symbol_hits", None) or []) if ev else 0
+                        parts.append(
+                            f"{item.id[:8]}:{item.status}:ev={n_files + n_syms}"
+                        )
+                    self._drift_debug(
+                        f"turn-start n_reflections={self.num_reflections} "
+                        f"items=[{', '.join(parts) or 'none'}]"
+                    )
             except Exception:
                 status_before = {}
                 evidence_before = {}
@@ -1310,6 +1323,22 @@ class Coder:
             "Z_SKILL_CAPTURE_LOG", ""
         ).strip().lower() in ("1", "true", "yes"):
             self.io.tool_output(f"Skill capture skipped: {reason}")
+
+    def _drift_debug_enabled(self) -> bool:
+        return os.environ.get("Z_DRIFT_DEBUG", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+
+    def _drift_debug(self, msg: str) -> None:
+        """Env-gated drift instrumentation — print only, never changes control flow."""
+        if not self._drift_debug_enabled():
+            return
+        try:
+            self.io.tool_output(f"[drift-debug] {msg}")
+        except Exception:
+            pass
 
     def _session_start_commit(self) -> Optional[str]:
         """HEAD SHA recorded at the start of this run_one() (if any)."""
@@ -1533,13 +1562,35 @@ class Coder:
             if after != status_before:
                 progressed = checklist_progressed(status_before, checklist)
         turn_stagnant = evidence_stagnant(evidence_before or {}, checklist)
+        self._drift_debug(
+            f"turn_stagnant={sorted(turn_stagnant) or '[]'} "
+            f"n_reflections={getattr(self, 'num_reflections', 0)}"
+        )
         log = getattr(self, "_drift_reflection_log", None)
         if log is None:
             self._drift_reflection_log = []
             log = self._drift_reflection_log
         # Practically resolved for scope: stagnant across the last 2 reflections
         exclude_ids = multi_turn_stagnant(log, turn_stagnant, window=2)
+        if self._drift_debug_enabled():
+            recent = []
+            for turn in list(log)[-2:]:
+                recent.append(
+                    "{"
+                    f"files={sorted(turn.files) or []}, "
+                    f"progressed={turn.progressed}, "
+                    f"stagnant_ids={sorted(turn.stagnant_ids) or []}"
+                    "}"
+                )
+            self._drift_debug(
+                f"exclude_ids={sorted(exclude_ids) or '[]'} "
+                f"log_len={len(log)} recent=[{'; '.join(recent) or 'none'}]"
+            )
         off = off_scope_edits(rels, checklist, stagnant_ids=exclude_ids)
+        self._drift_debug(
+            f"rels={sorted(rels) or '[]'} off_scope={sorted(off) or '[]'} "
+            f"progressed={progressed}"
+        )
         log.append(
             ReflectionTurn(
                 files=rels,
@@ -1576,6 +1627,28 @@ class Coder:
 
         history = list(getattr(self, "_drift_reflection_log", None) or [])
         signal = detect_drift(history, checklist)
+        if self._drift_debug_enabled():
+            if signal is None:
+                recent = []
+                for turn in history[-2:]:
+                    recent.append(
+                        "{"
+                        f"files={sorted(turn.files) or []}, "
+                        f"progressed={turn.progressed}, "
+                        f"off_scope={sorted(turn.off_scope) or []}, "
+                        f"stagnant_ids={sorted(turn.stagnant_ids) or []}"
+                        "}"
+                    )
+                self._drift_debug(
+                    f"detect_drift=None history_len={len(history)} "
+                    f"window=[{'; '.join(recent) or 'none'}]"
+                )
+            else:
+                self._drift_debug(
+                    f"detect_drift=SIGNAL off_scope={signal.off_scope_files!r} "
+                    f"unresolved={len(signal.unresolved)} "
+                    f"summary={signal.summary[:120]!r}"
+                )
         if not signal:
             return None
 
