@@ -10,7 +10,48 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Iterable, List, Optional, Sequence, Tuple
+from pathlib import Path
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+
+# Categories whose invention signal is a class/function name — the real
+# standard often lives in an untouched sibling, not the inventing file.
+_REPO_WIDE_STANDARD_CATEGORIES = frozenset(
+    {"lru_cache", "priority_queue", "concurrency_primitives"}
+)
+
+_SKIP_DIR_PARTS = frozenset(
+    {
+        "node_modules",
+        ".git",
+        "dist",
+        "build",
+        ".next",
+        "coverage",
+        "__pycache__",
+        ".venv",
+        "venv",
+        "vendor",
+        "target",
+    }
+)
+
+_REPO_SCAN_SUFFIXES = frozenset(
+    {".py", ".pyi", ".go", ".js", ".jsx", ".ts", ".tsx", ".java", ".rs"}
+)
+
+# Triple-quoted first so Python docstrings are removed as units; then
+# ordinary "..." / '...' (incl. raw prefixes used in diffs).
+_STRING_LITERAL_RE = re.compile(
+    r"(?x)"
+    r"(?:"
+    r'(?:[rRuUfFbB]{0,2})"""(?:\\.|.)*?(?<!\\)"""'
+    r"|(?:[rRuUfFbB]{0,2})'''(?:\\.|.)*?(?<!\\)'''"
+    r'|(?:[rRuUfFbB]{0,2})"(?:\\.|[^"\\])*"'
+    r"|(?:[rRuUfFbB]{0,2})'(?:\\.|[^'\\])*'"
+    r"|`(?:\\.|[^`\\])*`"  # JS/TS template literals
+    r")",
+    re.DOTALL,
+)
 
 
 @dataclass(frozen=True)
@@ -296,14 +337,143 @@ def _added_lines(diff_text: str) -> List[str]:
     return lines
 
 
+def _strip_string_literals(text: str) -> str:
+    """Remove string/docstring/template-literal contents (leave other code)."""
+    return _STRING_LITERAL_RE.sub(" ", text or "")
+
+
+def _code_for_suppression(text: str) -> str:
+    """Text that may suppress invention — strings do not count as real usage.
+
+    ``#`` full-line comments are already dropped from diff added-lines; for
+    file contents we also drop trailing ``#`` comments after string stripping.
+    """
+    no_strings = _strip_string_literals(text)
+    out: List[str] = []
+    for line in no_strings.splitlines():
+        if "#" in line:
+            line = line.split("#", 1)[0]
+        out.append(line)
+    return "\n".join(out)
+
+
+def _standard_used_in_text(
+    cat: EstablishedSolutionCategory, text: str
+) -> bool:
+    if not text or not text.strip():
+        return False
+    return bool(cat.standard_import_regex.search(_code_for_suppression(text)))
+
+
+def _iter_repo_code_files(
+    root: Path,
+    *,
+    focus_files: Sequence[str] = (),
+    limit: int = 120,
+) -> List[Path]:
+    """Prefer siblings of edited files, then a bounded repo walk."""
+    root = Path(root)
+    found: List[Path] = []
+    seen: Set[str] = set()
+
+    def _add(p: Path) -> None:
+        if len(found) >= limit:
+            return
+        try:
+            key = str(p.resolve())
+        except OSError:
+            return
+        if key in seen or not p.is_file():
+            return
+        if p.suffix.lower() not in _REPO_SCAN_SUFFIXES:
+            return
+        if any(part in _SKIP_DIR_PARTS for part in p.parts):
+            return
+        seen.add(key)
+        found.append(p)
+
+    for rel in focus_files or ():
+        p = root / str(rel).replace("\\", "/")
+        if p.is_file():
+            _add(p)
+            parent = p.parent
+            try:
+                for sib in parent.iterdir():
+                    _add(sib)
+                    if len(found) >= limit:
+                        return found
+            except OSError:
+                pass
+
+    if len(found) >= limit:
+        return found
+    try:
+        for p in root.rglob("*"):
+            _add(p)
+            if len(found) >= limit:
+                break
+    except OSError:
+        pass
+    return found
+
+
+def _repo_has_standard_usage(
+    cat: EstablishedSolutionCategory,
+    root: Path,
+    *,
+    focus_files: Sequence[str] = (),
+) -> bool:
+    """Bounded disk search for a real standard import/call (not in a string)."""
+    for path in _iter_repo_code_files(root, focus_files=focus_files):
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if len(text) > 400_000:
+            continue
+        if _standard_used_in_text(cat, text):
+            return True
+    return False
+
+
+def _standard_used(
+    cat: EstablishedSolutionCategory,
+    *,
+    diff_blob: str,
+    file_contents: Optional[Dict[str, str]] = None,
+    root: Optional[Path] = None,
+    focus_files: Optional[Sequence[str]] = None,
+) -> bool:
+    """True when real (non-string) code uses the category's standard approach."""
+    if _standard_used_in_text(cat, diff_blob):
+        return True
+    for text in (file_contents or {}).values():
+        if _standard_used_in_text(cat, text):
+            return True
+    if (
+        cat.category_id in _REPO_WIDE_STANDARD_CATEGORIES
+        and root is not None
+    ):
+        focus = list(focus_files or (file_contents or {}).keys())
+        if _repo_has_standard_usage(cat, Path(root), focus_files=focus):
+            return True
+    return False
+
+
 def scan_invention_in_diff(
     diff_text: str,
     *,
     categories: Optional[Sequence[EstablishedSolutionCategory]] = None,
+    file_contents: Optional[Dict[str, str]] = None,
+    root: Optional[Path] = None,
+    focus_files: Optional[Sequence[str]] = None,
 ) -> List[EstablishedSolutionHit]:
     """Find custom inventions of established-solution categories in a diff.
 
-    Suppresses a category when the same diff also imports/uses the standard.
+    Suppresses a category when real code uses the standard — in the diff,
+    in touched file contents, or (for class/function-name categories) via a
+    bounded repo-wide search. String/docstring mentions do **not** suppress;
+    invention matching still sees string contents (e.g. ``re.compile(r"...")``).
     """
     cats = list(categories or ESTABLISHED_SOLUTIONS)
     added = _added_lines(diff_text)
@@ -311,10 +481,19 @@ def scan_invention_in_diff(
     if not blob.strip():
         return []
 
+    focus = list(focus_files or (file_contents or {}).keys())
     hits: List[EstablishedSolutionHit] = []
     for cat in cats:
-        if cat.standard_import_regex.search(blob):
+        if _standard_used(
+            cat,
+            diff_blob=blob,
+            file_contents=file_contents,
+            root=root,
+            focus_files=focus,
+        ):
             continue
+        # Invention check uses the full blob — string contents matter
+        # (hand-rolled re.compile(r"...ipv4...") lives inside quotes).
         m = cat.invention_regex.search(blob)
         if not m:
             continue

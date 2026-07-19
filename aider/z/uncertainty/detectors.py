@@ -2062,6 +2062,8 @@ def detect_established_solution_gaps(
     *,
     diff: str = "",
     plan: Optional[object] = None,
+    file_contents: Optional[dict[str, str]] = None,
+    root: Optional[Path] = None,
     task_id: Optional[str] = None,
     task_title: Optional[str] = None,
     created_by_session: Optional[str] = None,
@@ -2071,14 +2073,19 @@ def detect_established_solution_gaps(
     Flag diffs that invent a custom solution for a well-known problem
     (IP/email/URL/date/UUID, heaps, caches, concurrency) without evidence the
     plan considered the established approach — or without using the standard
-    in the diff itself.
+    in real code (diff / touched files / bounded repo search for some cats).
     """
     from .established_solutions import (
         plan_allows_custom_invention,
         scan_invention_in_diff,
     )
 
-    hits = scan_invention_in_diff(diff or "")
+    hits = scan_invention_in_diff(
+        diff or "",
+        file_contents=file_contents,
+        root=root,
+        focus_files=list(signals.files_changed or []),
+    )
     if not hits:
         return []
 

@@ -416,6 +416,8 @@ class UncertaintyEngine:
                     signals,
                     diff=diff_text or "",
                     plan=self.ctx.plan,
+                    file_contents=contents,
+                    root=root,
                     **meta,
                 )
             )
@@ -599,6 +601,8 @@ class UncertaintyEngine:
                 signals,
                 diff=diff if diff is not None else self.ctx.last_diff,
                 plan=self.ctx.plan,
+                file_contents=contents,
+                root=root,
                 **meta,
             )
         )
