@@ -1884,30 +1884,42 @@ def detect_failure_absorption(
                 signals=signals,
                 summary=(
                     "Production code uses getattr(..., default) for a parameter "
-                    "this same diff just introduced — likely papering over a red test."
+                    "this same diff just introduced — confirm incomplete wiring vs "
+                    "a deliberate compatibility shim."
                 ),
                 explanation=(
-                    f"{fpath}: getattr fallback for {', '.join(uniq)}. "
-                    "Those names appear as new constructor/CLI parameters in the diff. "
-                    "Fix the outdated test helper/fixture instead of weakening the contract. "
+                    f"{fpath}: getattr fallback for {', '.join(uniq)}, matching a "
+                    "parameter this same diff just introduced. This is either "
+                    "(a) incomplete wiring — some call site should pass the new "
+                    "field explicitly but doesn't — or (b) a deliberate "
+                    "compatibility shim for values that can never go through the "
+                    "updated constructor (e.g. deserializing objects persisted "
+                    "before this field existed). Confirm which applies before "
+                    "treating this as a bug. "
                     f"[taxonomy:{pat.pattern_id if pat else 'getattr_new_param_default'}]"
                 ),
                 why_uncertain=(
-                    "A permissive default hides AttributeError from callers that should "
-                    "provide the new field (often a hand-built test args() namespace)."
+                    "Regex cannot tell incomplete wiring from a permanent "
+                    "compatibility default — both use the same getattr shape. "
+                    "A human has to distinguish them."
                 ),
                 what_could_go_wrong=(
-                    "The real bug (stale test helper / incomplete call site) stays; "
-                    "production silently accepts missing fields forever."
+                    "If (a): the real bug (stale helper / missing call site) stays "
+                    "and production silently accepts missing fields. "
+                    "If (b): removing the default breaks legitimate old payloads."
                 ),
                 suggested_fix=(
-                    "Remove the getattr default; update call sites and test helpers to "
-                    "pass the new parameter explicitly."
+                    "If (a): remove the getattr default and update the missing "
+                    "call site. If (b): this is expected — no fix needed, but "
+                    "consider a comment noting why the default is permanent, not "
+                    "temporary."
                 ),
                 suggested_prompt=(
-                    f"In {fpath}, remove getattr(..., default) for newly added "
-                    f"param(s) {', '.join(uniq)}. Update the test helper / call sites "
-                    "to include the field — do not absorb AttributeError in production."
+                    f"In {fpath}, getattr(..., default) covers newly added "
+                    f"param(s) {', '.join(uniq)}. Decide: (a) incomplete wiring "
+                    "→ remove the default and update the missing call site / "
+                    "test helper; or (b) deliberate compatibility shim → leave "
+                    "it and document why the default is permanent."
                 ),
                 files=[fpath],
                 task_id=task_id,
