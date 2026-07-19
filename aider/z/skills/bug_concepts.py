@@ -215,8 +215,14 @@ BUG_CONCEPTS: Tuple[BugConcept, ...] = (
         description="Allocation without a matching free/close on all paths.",
         evidence_regex=re.compile(
             r"(?x)"
+            r"(?:"
             r"\b(?:free|delete|Close|close|Dispose|defer\s+\w+\.Close|"
-            r"unique_ptr|shared_ptr|RAII|contextlib|with\s+)\b",
+            r"unique_ptr|shared_ptr|RAII|contextlib|with\s+|"
+            r"erase|pop_back|pop_front|remove)\b"
+            # .clear() can't sit inside \b...\b — ')' is non-word so the
+            # trailing boundary never matches.
+            r"|\.clear\s*\("
+            r")",
             re.IGNORECASE,
         ),
         symptom_keywords=(
