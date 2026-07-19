@@ -122,6 +122,73 @@ class ScopeMatchingTest(unittest.TestCase):
         off = off_scope_edits(["fmtlog/bgLogInfos.cpp"], cl)
         self.assertEqual(off, [])
 
+    def test_resolved_file_no_longer_anchors_scope(self):
+        """LRU live miss: after lru_cache.h item is Fully Addressed, further
+        edits to that same file must count as off-scope (refactor creep)."""
+        from aider.z.uncertainty.drift import checklist_scope, detect_drift
+
+        cl = TaskChecklist(
+            task_id="lru",
+            title="Fix LRU leak",
+            items=[
+                RequirementItem(
+                    id="fix",
+                    text="Fix memory leak in src/lru_cache.h under concurrent eviction",
+                    status=STATUS_FULLY,
+                    kind="product",
+                ),
+                RequirementItem(
+                    id="verify",
+                    text="Confirm with LeakSanitizer before/after",
+                    status=STATUS_NOT,
+                    kind="verification",
+                ),
+            ],
+        )
+        paths, symbols = checklist_scope(cl)
+        self.assertNotIn("src/lru_cache.h", paths)
+        # Still editing the resolved file → off-scope
+        off = off_scope_edits(["src/lru_cache.h"], cl)
+        self.assertEqual(off, ["src/lru_cache.h"])
+        # And the stagnation window can fire on that file
+        history = [
+            ReflectionTurn(
+                files={"src/lru_cache.h"},
+                progressed=False,
+                off_scope=["src/lru_cache.h"],
+            ),
+            ReflectionTurn(
+                files={"src/lru_cache.h"},
+                progressed=False,
+                off_scope=["src/lru_cache.h"],
+            ),
+        ]
+        signal = detect_drift(history, cl)
+        self.assertIsNotNone(signal)
+        self.assertIn("lru_cache.h", ",".join(signal.off_scope_files))
+
+    def test_regression_reopens_file_scope(self):
+        """If rescoring drops Fully → Partial, the file is in-scope again."""
+        from aider.z.uncertainty.drift import checklist_scope
+
+        cl = TaskChecklist(
+            task_id="lru",
+            title="Fix LRU leak",
+            items=[
+                RequirementItem(
+                    id="fix",
+                    text="Fix memory leak in src/lru_cache.h",
+                    status=STATUS_FULLY,
+                    kind="product",
+                ),
+            ],
+        )
+        self.assertEqual(checklist_scope(cl)[0], [])
+        cl.items[0].status = STATUS_PARTIAL
+        paths, _ = checklist_scope(cl)
+        self.assertIn("src/lru_cache.h", paths)
+        self.assertEqual(off_scope_edits(["src/lru_cache.h"], cl), [])
+
 
 class ProgressAndDetectTest(unittest.TestCase):
     def test_progressed_when_status_improves(self):

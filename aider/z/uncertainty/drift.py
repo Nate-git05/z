@@ -73,8 +73,16 @@ def _usable_scope_symbol(tok: str) -> bool:
 
 def checklist_scope(
     checklist: TaskChecklist,
+    *,
+    open_only: bool = True,
 ) -> Tuple[List[str], List[str]]:
-    """Named file paths + usable investigation symbols across checklist items.
+    """Named file paths + usable investigation symbols from checklist items.
+
+    With ``open_only=True`` (default, used by drift), Fully Addressed items are
+    skipped so a resolved file (e.g. ``lru_cache.h`` after the real fix) is no
+    longer a permanent in-scope anchor — further unprompted edits there count
+    as off-scope drift. If rescoring later drops an item back to Partial/Not,
+    it re-enters scope on the next call.
 
     Bare weak tokens from ``extract_investigation_targets`` (e.g. sentence
     starters) are ignored so a vague item does not invent fake scope.
@@ -82,6 +90,8 @@ def checklist_scope(
     paths: List[str] = []
     symbols: List[str] = []
     for item in checklist.items or []:
+        if open_only and (item.status or "").strip() == STATUS_FULLY:
+            continue
         for p in extract_product_file_paths(item.text or ""):
             if p not in paths:
                 paths.append(p)
@@ -137,18 +147,30 @@ def off_scope_edits(
     edited_files: Iterable[str],
     checklist: TaskChecklist,
 ) -> List[str]:
-    """Edited paths not covered by any checklist product path or investigation target.
+    """Edited paths not covered by any still-open checklist item's scope.
 
-    If the checklist names no scope at all, returns [] (cannot judge off-scope).
+    Scope comes from open items only (see ``checklist_scope``).
+
+    - Open items name paths/symbols → flag edits outside that set.
+    - Open items name nothing, but *resolved* items did → every edit is
+      off-scope (LRU refactor-creep after the fix item flipped Fully).
+    - Checklist never named any scope → return [] (cannot judge).
     """
-    path_needles, symbol_needles = checklist_scope(checklist)
-    if not path_needles and not symbol_needles:
+    path_needles, symbol_needles = checklist_scope(checklist, open_only=True)
+    if path_needles or symbol_needles:
+        out: List[str] = []
+        for f in edited_files or []:
+            if not file_in_checklist_scope(f, path_needles, symbol_needles):
+                out.append(str(f))
+        return out
+
+    # No open scope — only flag when *some* checklist item (resolved) named
+    # files/symbols, so vague all-open checklists still return [] (cannot judge).
+    any_paths, any_syms = checklist_scope(checklist, open_only=False)
+    if not any_paths and not any_syms:
         return []
-    out: List[str] = []
-    for f in edited_files or []:
-        if not file_in_checklist_scope(f, path_needles, symbol_needles):
-            out.append(str(f))
-    return out
+    # Resolved items named scope; nothing open does → all current edits drift
+    return [str(f) for f in (edited_files or [])]
 
 
 def status_snapshot(checklist: Optional[TaskChecklist]) -> dict[str, str]:
