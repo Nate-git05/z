@@ -45,6 +45,8 @@ class ReflectionTurn:
     files: Set[str] = field(default_factory=set)
     progressed: bool = False
     off_scope: List[str] = field(default_factory=list)
+    # Item ids whose file/symbol evidence did not grow this turn
+    stagnant_ids: Set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -71,27 +73,93 @@ def _usable_scope_symbol(tok: str) -> bool:
     return False
 
 
+def _evidence_fingerprint(item: RequirementItem) -> Optional[frozenset]:
+    """file_hits ∪ symbol_hits from the item's cached last_evidence, if any."""
+    ev = getattr(item, "last_evidence", None)
+    if ev is None:
+        return None
+    files = frozenset(str(x) for x in (getattr(ev, "file_hits", None) or []) if x)
+    symbols = frozenset(str(x) for x in (getattr(ev, "symbol_hits", None) or []) if x)
+    return files | symbols
+
+
+def evidence_snapshot(checklist: Optional[TaskChecklist]) -> dict[str, frozenset]:
+    """Fingerprint each item's evidence (file/symbol hits) for stagnation comparison."""
+    if not checklist:
+        return {}
+    out: dict[str, frozenset] = {}
+    for item in checklist.items or []:
+        fp = _evidence_fingerprint(item)
+        if fp is None:
+            continue
+        out[item.id] = fp
+    return out
+
+
+def evidence_stagnant(
+    before: dict[str, frozenset],
+    checklist: Optional[TaskChecklist],
+) -> Set[str]:
+    """Item ids whose evidence set did not grow since ``before``."""
+    stagnant: Set[str] = set()
+    if not checklist:
+        return stagnant
+    for item in checklist.items or []:
+        current = _evidence_fingerprint(item)
+        if current is None:
+            continue
+        prev = before.get(item.id)
+        if prev is not None and current <= prev:
+            stagnant.add(item.id)
+    return stagnant
+
+
+def multi_turn_stagnant(
+    history: Sequence[ReflectionTurn],
+    current_stagnant: Set[str],
+    *,
+    window: int = 2,
+) -> Set[str]:
+    """Item ids stagnant across the last ``window`` reflections (incl. current)."""
+    if window <= 1:
+        return set(current_stagnant)
+    prior = list(history[-(window - 1) :])
+    if len(prior) < window - 1:
+        return set()
+    common = set(current_stagnant)
+    for turn in prior:
+        common &= set(getattr(turn, "stagnant_ids", None) or ())
+    return common
+
+
 def checklist_scope(
     checklist: TaskChecklist,
     *,
     open_only: bool = True,
+    stagnant_ids: Optional[Set[str]] = None,
 ) -> Tuple[List[str], List[str]]:
     """Named file paths + usable investigation symbols from checklist items.
 
     With ``open_only=True`` (default, used by drift), Fully Addressed items are
-    skipped so a resolved file (e.g. ``lru_cache.h`` after the real fix) is no
-    longer a permanent in-scope anchor — further unprompted edits there count
-    as off-scope drift. If rescoring later drops an item back to Partial/Not,
-    it re-enters scope on the next call.
+    skipped so a resolved file is no longer a permanent in-scope anchor.
+    ``stagnant_ids`` extends that: items whose evidence has not grown for the
+    configured reflection window are also excluded — so a Partial-forever item
+    (no test framework → never Fully) stops anchoring scope once nothing new
+    is happening. If rescoring later grows evidence, the id leaves stagnant
+    and the file re-enters scope on the next call.
 
     Bare weak tokens from ``extract_investigation_targets`` (e.g. sentence
     starters) are ignored so a vague item does not invent fake scope.
     """
     paths: List[str] = []
     symbols: List[str] = []
+    skip_ids = set(stagnant_ids or ())
     for item in checklist.items or []:
-        if open_only and (item.status or "").strip() == STATUS_FULLY:
-            continue
+        if open_only:
+            if (item.status or "").strip() == STATUS_FULLY:
+                continue
+            if item.id in skip_ids:
+                continue
         for p in extract_product_file_paths(item.text or ""):
             if p not in paths:
                 paths.append(p)
@@ -146,17 +214,22 @@ def file_in_checklist_scope(
 def off_scope_edits(
     edited_files: Iterable[str],
     checklist: TaskChecklist,
+    *,
+    stagnant_ids: Optional[Set[str]] = None,
 ) -> List[str]:
-    """Edited paths not covered by any still-open checklist item's scope.
+    """Edited paths not covered by any still-active checklist item's scope.
 
-    Scope comes from open items only (see ``checklist_scope``).
+    Scope comes from open + non-stagnant items (see ``checklist_scope``).
 
-    - Open items name paths/symbols → flag edits outside that set.
-    - Open items name nothing, but *resolved* items did → every edit is
-      off-scope (LRU refactor-creep after the fix item flipped Fully).
+    - Active items name paths/symbols → flag edits outside that set.
+    - Active items name nothing, but *resolved/stagnant* items did → every
+      edit is off-scope (LRU refactor-creep after the fix stopped producing
+      new evidence, even if stuck at Partial for lack of tests).
     - Checklist never named any scope → return [] (cannot judge).
     """
-    path_needles, symbol_needles = checklist_scope(checklist, open_only=True)
+    path_needles, symbol_needles = checklist_scope(
+        checklist, open_only=True, stagnant_ids=stagnant_ids
+    )
     if path_needles or symbol_needles:
         out: List[str] = []
         for f in edited_files or []:
@@ -164,12 +237,12 @@ def off_scope_edits(
                 out.append(str(f))
         return out
 
-    # No open scope — only flag when *some* checklist item (resolved) named
+    # No active scope — only flag when *some* checklist item named
     # files/symbols, so vague all-open checklists still return [] (cannot judge).
     any_paths, any_syms = checklist_scope(checklist, open_only=False)
     if not any_paths and not any_syms:
         return []
-    # Resolved items named scope; nothing open does → all current edits drift
+    # Resolved/stagnant items named scope; nothing active does → all edits drift
     return [str(f) for f in (edited_files or [])]
 
 

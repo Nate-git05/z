@@ -1307,6 +1307,8 @@ def rescore_checklist_with_evidence(
                     f"Present: {', '.join(ev.evidence_strings()[:6]) or '(none)'}"
                 )
         item.status = status
+        # Persist for drift evidence-stagnation snapshots across reflections
+        item.last_evidence = ev
     return checklist
 
 

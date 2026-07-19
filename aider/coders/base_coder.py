@@ -1127,14 +1127,17 @@ class Coder:
             was_reflection = int(getattr(self, "num_reflections", 0) or 0) >= 1
             files_before = set(self.aider_edited_files or ())
             status_before = {}
+            evidence_before: dict = {}
             try:
-                from aider.z.uncertainty.drift import status_snapshot
+                from aider.z.uncertainty.drift import evidence_snapshot, status_snapshot
 
                 eng = getattr(self, "uncertainty_engine", None)
                 cl = getattr(getattr(eng, "ctx", None), "checklist", None)
                 status_before = status_snapshot(cl)
+                evidence_before = evidence_snapshot(cl)
             except Exception:
                 status_before = {}
+                evidence_before = {}
 
             list(self.send_message(message))
 
@@ -1143,6 +1146,7 @@ class Coder:
                     was_reflection=was_reflection,
                     files_before=files_before,
                     status_before=status_before,
+                    evidence_before=evidence_before,
                 )
             except Exception:
                 pass
@@ -1490,6 +1494,7 @@ class Coder:
         was_reflection: bool,
         files_before: set,
         status_before: dict,
+        evidence_before: dict | None = None,
     ) -> None:
         """Append one reflection-turn sample after send_message returns."""
         if not was_reflection:
@@ -1497,6 +1502,8 @@ class Coder:
         from aider.z.uncertainty.drift import (
             ReflectionTurn,
             checklist_progressed,
+            evidence_stagnant,
+            multi_turn_stagnant,
             off_scope_edits,
             status_snapshot,
         )
@@ -1525,13 +1532,21 @@ class Coder:
             after = status_snapshot(checklist)
             if after != status_before:
                 progressed = checklist_progressed(status_before, checklist)
-        off = off_scope_edits(rels, checklist)
+        turn_stagnant = evidence_stagnant(evidence_before or {}, checklist)
         log = getattr(self, "_drift_reflection_log", None)
         if log is None:
             self._drift_reflection_log = []
             log = self._drift_reflection_log
+        # Practically resolved for scope: stagnant across the last 2 reflections
+        exclude_ids = multi_turn_stagnant(log, turn_stagnant, window=2)
+        off = off_scope_edits(rels, checklist, stagnant_ids=exclude_ids)
         log.append(
-            ReflectionTurn(files=rels, progressed=progressed, off_scope=list(off))
+            ReflectionTurn(
+                files=rels,
+                progressed=progressed,
+                off_scope=list(off),
+                stagnant_ids=set(turn_stagnant),
+            )
         )
 
     def _maybe_detect_drift(self):
