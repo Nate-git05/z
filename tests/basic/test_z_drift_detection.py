@@ -700,5 +700,124 @@ class DriftGateInRunOneTest(unittest.TestCase):
         self.assertLessEqual(send_n["n"], 3)
 
 
+class DriftDebugLogTest(unittest.TestCase):
+    """Z_DRIFT_DEBUG prints instrumentation without changing control flow."""
+
+    def test_debug_lines_emitted_when_env_set(self):
+        from aider.coders.base_coder import Coder
+        from aider.z.uncertainty.engine import SessionContext, UncertaintyEngine
+        from aider.z.uncertainty.store import UncertaintyStore
+
+        root = Path(tempfile.mkdtemp(prefix="z_drift_dbg_"))
+        store = UncertaintyStore(root=root, repo_key=str(root))
+        eng = UncertaintyEngine(SessionContext(root=root, store=store))
+        eng.ctx.checklist = _react_checklist()
+
+        outputs = []
+
+        class FakeIO:
+            yes = True
+
+            def tool_output(self, *a, **k):
+                outputs.append(a[0] if a else "")
+
+            def tool_warning(self, *a, **k):
+                pass
+
+            def tool_error(self, *a, **k):
+                pass
+
+            def confirm_ask(self, *a, **k):
+                return False
+
+        coder = Coder.__new__(Coder)
+        coder.io = FakeIO()
+        coder.verbose = False
+        coder.max_reflections = 3
+        coder.num_reflections = 0
+        coder.reflected_message = None
+        coder.aider_edited_files = set()
+        coder.last_aider_commit_hash = None
+        coder.last_verification = None
+        coder._z_gate_hold_dirty = False
+        coder.root = root
+        coder.uncertainty_engine = eng
+        coder.uncertainty_store = store
+        coder._drift_asked_this_task = False
+        coder._drift_reflection_log = []
+
+        send_n = {"n": 0}
+
+        def fake_init():
+            coder.num_reflections = 0
+            coder.reflected_message = None
+            coder._drift_reflection_log = []
+            coder.aider_edited_files = set()
+
+        def fake_send(message):
+            send_n["n"] += 1
+            if send_n["n"] == 1:
+                edited = {
+                    str(
+                        root
+                        / "packages/react-server-dom-webpack/src/client/"
+                        / "ReactFlightDOMClient.js"
+                    )
+                }
+            elif send_n["n"] == 2:
+                edited = {str(root / "packages/react-devtools-shared/src/bridge.js")}
+            else:
+                edited = {str(root / "src/lru_cache.hpp")}
+            coder._last_send_edited_files = set(edited)
+            coder.aider_edited_files.update(edited)
+            coder.reflected_message = (
+                "lint" if send_n["n"] <= 3 else None
+            )
+            if False:
+                yield None
+
+        coder.init_before_message = fake_init
+        coder.send_message = fake_send
+        coder._maybe_pull_skills = lambda *a, **k: None
+        coder._maybe_begin_uncertainty_task = lambda *a, **k: None
+        coder._maybe_require_implementation_plan = lambda *a, **k: True
+        coder._maybe_suggest_skill = lambda *a, **k: None
+        coder.get_rel_fname = lambda p: os.path.relpath(str(p), str(root))
+
+        with mock.patch.dict(os.environ, {"Z_DRIFT_DEBUG": "1"}):
+            with mock.patch(
+                "aider.z.uncertainty.gate.report_auto_fix_exhaustion",
+                return_value=None,
+            ):
+                coder.run_one(
+                    "Fix encodeFormAction to pass debugValue through the edge client",
+                    preproc=False,
+                )
+
+        dbg = [o for o in outputs if o.startswith("[drift-debug]")]
+        self.assertTrue(dbg, outputs)
+        joined = "\n".join(dbg)
+        self.assertIn("turn-start", joined)
+        self.assertIn("turn_stagnant=", joined)
+        self.assertIn("exclude_ids=", joined)
+        self.assertIn("rels=", joined)
+        self.assertIn("detect_drift=", joined)
+
+    def test_debug_silent_when_env_unset(self):
+        from aider.coders.base_coder import Coder
+
+        outputs = []
+
+        class FakeIO:
+            def tool_output(self, *a, **k):
+                outputs.append(a[0] if a else "")
+
+        coder = Coder.__new__(Coder)
+        coder.io = FakeIO()
+        with mock.patch.dict(os.environ, {"Z_DRIFT_DEBUG": ""}):
+            coder._drift_debug("should not appear")
+        self.assertEqual(outputs, [])
+
+
 if __name__ == "__main__":
     unittest.main()
