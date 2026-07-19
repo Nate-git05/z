@@ -306,12 +306,37 @@ def index_local_types(
     return index
 
 
-def _param_bindings(text: str) -> Dict[str, str]:
-    """Map local variable/param names → type names from simple annotations."""
-    bindings: Dict[str, str] = {}
-    for m in _PARAM_TYPE_RE.finditer(text or ""):
-        bindings[m.group("param")] = m.group("type")
-    return bindings
+def _param_bindings(text: str) -> List[Tuple[int, str, str]]:
+    """All ``(position, param_name, type_name)`` declarations, in file order.
+
+    Not collapsed into one flat ``{name: type}`` dict — sibling functions often
+    reuse a parameter name with different types, and a full-file overwrite
+    dict would check every access against whichever declaration appears last.
+    """
+    return [
+        (m.start(), m.group("param"), m.group("type"))
+        for m in _PARAM_TYPE_RE.finditer(text or "")
+    ]
+
+
+def _resolve_binding(
+    bindings: Sequence[Tuple[int, str, str]],
+    name: str,
+    at_pos: int,
+) -> Optional[str]:
+    """Type bound to ``name`` at the nearest declaration at or before ``at_pos``.
+
+    Equivalent to correct lexical scoping for contiguous, non-overlapping
+    function bodies (and nested-function shadowing, where the inner param is
+    textually closer).
+    """
+    best: Optional[str] = None
+    best_pos = -1
+    for pos, param, type_name in bindings:
+        if param == name and pos <= at_pos and pos > best_pos:
+            best_pos = pos
+            best = type_name
+    return best
 
 
 def check_file_against_index(
@@ -330,7 +355,7 @@ def check_file_against_index(
         member = m.group("member")
         if recv in _SKIP_RECEIVERS:
             continue
-        type_name = bindings.get(recv)
+        type_name = _resolve_binding(bindings, recv, m.start())
         if not type_name:
             continue
         # Only check types we indexed from this repo
