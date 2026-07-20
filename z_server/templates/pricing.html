@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pricing — Z</title>
+  <meta name="description" content="The core Z agent is free. Bring your own key forever, or join the waitlist for Z's automatic model router." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Source+Sans+3:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/landing.css" />
+</head>
+<body>
+  <header class="lp-header">
+    <div class="lp-header-inner">
+      <a class="lp-logo" href="/" aria-label="Z home">
+        <span class="lp-logo-mark" aria-hidden="true">Z</span>
+        <span class="lp-logo-word">Z</span>
+      </a>
+      <nav class="lp-nav" aria-label="Primary">
+        <a href="/#why">Why</a>
+        <a href="/#how">How it works</a>
+        <a href="/#skills">Skills</a>
+        <a href="/#detectors">Detectors</a>
+        <a href="/#install">Try it</a>
+        <a href="/pricing" class="lp-nav-active">Pricing</a>
+        {% if user %}
+          <a href="/app/integrations">App</a>
+        {% else %}
+          <a href="/login">Sign in</a>
+        {% endif %}
+      </nav>
+      <button type="button" class="lp-btn lp-btn-sm" data-open-waitlist>Join waitlist</button>
+    </div>
+  </header>
+
+  <main class="pricing-page">
+    <h1>Pricing.</h1>
+    <p class="pricing-intro">
+      The core Z agent is free no matter what. The choice below is only
+      about which model powers your requests.
+    </p>
+
+    <div class="pricing-columns">
+      <div class="pricing-card">
+        <h2>Bring your own key</h2>
+        <p class="pricing-price">Free <span>forever</span></p>
+        <p>
+          Use Z's full agent — the uncertainty tree, skills, every
+          detector — with your own API key from any supported provider.
+        </p>
+        <ul class="pricing-features">
+          <li>Full uncertainty tree and all detectors</li>
+          <li>Skills capture and auto-apply</li>
+          <li>Self-correction on findings Z is confident about</li>
+          <li>Support for Anthropic, OpenAI, DeepSeek, Groq, Gemini,
+          Kimi/Moonshot, and local Ollama servers</li>
+          <li>Your key never touches Z's servers</li>
+          <li>No usage limits from Z</li>
+        </ul>
+        <a href="/#install" class="lp-btn">Get started free</a>
+      </div>
+
+      <div class="pricing-card pricing-card-highlight">
+        <span class="pricing-badge">Recommended</span>
+        <h2>Z Router</h2>
+        <p class="pricing-price">Coming soon</p>
+        <p>
+          Skip managing your own API keys. Z automatically picks the right
+          model for each task and bills you once across every provider.
+        </p>
+        <ul class="pricing-features">
+          <li>Everything in Bring your own key, plus:</li>
+          <li>Automatic model selection per task, based on real signals</li>
+          <li>One bill instead of juggling multiple provider accounts</li>
+          <li>Escalates to a stronger model automatically on failure</li>
+          <li>Cost transparency, including any escalations</li>
+          <li>Your code is never stored — routed ephemerally</li>
+        </ul>
+        <button type="button" class="lp-btn" data-open-waitlist data-waitlist-tag="router">
+          Notify me when it's ready
+        </button>
+      </div>
+    </div>
+
+    <div class="pricing-faq">
+      <h2>FAQ</h2>
+      <details>
+        <summary>Is the core Z agent free?</summary>
+        <p>
+          Yes. The uncertainty tree, skills, detectors, and self-correction
+          are free whether you bring your own key or eventually use Z's router.
+          Pricing only applies to model access through the router.
+        </p>
+      </details>
+      <details>
+        <summary>Do you store my API key or my code?</summary>
+        <p>
+          No. With bring-your-own-key, your provider key stays on your machine
+          and talks directly to the provider. Even with the router, your code
+          is routed ephemerally and never stored.
+        </p>
+      </details>
+      <details>
+        <summary>When will the Z Router launch?</summary>
+        <p>
+          We're finishing the routing and billing stack. Join the waitlist from
+          this page — choose “Notify me when it's ready” — and we'll email you
+          when seats open.
+        </p>
+      </details>
+      <details>
+        <summary>Can I switch between BYOK and the router later?</summary>
+        <p>
+          Yes. In the CLI, <code class="mono">z auth switch</code> lets you
+          re-choose bring-your-own-key or the router without losing your
+          account or skills.
+        </p>
+      </details>
+    </div>
+  </main>
+
+  <footer class="lp-footer">
+    <a class="lp-logo lp-logo-sm" href="/" aria-label="Z home">
+      <span class="lp-logo-mark" aria-hidden="true">Z</span>
+      <span class="lp-logo-word">Z</span>
+    </a>
+    <p>Early testing · Model keys stay yours · Workspace sharing coming soon</p>
+  </footer>
+
+  <div id="waitlist-modal" class="lp-modal" aria-hidden="true">
+    <div class="lp-modal-backdrop" data-close-modal></div>
+    <div class="lp-modal-card" role="dialog" aria-modal="true" aria-labelledby="waitlist-modal-title">
+      <button type="button" class="lp-modal-close" data-close-modal aria-label="Close">×</button>
+      <p class="lp-label">Waitlist</p>
+      <h2 id="waitlist-modal-title">Join the waitlist</h2>
+      <p>
+        Want updates on workspace sharing, cost-optimized routing across model
+        providers, MCP integrations, and what's next? Join the list — you can
+        still try early testing on the home page right now.
+      </p>
+      <div id="waitlist-error" class="waitlist-error" role="alert"></div>
+      <form id="waitlist-form" class="waitlist-form" novalidate>
+        <div class="row-2">
+          <div>
+            <label for="first_name">First name</label>
+            <input id="first_name" name="first_name" type="text" autocomplete="given-name" required placeholder="Ada" />
+          </div>
+          <div>
+            <label for="last_name">Last name</label>
+            <input id="last_name" name="last_name" type="text" autocomplete="family-name" required placeholder="Lovelace" />
+          </div>
+        </div>
+        <div>
+          <label for="email">Email</label>
+          <input id="email" name="email" type="email" autocomplete="email" required placeholder="ada@example.com" />
+        </div>
+        <button class="lp-btn lp-btn-block" type="submit" id="waitlist-submit">Join waitlist</button>
+      </form>
+      <div id="waitlist-success" class="waitlist-success" aria-live="polite">
+        <div class="check" aria-hidden="true">✓</div>
+        <h3>You're on the list</h3>
+        <p>We'll be in touch when a spot opens. No spam.</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/landing.js" defer></script>
+</body>
+</html>
