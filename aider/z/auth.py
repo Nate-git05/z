@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import http.server
+import json
 import os
 import secrets
 import socketserver
@@ -579,9 +580,141 @@ def _find_available_port(start: int, end: int) -> int | None:
     return None
 
 
-def prompt_byok_setup(io) -> bool:
+def open_web_setup(io, mode: str) -> dict | None:
+    """Open a browser to the web app's /app/setup page and wait for it to
+    complete via a local callback — same pattern as login_with_google's
+    OAuth flow, but the callback is a POST (not GET) since BYOK setup
+    carries a raw API key, unlike an OAuth code.
+
+    mode: "byok" | "router"
+    Returns a dict on success:
+      - byok:   {"model_id": "...", "env_var": "...", "api_key": "..."}
+      - router: {"workspace_id": "...", "plan": "..."}  (no secret data)
+    Returns None on cancel/timeout.
+    """
+    if mode not in ("byok", "router"):
+        raise AuthError(f"Unknown setup mode: {mode}")
+
+    if auth_dev_mode():
+        return _dev_web_setup(io, mode)
+
+    port = _find_available_port(8765, 8865)
+    if port is None:
+        raise AuthError("Could not find a free local port for setup callback.")
+
+    redirect_uri = f"http://127.0.0.1:{port}/callback"
+    state = secrets.token_urlsafe(24)
+    result_box: dict = {"data": None, "error": None, "done": threading.Event()}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_OPTIONS(self):  # noqa: N802
+            # Browser pages on the auth host POST to 127.0.0.1 — allow CORS.
+            parsed = urlparse(self.path)
+            if parsed.path != "/callback":
+                self.send_response(404)
+                self.end_headers()
+                return
+            self.send_response(204)
+            self._cors_headers()
+            self.end_headers()
+
+        def do_POST(self):  # noqa: N802
+            parsed = urlparse(self.path)
+            if parsed.path != "/callback":
+                self.send_response(404)
+                self.end_headers()
+                return
+            length = int(self.headers.get("Content-Length", 0))
+            try:
+                payload = json.loads(self.rfile.read(length) or b"{}")
+            except (ValueError, json.JSONDecodeError):
+                payload = {}
+            if payload.get("state") != state:
+                result_box["error"] = "Invalid setup state"
+                self._respond(400, "Invalid state. You can close this tab.")
+                result_box["done"].set()
+                return
+            if payload.get("error"):
+                result_box["error"] = payload["error"]
+                self._respond(
+                    400,
+                    f"Setup error: {payload['error']}. You can close this tab.",
+                )
+                result_box["done"].set()
+                return
+            result_box["data"] = payload.get("data") or {}
+            self._respond(
+                200,
+                "Setup complete. You can close this tab and return to the terminal.",
+            )
+            result_box["done"].set()
+
+        def _cors_headers(self):
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+
+        def _respond(self, status, body):
+            self.send_response(status)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self._cors_headers()
+            self.end_headers()
+            self.wfile.write(
+                f"<html><body><h2>{body}</h2></body></html>".encode("utf-8")
+            )
+
+        def log_message(self, format, *args):  # noqa: A003
+            return
+
+    server = socketserver.TCPServer(("127.0.0.1", port), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    base = get_auth_base_url()
+    params = urllib.parse.urlencode(
+        {
+            "mode": mode,
+            "redirect_uri": redirect_uri,
+            "state": state,
+        }
+    )
+    setup_url = f"{base}/app/setup?{params}"
+    io.tool_output(f"Opening browser to complete {mode} setup…")
+    io.tool_output(f"If it doesn't open, visit:\n  {setup_url}")
+    try:
+        webbrowser.open(setup_url)
+    except Exception:
+        pass
+
+    finished = result_box["done"].wait(timeout=AUTH_TIMEOUT_SECONDS)
+    server.shutdown()
+    server.server_close()
+
+    if not finished:
+        io.tool_error("Timed out waiting for setup to complete in the browser.")
+        return None
+    if result_box["error"]:
+        io.tool_error(f"Setup failed: {result_box['error']}")
+        return None
+    return result_box["data"]
+
+
+def _dev_web_setup(io, mode: str) -> dict | None:
+    """In-terminal fallback when no real auth backend/web app is configured."""
+    if mode == "router":
+        io.tool_output("Router setup (dev) — no browser signup required.")
+        return {"workspace_id": "ws-dev", "plan": "dev"}
+    return _dev_byok_setup(io)
+
+
+def _dev_byok_setup(io) -> dict | None:
     """Pick a foundation-model family, then a specific model within it,
-    then prompt only for the env var(s) that model actually needs."""
+    then prompt only for the env var(s) that model actually needs.
+
+    Used by open_web_setup() in auth_dev_mode() — same interactive flow as
+    the original in-terminal BYOK setup, returning the web-callback payload
+    shape so callers can persist uniformly.
+    """
     from .models_catalog import CURATED_SECTIONS
 
     io.tool_output("")
@@ -607,14 +740,14 @@ def prompt_byok_setup(io) -> bool:
             model_name = models[int(model_choice) - 1]
         except (ValueError, IndexError):
             io.tool_error("Not a valid choice.")
-            return False
+            return None
     else:
         model_name = (
             io.prompt_ask("Type the exact model name", default="") or ""
         ).strip()
         if not model_name:
             io.tool_error("No model entered.")
-            return False
+            return None
 
     from aider.models import Model, fuzzy_match_models
 
@@ -627,27 +760,55 @@ def prompt_byok_setup(io) -> bool:
             )
         else:
             io.tool_error(f"'{model_name}' is not a recognized model.")
-        return False
+        return None
 
     # Only construct Model() after fuzzy_match_models confirms it's real —
     # Model() alone does not validate existence (fake names look "set up").
     model = Model(model_name)
 
-    from .onboarding import save_byok_key, save_selected_model
-
+    env_var = ""
+    api_key = ""
     if not model.missing_keys and model.keys_in_environment:
         io.tool_output(f"'{model_name}' already has its required key(s) set.")
     else:
-        for env_var in model.missing_keys:
-            key = io.prompt_ask(f"Paste your {env_var}", default="")
+        for missing in model.missing_keys:
+            key = io.prompt_ask(f"Paste your {missing}", default="")
             if not key or not key.strip():
                 io.tool_error("No key entered.")
-                return False
-            save_byok_key(env_var, key.strip())
+                return None
+            # Web callback carries a single key; for multi-key models in
+            # dev mode, persist each as entered and return the last pair.
+            env_var = missing
+            api_key = key.strip()
+            from .onboarding import save_byok_key
 
-    save_selected_model(model_name)
+            save_byok_key(env_var, api_key)
+
     io.tool_output(f"Saved. Using {model_name}.")
+    return {"model_id": model_name, "env_var": env_var, "api_key": api_key}
+
+
+def prompt_byok_setup(io) -> bool:
+    """Compat wrapper around the in-terminal BYOK picker (dev / tests)."""
+    result = _dev_byok_setup(io)
+    if result is None:
+        return False
+    apply_byok_setup_result(result)
     return True
+
+
+def apply_byok_setup_result(result: dict) -> None:
+    """Persist model + optional API key from open_web_setup() / _dev_byok_setup()."""
+    from .onboarding import save_byok_key, save_selected_model
+
+    env_var = (result.get("env_var") or "").strip()
+    api_key = (result.get("api_key") or "").strip()
+    # Dev path may already have persisted keys while prompting; re-save is fine.
+    if env_var and api_key:
+        save_byok_key(env_var, api_key)
+    model_id = (result.get("model_id") or "").strip()
+    if model_id:
+        save_selected_model(model_id)
 
 
 def whoami_text(creds: Credentials | None = None) -> str:
