@@ -4,19 +4,19 @@
   "rewrites": [
     {
       "source": "/v1/:path*",
-      "destination": "https://api.z-agent.dev/v1/:path*"
+      "destination": "https://z-git-283858537418.europe-west1.run.app/v1/:path*"
     },
     {
       "source": "/static/:path*",
-      "destination": "https://api.z-agent.dev/static/:path*"
+      "destination": "https://z-git-283858537418.europe-west1.run.app/static/:path*"
     },
     {
       "source": "/app/:path*",
-      "destination": "https://api.z-agent.dev/app/:path*"
+      "destination": "https://z-git-283858537418.europe-west1.run.app/app/:path*"
     },
     {
       "source": "/health",
-      "destination": "https://api.z-agent.dev/health"
+      "destination": "https://z-git-283858537418.europe-west1.run.app/health"
     }
   ]
 }
