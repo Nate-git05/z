@@ -724,41 +724,71 @@ def open_web_login(io, analytics=None) -> Credentials | None:
     return _persist_session_credentials(io, result.credentials, analytics=analytics)
 
 
-def open_web_setup(io, mode: str) -> dict | None:
-    """Open a browser to the web app's /app/setup page and wait for it to
-    complete via a local callback — same pattern as login_with_google's
-    OAuth flow, but the callback is a POST (not GET) since BYOK setup
-    carries a raw API key, unlike an OAuth code.
+def open_web_setup(io, mode: str, *, skip_login: bool = False) -> dict | None:
+    """Open a browser to /app/setup for BOTH login (unless skip_login) and
+    mode-specific setup (BYOK model+key, or router), combined in one page.
 
     mode: "byok" | "router"
     Returns a dict on success:
-      - byok:   {"model_id": "...", "env_var": "...", "api_key": "..."}
-      - router: {"workspace_id": "...", "plan": "..."}  (no secret data)
+      {
+        "credentials": {...} | None,   # None if skip_login and no re-auth
+        "mode_result": {
+          # byok:   {"model_id": "...", "env_var": "...", "api_key": "..."}
+          # router: {"workspace_id": "...", "plan": "..."}
+        }
+      }
     Returns None on cancel/timeout.
     """
     if mode not in ("byok", "router"):
         raise AuthError(f"Unknown setup mode: {mode}")
 
     if auth_dev_mode():
-        return _dev_web_setup(io, mode)
+        return _dev_web_setup(io, mode, skip_login=skip_login)
 
     return _open_web_page_for_post_callback(
         io,
         path="/app/setup",
-        extra_params={"mode": mode},
-        opening_message=f"Opening browser to complete {mode} setup…",
-        success_html="Setup complete. You can close this tab and return to the terminal.",
+        extra_params={
+            "mode": mode,
+            "skip_login": "1" if skip_login else "0",
+        },
+        opening_message=(
+            f"Opening browser to complete {mode} setup…"
+            if skip_login
+            else f"Opening browser to sign in and complete {mode} setup…"
+        ),
+        success_html="All set. You can close this tab and return to the terminal.",
         timeout_message="Timed out waiting for setup to complete in the browser.",
         failure_label="Setup",
     )
 
 
-def _dev_web_setup(io, mode: str) -> dict | None:
-    """In-terminal fallback when no real auth backend/web app is configured."""
-    if mode == "router":
+def _dev_web_setup(io, mode: str, *, skip_login: bool = False) -> dict | None:
+    """In-terminal fallback when no real auth backend/web app is configured.
+
+    Reuses run_login_flow + prompt_byok_setup so local testing works without
+    a deployed /app/setup page.
+    """
+    credentials_data = None
+    if not skip_login:
+        creds = run_login_flow(io)
+        if not creds:
+            return None
+        credentials_data = creds.to_dict()
+
+    if mode == "byok":
+        if not prompt_byok_setup(io):
+            return None
+        from .onboarding import load_config
+
+        cfg = load_config()
+        # Key already saved by prompt_byok_setup; surface model_id for callers.
+        mode_result = {"model_id": cfg.selected_model}
+    else:
         io.tool_output("Router setup (dev) — no browser signup required.")
-        return {"workspace_id": "ws-dev", "plan": "dev"}
-    return _dev_byok_setup(io)
+        mode_result = {"workspace_id": "ws-dev", "plan": "dev"}
+
+    return {"credentials": credentials_data, "mode_result": mode_result}
 
 
 def _dev_byok_setup(io) -> dict | None:

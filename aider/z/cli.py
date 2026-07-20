@@ -154,65 +154,80 @@ def _skip_account_gate() -> bool:
 def ensure_agent_session(io) -> bool:
     """First-run / session gate for the coding agent.
 
-    Intended order:
-      1. Choose BYOK vs router (once, in the terminal)
-      2. If not signed in → open the web login page; on success the user
-         closes the browser and returns to the CLI with credentials saved
-      3. Finish BYOK/router setup in the browser (/app/setup), then return
-         to the CLI again
+    Order on first launch:
+      1. Choose BYOK vs router in the terminal (before any login check)
+      2. One browser trip to /app/setup that handles login (if needed) and
+         mode-specific setup together, then POSTs back to the local callback
+      3. CLI saves credentials + BYOK key/model (as needed) and starts
+
+    ``z login`` / ``z auth switch`` keep the existing in-terminal flows.
 
     Set Z_SKIP_ACCOUNT=1 to bypass (automation / tests).
     """
     if _skip_account_gate():
         return True
 
-    from aider.z.auth import (
-        apply_byok_setup_result,
-        current_session,
-        open_web_login,
-        open_web_setup,
-    )
-    from aider.z.login_screen import prompt_auth_mode_choice
     from aider.z.onboarding import load_config, save_auth_mode
 
     config = load_config()
-    creds = current_session()
-    signed_in = bool(creds and creds.is_authenticated())
-
-    # Already fully onboarded
-    if signed_in and config.auth_mode in ("byok", "router"):
-        return True
-
-    # Step 1: pick BYOK vs router before any login redirect.
-    mode = config.auth_mode if config.auth_mode in ("byok", "router") else None
-    if mode is None:
-        mode = prompt_auth_mode_choice(io)
-        if mode is None:
-            io.tool_output("Setup cancelled.")
-            return False
-
-    # Step 2: unsigned users go to the web login page, then return here.
-    if not signed_in:
-        creds = open_web_login(io)
-        if not creds:
-            return False
-
-    # Mode already persisted — login was the only missing piece.
     if config.auth_mode in ("byok", "router"):
+        # Already configured once. Router still needs a live session; BYOK
+        # works from the locally saved key without any account check.
+        if config.auth_mode == "router":
+            from aider.z.auth import current_session, open_web_setup
+
+            creds = current_session()
+            if not (creds and creds.is_authenticated()):
+                result = open_web_setup(io, "router")
+                if result is None:
+                    return False
+                _apply_web_setup_result(result, mode="router")
         return True
 
-    # Step 3: finish BYOK key entry / router signup in the browser.
-    result = open_web_setup(io, mode)
+    # First run: mode choice BEFORE any login check.
+    from aider.z.login_screen import prompt_auth_mode_choice
+
+    mode = prompt_auth_mode_choice(io)
+    if mode is None:
+        io.tool_output("Setup cancelled.")
+        return False
+
+    from aider.z.auth import current_session, open_web_setup
+
+    creds = current_session()
+    skip_login = bool(creds and creds.is_authenticated())
+
+    result = open_web_setup(io, mode, skip_login=skip_login)
     if result is None:
         return False
 
-    if mode == "byok":
-        apply_byok_setup_result(result)
-        save_auth_mode("byok")
-        return True
-
-    save_auth_mode("router")
+    _apply_web_setup_result(result, mode=mode)
+    save_auth_mode(mode)
     return True
+
+
+def _apply_web_setup_result(result: dict, *, mode: str) -> None:
+    """Persist combined web-flow output: optional credentials + mode data."""
+    creds_data = result.get("credentials")
+    if creds_data:
+        from aider.z.credentials import (
+            Credentials,
+            apply_credentials_to_env,
+            save_credentials,
+        )
+
+        creds = Credentials.from_dict(creds_data)
+        save_credentials(creds)
+        apply_credentials_to_env(creds)
+
+    if mode == "byok":
+        mode_result = result.get("mode_result") or {}
+        from aider.z.onboarding import save_byok_key, save_selected_model
+
+        if mode_result.get("env_var") and mode_result.get("api_key"):
+            save_byok_key(mode_result["env_var"], mode_result["api_key"])
+        if mode_result.get("model_id"):
+            save_selected_model(mode_result["model_id"])
 
 
 def _has_explicit_model_flag(argv: list[str]) -> bool:
@@ -419,39 +434,27 @@ def cmd_mcp(io, args) -> int:
 
 
 def cmd_auth_switch(io) -> int:
-    """Re-choose BYOK vs router; web login first if the session expired."""
-    from aider.z.auth import (
-        apply_byok_setup_result,
-        current_session,
-        open_web_login,
-        open_web_setup,
-    )
+    """Re-choose BYOK vs router using the in-terminal flows (unchanged)."""
+    from aider.z.auth import current_session, prompt_byok_setup, run_login_flow
     from aider.z.login_screen import prompt_auth_mode_choice
     from aider.z.onboarding import save_auth_mode
 
-    mode = prompt_auth_mode_choice(io)
-    if mode is None:
-        io.tool_output("Switch cancelled.")
-        return 1
-
     creds = current_session()
     if not (creds and creds.is_authenticated()):
-        creds = open_web_login(io)
+        creds = run_login_flow(io)
         if not creds:
             return 1
 
-    result = open_web_setup(io, mode)
-    if result is None:
-        return 1
-
-    if mode == "byok":
-        apply_byok_setup_result(result)
+    mode = prompt_auth_mode_choice(io)
+    if mode == "byok" and prompt_byok_setup(io):
         save_auth_mode("byok")
         return 0
-
-    save_auth_mode("router")
-    io.tool_output("Using Z's router for model access.")
-    return 0
+    if mode == "router":
+        save_auth_mode("router")
+        io.tool_output("Using Z's router for model access.")
+        return 0
+    io.tool_output("Switch cancelled.")
+    return 1
 
 
 def cmd_workspace(io, args) -> int:
