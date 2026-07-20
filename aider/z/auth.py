@@ -532,6 +532,7 @@ def _credentials_from_api_payload(
             id=ws_data.get("id"),
             name=ws_data.get("name"),
             role=ws_data.get("role"),
+            organization=ws_data.get("organization"),
         ),
     )
     return AuthResult(ok=True, credentials=creds)
@@ -665,6 +666,8 @@ def whoami_text(creds: Credentials | None = None) -> str:
         ws = creds.workspace.name or creds.workspace.id
         role = f" ({creds.workspace.role})" if creds.workspace.role else ""
         lines.append(f"  workspace: {ws}{role}")
+        if creds.workspace.organization:
+            lines.append(f"  organization: {creds.workspace.organization}")
     lines.append(
         "  (Model API keys are separate — use `z auth switch` or set provider env vars.)"
     )

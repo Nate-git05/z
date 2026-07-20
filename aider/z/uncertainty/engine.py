@@ -812,11 +812,16 @@ def attach_engine_to_coder(coder, *, user_label: Optional[str] = None) -> Uncert
     session_id = getattr(coder, "uncertainty_session_id", None) or str(uuid.uuid4())
     coder.uncertainty_session_id = session_id
 
+    from aider.z.auth import current_session
+
+    creds = current_session()
+    workspace_id = creds.workspace.id if creds and creds.workspace else None
+
     def _remote_sync(node: UncertaintyNode):
         try:
             from .remote import sync_node
 
-            sync_node(node, repo_key=str(root))
+            sync_node(node, repo_key=str(root), workspace_id=workspace_id)
         except Exception:
             pass
 
@@ -831,7 +836,7 @@ def attach_engine_to_coder(coder, *, user_label: Optional[str] = None) -> Uncert
     try:
         from .remote import fetch_workspace_nodes
 
-        remote = fetch_workspace_nodes(repo_key=str(root))
+        remote = fetch_workspace_nodes(repo_key=str(root), workspace_id=workspace_id)
         if remote:
             store.merge_remote(remote)
     except Exception:
