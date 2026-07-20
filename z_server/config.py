@@ -38,7 +38,7 @@ class Settings:
         self.public_base_url: str = os.environ.get(
             "Z_PUBLIC_BASE_URL", "http://127.0.0.1:8080"
         ).rstrip("/")
-        # When set (e.g. https://zim-s.com), public marketing/auth pages
+        # When set (e.g. https://z-agent.dev), public marketing/auth pages
         # (/ , /pricing, /login) redirect to the Next.js frontend instead of
         # serving Jinja templates. Leave empty for API-only / local Jinja.
         self.frontend_url: str = os.environ.get("Z_FRONTEND_URL", "").rstrip("/")
@@ -48,7 +48,7 @@ class Settings:
         self.smtp_port: int = int(os.environ.get("Z_SMTP_PORT", "587"))
         self.smtp_user: str | None = os.environ.get("Z_SMTP_USER")
         self.smtp_password: str | None = os.environ.get("Z_SMTP_PASSWORD")
-        self.email_from: str = os.environ.get("Z_EMAIL_FROM", "noreply@z.dev")
+        self.email_from: str = os.environ.get("Z_EMAIL_FROM", "noreply@z-agent.dev")
 
         # Twilio Verify
         self.twilio_account_sid: str | None = os.environ.get("TWILIO_ACCOUNT_SID")

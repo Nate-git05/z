@@ -31,9 +31,11 @@ The Next.js `package.json` lives in `web/`, not the repo root. If Root Directory
 1. Import the GitHub repo
 2. Set **Root Directory** → `web`
 3. Framework preset: Next.js (auto)
-4. Optional env: `NEXT_PUBLIC_API_BASE_URL=https://api.zim-s.com` (once the API is live)
+4. Optional env: `NEXT_PUBLIC_API_BASE_URL=https://api.z-agent.dev` (once the API is live)
 5. Deploy
 
-API proxy rewrites are in `web/vercel.json` (`/v1`, `/app`, `/static` → `api.zim-s.com`).
+API proxy rewrites are in `web/vercel.json` (`/v1`, `/app`, `/static` → `api.z-agent.dev`).
 
-On the FastAPI host, set `Z_FRONTEND_URL` to your Vercel (or custom) domain so `/`, `/pricing`, and `/login` redirect to Next.
+On the FastAPI host, set `Z_FRONTEND_URL=https://z-agent.dev` so `/`, `/pricing`, and `/login` redirect to Next.
+
+Custom domain: point `z-agent.dev` at the Vercel project; point `api.z-agent.dev` at Cloud Run.

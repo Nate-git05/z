@@ -4,19 +4,19 @@
   "rewrites": [
     {
       "source": "/v1/:path*",
-      "destination": "https://api.zim-s.com/v1/:path*"
+      "destination": "https://api.z-agent.dev/v1/:path*"
     },
     {
       "source": "/static/:path*",
-      "destination": "https://api.zim-s.com/static/:path*"
+      "destination": "https://api.z-agent.dev/static/:path*"
     },
     {
       "source": "/app/:path*",
-      "destination": "https://api.zim-s.com/app/:path*"
+      "destination": "https://api.z-agent.dev/app/:path*"
     },
     {
       "source": "/health",
-      "destination": "https://api.zim-s.com/health"
+      "destination": "https://api.z-agent.dev/health"
     }
   ]
 }
