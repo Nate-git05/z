@@ -50,6 +50,10 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools_scm]
 write_to = "aider/_version.py"
 
+# Vercel FastAPI entry (custom path — see api/index.py which re-exports this).
+[tool.vercel]
+entrypoint = "z_server.app:app"
+
 [tool.codespell]
 skip = "*.svg,Gemfile.lock,tests/fixtures/*,aider/website/assets/*"
 write-changes = true
