@@ -154,37 +154,32 @@ def _skip_account_gate() -> bool:
 def ensure_agent_session(io) -> bool:
     """First-run / session gate for the coding agent.
 
-    Order on first launch:
-      1. Choose BYOK vs router in the terminal (before any login check)
-      2. One browser trip to /app/setup that handles login (if needed) and
-         mode-specific setup together, then POSTs back to the local callback
-      3. CLI saves credentials + BYOK key/model (as needed) and starts
+    Order: login first (if not already signed in) via the web page, THEN
+    choose BYOK vs router in the terminal, THEN (BYOK only) finish model/key
+    setup via a second, skip_login web trip.
 
-    ``z login`` / ``z auth switch`` keep the existing in-terminal flows.
+    ``z login`` / ``z auth switch`` remain separate explicit commands using the
+    original in-terminal flow, unaffected by this.
 
     Set Z_SKIP_ACCOUNT=1 to bypass (automation / tests).
     """
     if _skip_account_gate():
         return True
 
+    from aider.z.auth import current_session, open_web_login
+
+    creds = current_session()
+    if not (creds and creds.is_authenticated()):
+        creds = open_web_login(io)
+        if not creds:
+            return False
+
     from aider.z.onboarding import load_config, save_auth_mode
 
     config = load_config()
     if config.auth_mode in ("byok", "router"):
-        # Already configured once. Router still needs a live session; BYOK
-        # works from the locally saved key without any account check.
-        if config.auth_mode == "router":
-            from aider.z.auth import current_session, open_web_setup
-
-            creds = current_session()
-            if not (creds and creds.is_authenticated()):
-                result = open_web_setup(io, "router")
-                if result is None:
-                    return False
-                _apply_web_setup_result(result, mode="router")
         return True
 
-    # First run: mode choice BEFORE any login check.
     from aider.z.login_screen import prompt_auth_mode_choice
 
     mode = prompt_auth_mode_choice(io)
@@ -192,16 +187,14 @@ def ensure_agent_session(io) -> bool:
         io.tool_output("Setup cancelled.")
         return False
 
-    from aider.z.auth import current_session, open_web_setup
+    if mode == "byok":
+        from aider.z.auth import open_web_setup
 
-    creds = current_session()
-    skip_login = bool(creds and creds.is_authenticated())
+        result = open_web_setup(io, "byok", skip_login=True)
+        if result is None:
+            return False
+        _apply_web_setup_result(result, mode="byok")
 
-    result = open_web_setup(io, mode, skip_login=skip_login)
-    if result is None:
-        return False
-
-    _apply_web_setup_result(result, mode=mode)
     save_auth_mode(mode)
     return True
 

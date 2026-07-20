@@ -87,23 +87,23 @@ class ConfigMergeTest(unittest.TestCase):
 
 
 class EnsureSessionOrderTest(unittest.TestCase):
-    def test_mode_choice_then_one_combined_web_setup_when_signed_out(self):
-        """BYOK/router first; one combined /app/setup trip (login+setup)."""
+    def test_login_happens_before_mode_choice_on_fresh_config(self):
+        """Login first; then mode choice; BYOK setup with skip_login=True."""
         io = FakeIO()
         order: list[str] = []
+
+        def fake_login(_io, **_k):
+            order.append("login")
+            return _creds()
 
         def fake_mode(_io, **_k):
             order.append("mode")
             return "byok"
 
-        def fake_session():
-            order.append("session")
-            return None
-
         def fake_setup(_io, mode, *, skip_login=False):
             order.append(f"setup:{mode}:{skip_login}")
             return {
-                "credentials": {"access_token": "tok"},
+                "credentials": None,
                 "mode_result": {
                     "model_id": "claude-sonnet-5",
                     "env_var": "ANTHROPIC_API_KEY",
@@ -113,24 +113,25 @@ class EnsureSessionOrderTest(unittest.TestCase):
 
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("Z_SKIP_ACCOUNT", None)
-            with patch("aider.z.auth.current_session", side_effect=fake_session):
-                with patch(
-                    "aider.z.onboarding.load_config",
-                    return_value=OnboardingConfig(),
-                ):
+            with patch("aider.z.auth.current_session", return_value=None):
+                with patch("aider.z.auth.open_web_login", side_effect=fake_login):
                     with patch(
-                        "aider.z.login_screen.prompt_auth_mode_choice",
-                        side_effect=fake_mode,
+                        "aider.z.onboarding.load_config",
+                        return_value=OnboardingConfig(),
                     ):
                         with patch(
-                            "aider.z.auth.open_web_setup",
-                            side_effect=fake_setup,
+                            "aider.z.login_screen.prompt_auth_mode_choice",
+                            side_effect=fake_mode,
                         ):
-                            with patch("aider.z.onboarding.save_auth_mode"):
-                                with patch("aider.z.cli._apply_web_setup_result"):
-                                    ok = ensure_agent_session(io)
+                            with patch(
+                                "aider.z.auth.open_web_setup",
+                                side_effect=fake_setup,
+                            ):
+                                with patch("aider.z.onboarding.save_auth_mode"):
+                                    with patch("aider.z.cli._apply_web_setup_result"):
+                                        ok = ensure_agent_session(io)
         self.assertTrue(ok)
-        self.assertEqual(order, ["mode", "session", "setup:byok:False"])
+        self.assertEqual(order, ["login", "mode", "setup:byok:True"])
 
 
 class ByokSetupTest(unittest.TestCase):
