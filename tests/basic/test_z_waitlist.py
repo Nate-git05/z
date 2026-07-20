@@ -79,7 +79,7 @@ class WaitlistApiTest(unittest.TestCase):
         self.assertIn("JetBrains+Mono", body)
 
     def test_public_pages_redirect_when_frontend_url_set(self):
-        os.environ["Z_FRONTEND_URL"] = "https://zim-s.com"
+        os.environ["Z_FRONTEND_URL"] = "https://z-agent.dev"
         get_settings.cache_clear()
         try:
             app = create_app()
@@ -89,7 +89,7 @@ class WaitlistApiTest(unittest.TestCase):
                 self.assertEqual(resp.status_code, 307, path)
                 self.assertEqual(
                     resp.headers.get("location"),
-                    f"https://zim-s.com{path if path != '/' else '/'}",
+                    f"https://z-agent.dev{path if path != '/' else '/'}",
                 )
         finally:
             os.environ.pop("Z_FRONTEND_URL", None)

@@ -4,7 +4,7 @@
 # Build:  docker build -f Dockerfile.server -t z-server .
 # Run:    docker run --rm -p 8080:8080 \
 #           -e Z_SECRET_KEY=... -e Z_PUBLIC_BASE_URL=https://api.example.com \
-#           -e Z_FRONTEND_URL=https://z-ten-beta.vercel.app \
+#           -e Z_FRONTEND_URL=https://z-agent.dev \
 #           -e DATABASE_URL=postgresql+psycopg://... \
 #           z-server
 
