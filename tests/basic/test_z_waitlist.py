@@ -57,23 +57,44 @@ class WaitlistApiTest(unittest.TestCase):
         self.assertIn("install-cmd-curl", body)
         self.assertIn("install-cmd-pip", body)
         self.assertIn("waitlist-form", body)
+        self.assertIn("waitlist-modal", body)
+        self.assertIn("data-open-waitlist", body)
+        self.assertIn('id="model-access"', body)
+        self.assertIn("/pricing", body)
         self.assertIn("You're on the list", body)
         self.assertIn("/static/css/landing.css", body)
         self.assertIn("/static/js/landing.js", body)
+        self.assertIn("JetBrains+Mono", body)
+
+    def test_pricing_page_renders(self):
+        resp = self.client.get("/pricing")
+        self.assertEqual(resp.status_code, 200)
+        body = resp.text
+        self.assertIn("Z Router", body)
+        self.assertIn("Coming soon", body)
+        self.assertIn("Bring your own key", body)
+        self.assertIn("data-waitlist-tag=\"router\"", body)
+        self.assertIn("waitlist-modal", body)
         self.assertIn("JetBrains+Mono", body)
 
     def test_static_assets(self):
         css = self.client.get("/static/css/landing.css")
         self.assertEqual(css.status_code, 200)
         self.assertIn("#0A0A0A", css.text)
-        self.assertIn("#F2F0EC", css.text)
+        self.assertIn("#F5F5F5", css.text)
         self.assertIn("#C96A2B", css.text)
         self.assertIn("JetBrains Mono", css.text)
+        self.assertIn(".lp-modal", css.text)
+        self.assertIn(".lp-model-cards", css.text)
+        self.assertIn(".pricing-columns", css.text)
         js = self.client.get("/static/js/landing.js")
         self.assertEqual(js.status_code, 200)
         self.assertIn("/v1/waitlist", js.text)
         self.assertIn("fetch(", js.text)
         self.assertIn("copy-install", js.text)
+        self.assertIn("setupWaitlistModal", js.text)
+        self.assertIn("setupScrollReveal", js.text)
+        self.assertIn("interest", js.text)
 
     def test_signup_creates_row(self):
         resp = self.client.post(
@@ -88,6 +109,50 @@ class WaitlistApiTest(unittest.TestCase):
         data = resp.json()
         self.assertTrue(data["ok"])
         self.assertFalse(data["already_registered"])
+
+    def test_waitlist_accepts_optional_interest_tag(self):
+        from sqlalchemy import select
+
+        from z_server.db import SessionLocal
+        from z_server.models.waitlist import WaitlistSignup
+
+        resp = self.client.post(
+            "/v1/waitlist",
+            json={
+                "first_name": "Nat",
+                "last_name": "Router",
+                "email": "router-fan@example.com",
+                "interest": "router",
+            },
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertTrue(resp.json()["ok"])
+
+        with SessionLocal() as db:
+            row = db.execute(
+                select(WaitlistSignup).where(
+                    WaitlistSignup.email == "router-fan@example.com"
+                )
+            ).scalars().first()
+            self.assertIsNotNone(row)
+            self.assertEqual(row.interest, "router")
+
+        # Omitting interest must not break existing callers.
+        resp2 = self.client.post(
+            "/v1/waitlist",
+            json={
+                "first_name": "Plain",
+                "last_name": "Signup",
+                "email": "plain@example.com",
+            },
+        )
+        self.assertEqual(resp2.status_code, 200, resp2.text)
+        with SessionLocal() as db:
+            row2 = db.execute(
+                select(WaitlistSignup).where(WaitlistSignup.email == "plain@example.com")
+            ).scalars().first()
+            self.assertIsNotNone(row2)
+            self.assertIsNone(row2.interest)
 
     def test_duplicate_email_is_success(self):
         payload = {

@@ -40,6 +40,12 @@ def home(request: Request, user: User | None = Depends(get_optional_user)):
     return templates.TemplateResponse(request, "landing.html", _ctx(request, user))
 
 
+@router.get("/pricing", response_class=HTMLResponse)
+def pricing(request: Request, user: User | None = Depends(get_optional_user)):
+    """Public pricing page — BYOK free forever, router coming soon."""
+    return templates.TemplateResponse(request, "pricing.html", _ctx(request, user))
+
+
 @router.get("/login", response_class=HTMLResponse)
 def login_page(request: Request, user: User | None = Depends(get_optional_user)):
     if user:

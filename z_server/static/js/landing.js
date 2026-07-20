@@ -1,5 +1,6 @@
 /**
- * Z landing — terminal typing demo, install copy, waitlist form.
+ * Z landing — terminal typing demo, install copy, waitlist form/modal,
+ * scroll reveal, and active nav highlight.
  */
 (function () {
   "use strict";
@@ -30,7 +31,6 @@
     var i = 0;
     function next() {
       if (i >= LINES.length) {
-        // Restart after a pause
         setTimeout(function () {
           body.innerHTML = "";
           body.appendChild(cursor);
@@ -43,7 +43,6 @@
       line.className = "line";
       line.innerHTML = LINES[i].html || "&nbsp;";
       body.insertBefore(line, cursor);
-      // force reflow then reveal
       void line.offsetWidth;
       line.classList.add("visible");
       i += 1;
@@ -127,6 +126,9 @@
       submitBtn.disabled = true;
       submitBtn.textContent = "Joining…";
 
+      var interest = form.dataset.interestTag || null;
+      if (interest === "") interest = null;
+
       fetch("/v1/waitlist", {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -134,6 +136,7 @@
           first_name: first,
           last_name: last,
           email: email,
+          interest: interest,
         }),
       })
         .then(function (res) {
@@ -177,9 +180,101 @@
     }
   }
 
+  function setupWaitlistModal() {
+    var modal = document.getElementById("waitlist-modal");
+    if (!modal) return;
+    var openers = document.querySelectorAll("[data-open-waitlist]");
+    var closers = modal.querySelectorAll("[data-close-modal]");
+    var form = document.getElementById("waitlist-form");
+
+    function open(tag) {
+      modal.classList.add("lp-modal-open");
+      modal.setAttribute("aria-hidden", "false");
+      if (form) form.dataset.interestTag = tag || "";
+      document.body.style.overflow = "hidden";
+    }
+    function close() {
+      modal.classList.remove("lp-modal-open");
+      modal.setAttribute("aria-hidden", "true");
+      document.body.style.overflow = "";
+    }
+
+    openers.forEach(function (btn) {
+      btn.addEventListener("click", function (e) {
+        e.preventDefault();
+        open(btn.dataset.waitlistTag);
+      });
+    });
+    closers.forEach(function (el) {
+      el.addEventListener("click", close);
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") close();
+    });
+  }
+
+  function setupScrollReveal() {
+    var sections = document.querySelectorAll(".lp-section, .lp-hero");
+    if (!sections.length) return;
+    if (!("IntersectionObserver" in window)) {
+      sections.forEach(function (s) {
+        s.classList.add("lp-revealed");
+      });
+      return;
+    }
+    var observer = new IntersectionObserver(
+      function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("lp-revealed");
+            observer.unobserve(entry.target);
+          }
+        });
+      },
+      { threshold: 0.15 }
+    );
+    sections.forEach(function (s) {
+      observer.observe(s);
+    });
+  }
+
+  function setupActiveNavHighlight() {
+    var navLinks = document.querySelectorAll('.lp-nav a[href^="#"]');
+    var sections = Array.prototype.map
+      .call(navLinks, function (a) {
+        return document.querySelector(a.getAttribute("href"));
+      })
+      .filter(Boolean);
+    if (!sections.length || !("IntersectionObserver" in window)) return;
+
+    var observer = new IntersectionObserver(
+      function (entries) {
+        entries.forEach(function (entry) {
+          var link = document.querySelector(
+            '.lp-nav a[href="#' + entry.target.id + '"]'
+          );
+          if (!link) return;
+          if (entry.isIntersecting) {
+            navLinks.forEach(function (a) {
+              a.classList.remove("lp-nav-active");
+            });
+            link.classList.add("lp-nav-active");
+          }
+        });
+      },
+      { rootMargin: "-40% 0px -50% 0px" }
+    );
+    sections.forEach(function (s) {
+      observer.observe(s);
+    });
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     runTerminalDemo();
     setupCopy();
     setupWaitlist();
+    setupWaitlistModal();
+    setupScrollReveal();
+    setupActiveNavHighlight();
   });
 })();

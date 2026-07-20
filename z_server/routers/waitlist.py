@@ -30,6 +30,7 @@ class WaitlistRequest(BaseModel):
     first_name: str = Field(..., min_length=1, max_length=120)
     last_name: str = Field(..., min_length=1, max_length=120)
     email: str = Field(..., min_length=3, max_length=320)
+    interest: str | None = Field(None, max_length=64)
 
 
 def _client_ip(request: Request) -> str:
@@ -81,18 +82,33 @@ def join_waitlist(
         raise HTTPException(400, "First and last name are required.")
 
     email = _validate_email(body.email)
+    interest = (body.interest or "").strip() or None
+    if interest and len(interest) > 64:
+        raise HTTPException(400, "Interest tag is too long.")
 
     existing = db.execute(
         select(WaitlistSignup).where(WaitlistSignup.email == email)
     ).scalars().first()
     if existing:
+        # Backfill interest on re-submit if the row has none yet.
+        if interest and not existing.interest:
+            existing.interest = interest
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
         return {
             "ok": True,
             "already_registered": True,
             "message": "You're on the list",
         }
 
-    row = WaitlistSignup(first_name=first, last_name=last, email=email)
+    row = WaitlistSignup(
+        first_name=first,
+        last_name=last,
+        email=email,
+        interest=interest,
+    )
     db.add(row)
     try:
         db.commit()
