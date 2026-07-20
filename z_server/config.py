@@ -23,13 +23,15 @@ class Settings:
         )
 
         # Default: SQLite file for local / early testing (no Postgres required).
-        # Production: set DATABASE_URL=postgresql+psycopg://user:pass@host:5432/z
+        # Production: set DATABASE_URL=postgresql+psycopg://user:pass@host:5432/postgres
         default_db = (
             "sqlite+pysqlite:///./z_server.db"
             if self.dev_mode
             else "postgresql+psycopg://z:z@localhost:5432/z"
         )
-        self.database_url: str = os.environ.get("DATABASE_URL", default_db)
+        self.database_url: str = _normalize_database_url(
+            os.environ.get("DATABASE_URL", default_db)
+        )
         self.secret_key: str = os.environ.get("Z_SECRET_KEY", "dev-change-me")
         self.access_token_ttl_seconds: int = int(
             os.environ.get("Z_ACCESS_TOKEN_TTL", str(60 * 60 * 24 * 30))
@@ -69,3 +71,28 @@ class Settings:
         self.mcp_github_client_secret: str | None = os.environ.get(
             "Z_MCP_GITHUB_CLIENT_SECRET"
         )
+
+
+def _normalize_database_url(url: str) -> str:
+    """Accept common Supabase/Postgres URLs and make them usable with SQLAlchemy.
+
+    - ``postgres://`` / ``postgresql://`` → ``postgresql+psycopg://``
+    - append ``sslmode=require`` for remote Postgres (Supabase needs TLS)
+    """
+    url = (url or "").strip()
+    if url.startswith("postgres://"):
+        url = "postgresql+psycopg://" + url[len("postgres://") :]
+    elif url.startswith("postgresql://"):
+        url = "postgresql+psycopg://" + url[len("postgresql://") :]
+
+    if url.startswith("postgresql+psycopg://") and "sslmode=" not in url:
+        # localhost often has no TLS; skip for local sockets/hosts
+        host_part = url.split("://", 1)[-1]
+        host = host_part.rsplit("@", 1)[-1].split("/", 1)[0].lower()
+        if not (
+            host.startswith("localhost")
+            or host.startswith("127.0.0.1")
+            or host.startswith("::1")
+        ):
+            url += ("&" if "?" in url else "?") + "sslmode=require"
+    return url

@@ -21,15 +21,31 @@ from z_server.routers import waitlist as waitlist_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import logging
+    import sys
+
+    log = logging.getLogger("z_server")
     try:
         init_db()
+        log.info("Database initialized")
     except Exception as err:
         settings = get_settings()
         hint = (
             "For local early testing, unset DATABASE_URL (defaults to sqlite ./z_server.db) "
             "or run: export DATABASE_URL='sqlite+pysqlite:///./z_server.db'"
             if settings.dev_mode
-            else "Check DATABASE_URL and that Postgres is reachable."
+            else (
+                "Check DATABASE_URL on Cloud Run. For Supabase use the URI with "
+                "sslmode=require (auto-added if missing) and the psycopg driver, e.g. "
+                "postgresql+psycopg://postgres:PASS@db.PROJECT.supabase.co:5432/postgres"
+            )
+        )
+        # Print to stderr so Cloud Logging always surfaces the root cause.
+        print(
+            f"FATAL: Z server failed to initialize the database: {err}\n"
+            f"DATABASE_URL host/driver check — {hint}",
+            file=sys.stderr,
+            flush=True,
         )
         raise RuntimeError(
             f"Z server failed to initialize the database ({settings.database_url!r}): {err}\n{hint}"
