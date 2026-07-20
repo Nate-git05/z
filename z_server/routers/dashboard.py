@@ -2,22 +2,34 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
+import secrets
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlencode
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from z_server.db import get_db
-from z_server.models import AuthProvider, User
+from z_server.models import AuthProvider, OAuthState, User
 from z_server.routers import mcp as mcp_api
 from z_server.schemas.auth import EmailVerifyRequest
 from z_server.schemas.mcp import McpConnectRequest
+from z_server.services import google_oauth
 from z_server.services.deps import get_current_user, get_optional_user, get_primary_workspace
 from z_server.services.mcp_catalog import get_catalog_entry, list_catalog
-from z_server.services.tokens import find_or_create_user_by_email, issue_session
+from z_server.services.tokens import (
+    find_or_create_user_by_email,
+    find_or_create_user_by_google,
+    issue_session,
+)
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -122,6 +134,231 @@ def web_logout():
     dest = f"{get_settings().frontend_url}/" if get_settings().frontend_url else "/"
     response = RedirectResponse(dest, status_code=303)
     response.delete_cookie("z_session")
+    return response
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _as_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _pkce_pair() -> tuple[str, str]:
+    verifier = secrets.token_urlsafe(64)
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    return verifier, challenge
+
+
+def _app_login_response(
+    request: Request,
+    *,
+    redirect_uri: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    session_payload: dict | None = None,
+):
+    params = {}
+    if redirect_uri:
+        params["redirect_uri"] = redirect_uri
+    if state:
+        params["state"] = state
+    google_start = "/app/login/google/start"
+    if params:
+        google_start = f"{google_start}?{urlencode(params)}"
+    return templates.TemplateResponse(
+        request,
+        "app_login.html",
+        _ctx(
+            request,
+            None,
+            redirect_uri=redirect_uri or "",
+            callback_state=state or "",
+            error=error,
+            session_json=json.dumps(session_payload) if session_payload else "",
+            signed_in=bool(session_payload),
+            google_start_url=google_start,
+        ),
+    )
+
+
+@router.get("/app/login", response_class=HTMLResponse)
+def app_login_page(
+    request: Request,
+    redirect_uri: str | None = Query(None),
+    state: str | None = Query(None),
+):
+    """CLI / browser sign-in page (Google + Continue with Z)."""
+    return _app_login_response(request, redirect_uri=redirect_uri, state=state)
+
+
+@router.get("/app/login/google/start")
+def app_login_google_start(
+    request: Request,
+    db: Session = Depends(get_db),
+    redirect_uri: str | None = Query(None),
+    state: str | None = Query(None),
+):
+    """Begin Google OAuth for the web login page; returns to /app/login/google/callback."""
+    from z_server.config import get_settings
+
+    settings = get_settings()
+    verifier, challenge = _pkce_pair()
+    oauth_state = secrets.token_urlsafe(24)
+    callback = f"{settings.public_base_url}/app/login/google/callback"
+    db.add(
+        OAuthState(
+            state=oauth_state,
+            code_challenge=challenge,
+            redirect_uri=callback,
+            expires_at=_utcnow() + timedelta(minutes=15),
+        )
+    )
+    db.flush()
+    try:
+        url = google_oauth.build_google_authorize_url(
+            redirect_uri=callback,
+            state=oauth_state,
+            code_challenge=challenge,
+        )
+    except google_oauth.GoogleOAuthError as err:
+        return _app_login_response(
+            request,
+            redirect_uri=redirect_uri,
+            state=state,
+            error=str(err),
+        )
+
+    response = RedirectResponse(url, status_code=302)
+    response.set_cookie(
+        "z_oauth_verifier",
+        verifier,
+        httponly=True,
+        samesite="lax",
+        max_age=900,
+    )
+    # Preserve CLI loopback callback across the Google redirect.
+    response.set_cookie(
+        "z_cli_callback",
+        json.dumps({"redirect_uri": redirect_uri or "", "state": state or ""}),
+        httponly=True,
+        samesite="lax",
+        max_age=900,
+    )
+    return response
+
+
+@router.get("/app/login/google/callback", response_class=HTMLResponse)
+def app_login_google_callback(
+    request: Request,
+    code: str | None = Query(None),
+    state: str | None = Query(None),
+    error: str | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    from z_server.config import get_settings
+
+    cli_raw = request.cookies.get("z_cli_callback") or "{}"
+    try:
+        cli = json.loads(cli_raw)
+    except json.JSONDecodeError:
+        cli = {}
+    redirect_uri = cli.get("redirect_uri") or ""
+    cli_state = cli.get("state") or ""
+
+    if error:
+        return _app_login_response(
+            request,
+            redirect_uri=redirect_uri,
+            state=cli_state,
+            error=f"Google sign-in was cancelled ({error}).",
+        )
+    if not code or not state:
+        return _app_login_response(
+            request,
+            redirect_uri=redirect_uri,
+            state=cli_state,
+            error="Google sign-in did not return a code.",
+        )
+
+    oauth_state = (
+        db.execute(select(OAuthState).where(OAuthState.state == state))
+        .scalars()
+        .first()
+    )
+    verifier = request.cookies.get("z_oauth_verifier")
+    settings = get_settings()
+    callback = f"{settings.public_base_url}/app/login/google/callback"
+    if not oauth_state or _as_utc(oauth_state.expires_at) < _utcnow():
+        return _app_login_response(
+            request,
+            redirect_uri=redirect_uri,
+            state=cli_state,
+            error="Google sign-in expired. Try again.",
+        )
+    if not verifier:
+        return _app_login_response(
+            request,
+            redirect_uri=redirect_uri,
+            state=cli_state,
+            error="Missing OAuth verifier. Try again.",
+        )
+
+    try:
+        profile = google_oauth.exchange_google_code(
+            code=code,
+            code_verifier=verifier,
+            redirect_uri=callback,
+        )
+    except google_oauth.GoogleOAuthError as err:
+        return _app_login_response(
+            request,
+            redirect_uri=redirect_uri,
+            state=cli_state,
+            error=str(err),
+        )
+
+    if not profile.get("sub"):
+        return _app_login_response(
+            request,
+            redirect_uri=redirect_uri,
+            state=cli_state,
+            error="Google profile missing subject.",
+        )
+
+    user = find_or_create_user_by_google(
+        db,
+        google_sub=profile["sub"],
+        email=profile.get("email"),
+        name=profile.get("name"),
+    )
+    db.delete(oauth_state)
+    tokens = issue_session(
+        db,
+        user,
+        AuthProvider.google,
+        user_agent=request.headers.get("user-agent"),
+        ip_address=request.client.host if request.client else None,
+    )
+    response = _app_login_response(
+        request,
+        redirect_uri=redirect_uri,
+        state=cli_state,
+        session_payload=tokens,
+    )
+    response.set_cookie(
+        "z_session",
+        tokens["access_token"],
+        httponly=True,
+        samesite="lax",
+        max_age=settings.access_token_ttl_seconds,
+    )
+    response.delete_cookie("z_oauth_verifier")
+    response.delete_cookie("z_cli_callback")
     return response
 
 

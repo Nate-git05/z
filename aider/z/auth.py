@@ -71,14 +71,14 @@ def current_session() -> Credentials | None:
 
 def require_account(io, *, feature: str = "this feature") -> Credentials | None:
     """
-    Ensure the user is logged into a Z account. If not, prompt with the three auth options.
+    Ensure the user is logged into a Z account. If not, open the web sign-in page.
     Returns credentials on success, None if the user declined / failed.
     """
     creds = current_session()
     if creds and creds.is_authenticated():
         return creds
     io.tool_output(f"A Z account is required for {feature}.")
-    return run_login_flow(io)
+    return open_web_login(io)
 
 
 def run_login_flow(io, analytics=None) -> Credentials | None:
