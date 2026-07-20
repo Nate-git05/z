@@ -2,9 +2,11 @@
 :root {
   --bg: #0A0A0A;
   --bg-raised: #121110;
-  --text: #F2F0EC;
-  --muted: #8B8680;
+  --text: #F5F5F5;             /* theme.py TEXT */
+  --muted: #A0A0A0;            /* theme.py TEXT_DIM */
   --accent: #C96A2B;
+  --accent-bright: #E07830;    /* theme.py ACCENT_BRIGHT */
+  --accent-dim: #8F4A1F;       /* theme.py ACCENT_DIM */
   --accent-soft: rgba(201, 106, 43, 0.14);
   --border: #242220;
   --mono: "JetBrains Mono", ui-monospace, "Cascadia Code", monospace;
@@ -145,8 +147,8 @@ code.mono,
 }
 
 .lp-btn:hover {
-  background: #D47838;
-  border-color: #D47838;
+  background: var(--accent-bright);
+  border-color: var(--accent-bright);
   color: #0A0A0A;
 }
 
