@@ -125,21 +125,7 @@ def run_login_flow(io, analytics=None) -> Credentials | None:
             analytics.event("z_auth_failure", message=result.message)
         return None
 
-    save_credentials(result.credentials)
-    apply_credentials_to_env(result.credentials)
-    from .paths import CREDENTIALS_PATH
-
-    io.tool_output("")
-    io.tool_output(f"Signed in as {result.credentials.display_name()}.")
-    if result.credentials.workspace and result.credentials.workspace.name:
-        io.tool_output(f"Workspace: {result.credentials.workspace.name}")
-    io.tool_output(f"Credentials saved to {CREDENTIALS_PATH}")
-    if analytics:
-        provider = (
-            (result.credentials.user.provider if result.credentials.user else None) or "unknown"
-        )
-        analytics.event("z_auth_success", provider=provider)
-    return result.credentials
+    return _persist_session_credentials(io, result.credentials, analytics=analytics)
 
 
 def logout(io=None) -> None:
@@ -580,27 +566,24 @@ def _find_available_port(start: int, end: int) -> int | None:
     return None
 
 
-def open_web_setup(io, mode: str) -> dict | None:
-    """Open a browser to the web app's /app/setup page and wait for it to
-    complete via a local callback — same pattern as login_with_google's
-    OAuth flow, but the callback is a POST (not GET) since BYOK setup
-    carries a raw API key, unlike an OAuth code.
+def _open_web_page_for_post_callback(
+    io,
+    *,
+    path: str,
+    extra_params: dict | None = None,
+    opening_message: str,
+    success_html: str,
+    timeout_message: str,
+    failure_label: str = "Setup",
+) -> dict | None:
+    """Open ``{auth_base}{path}`` and wait for a POST to a local callback.
 
-    mode: "byok" | "router"
-    Returns a dict on success:
-      - byok:   {"model_id": "...", "env_var": "...", "api_key": "..."}
-      - router: {"workspace_id": "...", "plan": "..."}  (no secret data)
-    Returns None on cancel/timeout.
+    Browser pages on the auth host POST JSON ``{state, data|error}`` to
+    ``http://127.0.0.1:<port>/callback`` (never put secrets in a GET query).
     """
-    if mode not in ("byok", "router"):
-        raise AuthError(f"Unknown setup mode: {mode}")
-
-    if auth_dev_mode():
-        return _dev_web_setup(io, mode)
-
     port = _find_available_port(8765, 8865)
     if port is None:
-        raise AuthError("Could not find a free local port for setup callback.")
+        raise AuthError("Could not find a free local port for the browser callback.")
 
     redirect_uri = f"http://127.0.0.1:{port}/callback"
     state = secrets.token_urlsafe(24)
@@ -608,7 +591,6 @@ def open_web_setup(io, mode: str) -> dict | None:
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_OPTIONS(self):  # noqa: N802
-            # Browser pages on the auth host POST to 127.0.0.1 — allow CORS.
             parsed = urlparse(self.path)
             if parsed.path != "/callback":
                 self.send_response(404)
@@ -638,15 +620,12 @@ def open_web_setup(io, mode: str) -> dict | None:
                 result_box["error"] = payload["error"]
                 self._respond(
                     400,
-                    f"Setup error: {payload['error']}. You can close this tab.",
+                    f"{failure_label} error: {payload['error']}. You can close this tab.",
                 )
                 result_box["done"].set()
                 return
             result_box["data"] = payload.get("data") or {}
-            self._respond(
-                200,
-                "Setup complete. You can close this tab and return to the terminal.",
-            )
+            self._respond(200, success_html)
             result_box["done"].set()
 
         def _cors_headers(self):
@@ -671,18 +650,14 @@ def open_web_setup(io, mode: str) -> dict | None:
     thread.start()
 
     base = get_auth_base_url()
-    params = urllib.parse.urlencode(
-        {
-            "mode": mode,
-            "redirect_uri": redirect_uri,
-            "state": state,
-        }
-    )
-    setup_url = f"{base}/app/setup?{params}"
-    io.tool_output(f"Opening browser to complete {mode} setup…")
-    io.tool_output(f"If it doesn't open, visit:\n  {setup_url}")
+    params = {"redirect_uri": redirect_uri, "state": state}
+    if extra_params:
+        params.update(extra_params)
+    page_url = f"{base}{path}?{urllib.parse.urlencode(params)}"
+    io.tool_output(opening_message)
+    io.tool_output(f"If it doesn't open, visit:\n  {page_url}")
     try:
-        webbrowser.open(setup_url)
+        webbrowser.open(page_url)
     except Exception:
         pass
 
@@ -691,12 +666,91 @@ def open_web_setup(io, mode: str) -> dict | None:
     server.server_close()
 
     if not finished:
-        io.tool_error("Timed out waiting for setup to complete in the browser.")
+        io.tool_error(timeout_message)
         return None
     if result_box["error"]:
-        io.tool_error(f"Setup failed: {result_box['error']}")
+        io.tool_error(f"{failure_label} failed: {result_box['error']}")
         return None
     return result_box["data"]
+
+
+def _persist_session_credentials(io, creds: Credentials, *, analytics=None) -> Credentials:
+    save_credentials(creds)
+    apply_credentials_to_env(creds)
+    from .paths import CREDENTIALS_PATH
+
+    io.tool_output("")
+    io.tool_output(f"Signed in as {creds.display_name()}.")
+    if creds.workspace and creds.workspace.name:
+        io.tool_output(f"Workspace: {creds.workspace.name}")
+    io.tool_output(f"Credentials saved to {CREDENTIALS_PATH}")
+    io.tool_output("You can close the browser tab and continue in the terminal.")
+    if analytics:
+        provider = (creds.user.provider if creds.user else None) or "unknown"
+        analytics.event("z_auth_success", provider=provider)
+    return creds
+
+
+def open_web_login(io, analytics=None) -> Credentials | None:
+    """Open the web app's /app/login page for signup/login, then return to the CLI.
+
+    Same local POST-callback pattern as open_web_setup / Google OAuth.
+    In auth_dev_mode(), falls back to the in-terminal login flow.
+    """
+    if auth_dev_mode():
+        return run_login_flow(io, analytics=analytics)
+
+    data = _open_web_page_for_post_callback(
+        io,
+        path="/app/login",
+        opening_message="Opening browser to sign in to Z…",
+        success_html="Signed in to Z. You can close this tab and return to the terminal.",
+        timeout_message="Timed out waiting for sign-in to complete in the browser.",
+        failure_label="Login",
+    )
+    if data is None:
+        return None
+    user = data.get("user") if isinstance(data.get("user"), dict) else {}
+    try:
+        result = _credentials_from_api_payload(
+            data, provider=user.get("provider") or "web"
+        )
+    except AuthError as err:
+        io.tool_error(str(err))
+        return None
+    if not result.ok or not result.credentials:
+        io.tool_error(result.message or "Authentication failed.")
+        return None
+    return _persist_session_credentials(io, result.credentials, analytics=analytics)
+
+
+def open_web_setup(io, mode: str) -> dict | None:
+    """Open a browser to the web app's /app/setup page and wait for it to
+    complete via a local callback — same pattern as login_with_google's
+    OAuth flow, but the callback is a POST (not GET) since BYOK setup
+    carries a raw API key, unlike an OAuth code.
+
+    mode: "byok" | "router"
+    Returns a dict on success:
+      - byok:   {"model_id": "...", "env_var": "...", "api_key": "..."}
+      - router: {"workspace_id": "...", "plan": "..."}  (no secret data)
+    Returns None on cancel/timeout.
+    """
+    if mode not in ("byok", "router"):
+        raise AuthError(f"Unknown setup mode: {mode}")
+
+    if auth_dev_mode():
+        return _dev_web_setup(io, mode)
+
+    return _open_web_page_for_post_callback(
+        io,
+        path="/app/setup",
+        extra_params={"mode": mode},
+        opening_message=f"Opening browser to complete {mode} setup…",
+        success_html="Setup complete. You can close this tab and return to the terminal.",
+        timeout_message="Timed out waiting for setup to complete in the browser.",
+        failure_label="Setup",
+    )
 
 
 def _dev_web_setup(io, mode: str) -> dict | None:
