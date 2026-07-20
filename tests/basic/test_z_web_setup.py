@@ -1,4 +1,4 @@
-"""Tests for browser-based BYOK/router setup (local POST callback)."""
+"""Tests for combined browser login+setup (local POST callback)."""
 
 from __future__ import annotations
 
@@ -11,6 +11,9 @@ from urllib.parse import parse_qs, urlparse
 
 import aider.z.auth as z_auth
 from aider.z.auth import open_web_setup
+from aider.z.cli import _apply_web_setup_result, ensure_agent_session
+from aider.z.credentials import Credentials, UserProfile, WorkspaceContext
+from aider.z.onboarding import OnboardingConfig
 
 
 class FakeIO:
@@ -32,22 +35,25 @@ def test_open_web_setup_falls_back_to_dev_flow_when_no_backend(monkeypatch):
     io = FakeIO()
     called = {}
 
-    def fake_dev(io_arg, mode):
+    def fake_dev(io_arg, mode, *, skip_login=False):
         called["mode"] = mode
-        called["io"] = io_arg
-        return {"model_id": "claude-sonnet-5", "env_var": "ANTHROPIC_API_KEY", "api_key": "sk"}
+        called["skip_login"] = skip_login
+        return {
+            "credentials": None,
+            "mode_result": {
+                "model_id": "claude-sonnet-5",
+                "env_var": "ANTHROPIC_API_KEY",
+                "api_key": "sk",
+            },
+        }
 
     with patch.object(z_auth, "auth_dev_mode", return_value=True), patch.object(
         z_auth, "_dev_web_setup", side_effect=fake_dev
     ) as dev_mock, patch.object(z_auth.webbrowser, "open") as browser_open:
-        result = open_web_setup(io, "byok")
+        result = open_web_setup(io, "byok", skip_login=True)
 
-    assert result == {
-        "model_id": "claude-sonnet-5",
-        "env_var": "ANTHROPIC_API_KEY",
-        "api_key": "sk",
-    }
-    assert called["mode"] == "byok"
+    assert result["mode_result"]["model_id"] == "claude-sonnet-5"
+    assert called == {"mode": "byok", "skip_login": True}
     dev_mock.assert_called_once()
     browser_open.assert_not_called()
 
@@ -63,7 +69,6 @@ def test_open_web_setup_rejects_mismatched_state(monkeypatch):
         redirect = qs["redirect_uri"][0]
 
         def post_wrong():
-            # Wait briefly for the local server to accept connections
             import time
 
             time.sleep(0.05)
@@ -73,9 +78,12 @@ def test_open_web_setup_rejects_mismatched_state(monkeypatch):
                     {
                         "state": "wrong-state-token",
                         "data": {
-                            "model_id": "x",
-                            "env_var": "K",
-                            "api_key": "secret",
+                            "credentials": None,
+                            "mode_result": {
+                                "model_id": "x",
+                                "env_var": "K",
+                                "api_key": "secret",
+                            },
                         },
                     }
                 ).encode("utf-8"),
@@ -100,9 +108,10 @@ def test_open_web_setup_rejects_mismatched_state(monkeypatch):
     assert result is None
     assert any("Invalid setup state" in e or "Setup failed" in e for e in io.errors)
     assert "auth.example.test/app/setup" in opened["url"]
+    assert "skip_login=0" in opened["url"]
 
 
-def test_open_web_setup_accepts_valid_post_callback():
+def test_open_web_setup_accepts_combined_post_callback():
     io = FakeIO()
     opened = {}
 
@@ -120,9 +129,21 @@ def test_open_web_setup_accepts_valid_post_callback():
             body = {
                 "state": state,
                 "data": {
-                    "model_id": "claude-sonnet-5",
-                    "env_var": "ANTHROPIC_API_KEY",
-                    "api_key": "sk-live",
+                    "credentials": {
+                        "access_token": "tok-web",
+                        "refresh_token": "ref",
+                        "user": {
+                            "email": "web@example.com",
+                            "name": "Web",
+                            "provider": "google",
+                        },
+                        "workspace": {"id": "ws1", "name": "Personal", "role": "owner"},
+                    },
+                    "mode_result": {
+                        "model_id": "claude-sonnet-5",
+                        "env_var": "ANTHROPIC_API_KEY",
+                        "api_key": "sk-live",
+                    },
                 },
             }
             req = urllib.request.Request(
@@ -141,13 +162,11 @@ def test_open_web_setup_accepts_valid_post_callback():
     ), patch.object(z_auth, "AUTH_TIMEOUT_SECONDS", 3), patch.object(
         z_auth.webbrowser, "open", side_effect=capture_open
     ):
-        result = open_web_setup(io, "byok")
+        result = open_web_setup(io, "byok", skip_login=False)
 
-    assert result == {
-        "model_id": "claude-sonnet-5",
-        "env_var": "ANTHROPIC_API_KEY",
-        "api_key": "sk-live",
-    }
+    assert result["credentials"]["access_token"] == "tok-web"
+    assert result["mode_result"]["api_key"] == "sk-live"
+    assert "skip_login=0" in opened["url"]
 
 
 def test_open_web_setup_times_out_gracefully():
@@ -164,76 +183,150 @@ def test_open_web_setup_times_out_gracefully():
     assert any("Timed out" in e for e in io.errors)
 
 
-def test_open_web_setup_router_dev_fallback():
+def test_open_web_setup_router_dev_fallback_skip_login():
     io = FakeIO()
-    with patch.object(z_auth, "auth_dev_mode", return_value=True):
-        result = open_web_setup(io, "router")
-    assert result == {"workspace_id": "ws-dev", "plan": "dev"}
-
-
-def test_open_web_login_falls_back_to_terminal_in_dev_mode():
-    io = FakeIO()
-    creds = MagicMock()
     with patch.object(z_auth, "auth_dev_mode", return_value=True), patch.object(
-        z_auth, "run_login_flow", return_value=creds
-    ) as login, patch.object(z_auth.webbrowser, "open") as browser_open:
-        result = z_auth.open_web_login(io)
-    assert result is creds
-    login.assert_called_once_with(io, analytics=None)
-    browser_open.assert_not_called()
+        z_auth, "run_login_flow"
+    ) as login:
+        result = open_web_setup(io, "router", skip_login=True)
+    login.assert_not_called()
+    assert result == {
+        "credentials": None,
+        "mode_result": {"workspace_id": "ws-dev", "plan": "dev"},
+    }
 
 
-def test_open_web_login_posts_credentials_via_callback():
+def test_skip_login_passed_when_valid_session_already_exists():
     io = FakeIO()
-    opened = {}
+    creds = Credentials(
+        access_token="tok",
+        user=UserProfile(email="a@b.com", provider="email"),
+        expires_at=9_999_999_999,
+    )
+    captured = {}
 
-    def capture_open(url):
-        opened["url"] = url
-        parsed = urlparse(url)
-        qs = parse_qs(parsed.query)
-        redirect = qs["redirect_uri"][0]
-        state = qs["state"][0]
+    def fake_setup(_io, mode, *, skip_login=False):
+        captured["mode"] = mode
+        captured["skip_login"] = skip_login
+        return {
+            "credentials": None,
+            "mode_result": {
+                "model_id": "claude-sonnet-5",
+                "env_var": "ANTHROPIC_API_KEY",
+                "api_key": "sk",
+            },
+        }
 
-        def post_ok():
-            import time
-
-            time.sleep(0.05)
-            body = {
-                "state": state,
-                "data": {
-                    "access_token": "tok-from-web",
-                    "refresh_token": "ref",
-                    "user": {
-                        "email": "web@example.com",
-                        "name": "Web User",
-                        "provider": "google",
-                    },
-                    "workspace": {"id": "ws1", "name": "Personal", "role": "owner"},
-                },
-            }
-            req = urllib.request.Request(
-                redirect,
-                data=json.dumps(body).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            urllib.request.urlopen(req, timeout=2)
-
-        threading.Thread(target=post_ok, daemon=True).start()
-        return True
-
-    with patch.object(z_auth, "auth_dev_mode", return_value=False), patch.object(
-        z_auth, "get_auth_base_url", return_value="https://auth.example.test"
-    ), patch.object(z_auth, "AUTH_TIMEOUT_SECONDS", 3), patch.object(
-        z_auth.webbrowser, "open", side_effect=capture_open
-    ), patch.object(z_auth, "save_credentials") as save, patch.object(
-        z_auth, "apply_credentials_to_env"
+    with patch("aider.z.onboarding.load_config", return_value=OnboardingConfig()), patch(
+        "aider.z.login_screen.prompt_auth_mode_choice", return_value="byok"
+    ), patch("aider.z.auth.current_session", return_value=creds), patch(
+        "aider.z.auth.open_web_setup", side_effect=fake_setup
+    ), patch("aider.z.onboarding.save_auth_mode"), patch(
+        "aider.z.cli._apply_web_setup_result"
     ):
-        result = z_auth.open_web_login(io)
+        ok = ensure_agent_session(io)
 
-    assert result is not None
-    assert result.access_token == "tok-from-web"
-    assert result.user.email == "web@example.com"
-    assert "auth.example.test/app/login" in opened["url"]
+    assert ok
+    assert captured == {"mode": "byok", "skip_login": True}
+
+
+def test_mode_choice_happens_before_login_check():
+    io = FakeIO()
+    order: list[str] = []
+
+    def fake_mode(_io, **_k):
+        order.append("mode")
+        return "byok"
+
+    def fake_session():
+        order.append("session")
+        return None
+
+    def fake_setup(_io, mode, *, skip_login=False):
+        order.append(f"setup:{mode}:{skip_login}")
+        return {
+            "credentials": {"access_token": "tok"},
+            "mode_result": {"model_id": "m", "env_var": "K", "api_key": "sk"},
+        }
+
+    with patch("aider.z.onboarding.load_config", return_value=OnboardingConfig()), patch(
+        "aider.z.login_screen.prompt_auth_mode_choice", side_effect=fake_mode
+    ), patch("aider.z.auth.current_session", side_effect=fake_session), patch(
+        "aider.z.auth.open_web_setup", side_effect=fake_setup
+    ), patch("aider.z.onboarding.save_auth_mode"), patch(
+        "aider.z.cli._apply_web_setup_result"
+    ):
+        ok = ensure_agent_session(io)
+
+    assert ok
+    assert order == ["mode", "session", "setup:byok:False"]
+
+
+def test_apply_web_setup_result_saves_credentials_when_present():
+    result = {
+        "credentials": {
+            "access_token": "tok",
+            "user": {"email": "a@b.com", "provider": "email"},
+            "workspace": {"id": "ws1", "name": "Personal", "role": "owner"},
+        },
+        "mode_result": {
+            "model_id": "claude-sonnet-5",
+            "env_var": "ANTHROPIC_API_KEY",
+            "api_key": "sk-test",
+        },
+    }
+    with patch("aider.z.credentials.save_credentials") as save, patch(
+        "aider.z.credentials.apply_credentials_to_env"
+    ), patch("aider.z.onboarding.save_byok_key") as save_key, patch(
+        "aider.z.onboarding.save_selected_model"
+    ) as save_model:
+        _apply_web_setup_result(result, mode="byok")
+
     save.assert_called_once()
-    assert any("return to the terminal" in o.lower() or "close the browser" in o.lower() for o in io.outputs)
+    saved = save.call_args[0][0]
+    assert isinstance(saved, Credentials)
+    assert saved.access_token == "tok"
+    save_key.assert_called_once_with("ANTHROPIC_API_KEY", "sk-test")
+    save_model.assert_called_once_with("claude-sonnet-5")
+
+
+def test_apply_web_setup_result_skips_credentials_when_absent():
+    result = {
+        "credentials": None,
+        "mode_result": {"model_id": "claude-sonnet-5"},
+    }
+    with patch("aider.z.credentials.save_credentials") as save, patch(
+        "aider.z.onboarding.save_selected_model"
+    ) as save_model, patch("aider.z.onboarding.save_byok_key") as save_key:
+        _apply_web_setup_result(result, mode="byok")
+
+    save.assert_not_called()
+    save_key.assert_not_called()
+    save_model.assert_called_once_with("claude-sonnet-5")
+
+
+def test_byok_configured_skips_account_check():
+    io = FakeIO()
+    with patch(
+        "aider.z.onboarding.load_config",
+        return_value=OnboardingConfig(auth_mode="byok"),
+    ), patch("aider.z.auth.current_session") as session, patch(
+        "aider.z.auth.open_web_setup"
+    ) as setup:
+        ok = ensure_agent_session(io)
+    assert ok
+    session.assert_not_called()
+    setup.assert_not_called()
+
+
+def test_explicit_z_login_command_unaffected():
+    from aider.z import cli as z_cli
+
+    io = MagicMock()
+    with patch("aider.z.auth.run_login_flow", return_value=None) as login, patch(
+        "aider.z.auth.open_web_setup"
+    ) as setup:
+        code = z_cli.cmd_login(io)
+    assert code == 1
+    login.assert_called_once_with(io)
+    setup.assert_not_called()
