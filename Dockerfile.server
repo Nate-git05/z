@@ -35,5 +35,7 @@ USER appuser
 
 EXPOSE 8080
 
-# Cloud Run injects PORT; default locally is 8080.
-CMD ["sh", "-c", "exec uvicorn z_server.app:app --host 0.0.0.0 --port ${PORT:-8080}"]
+# Cloud Run injects PORT (usually 8080). Bind 0.0.0.0 so the health check passes.
+# If the process exits before listen, check Cloud Logging for "FATAL: Z server failed
+# to initialize the database" — almost always a bad/missing DATABASE_URL.
+CMD exec uvicorn z_server.app:app --host 0.0.0.0 --port ${PORT:-8080}

@@ -130,7 +130,23 @@ docker run --rm -p 8080:8080 \
 | Build type | Dockerfile |
 | Source location | `/Dockerfile.server` |
 
-Set these env vars on the Cloud Run service (at minimum): `Z_SECRET_KEY`, `Z_PUBLIC_BASE_URL=https://z-git-283858537418.europe-west1.run.app`, `Z_FRONTEND_URL=https://z-agent.dev`, `DATABASE_URL`. Optional: Google OAuth + Twilio for phone.
+Set these env vars on the Cloud Run service (at minimum):
+
+| Name | Example |
+|---|---|
+| `Z_SECRET_KEY` | long random string |
+| `Z_SERVER_DEV` | `0` |
+| `Z_PUBLIC_BASE_URL` | `https://z-git-283858537418.europe-west1.run.app` |
+| `Z_FRONTEND_URL` | `https://z-agent.dev` |
+| `DATABASE_URL` | see Supabase below |
+
+**Supabase `DATABASE_URL`** (Project Settings → Database → URI). Prefer:
+
+```text
+postgresql+psycopg://postgres:YOUR_PASSWORD@db.PROJECT.supabase.co:5432/postgres?sslmode=require
+```
+
+Plain `postgresql://…` from the Supabase UI also works — the server rewrites it to `postgresql+psycopg://` and adds `sslmode=require`. If the container fails to listen on `:8080`, open Cloud Logging for `FATAL: Z server failed to initialize the database`.
 
 Later you can alias `api.z-agent.dev` → this Cloud Run service and switch rewrites/`Z_PUBLIC_BASE_URL` to that hostname.
 
