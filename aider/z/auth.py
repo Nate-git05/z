@@ -34,7 +34,9 @@ from .credentials import (
 
 # Auth API base. Override with Z_AUTH_URL. When unset / unreachable, Z_AUTH_DEV
 # enables a local mock so the CLI UX can be exercised without a backend.
-DEFAULT_AUTH_URL = os.environ.get("Z_AUTH_URL", "https://api.z-agent.dev")
+DEFAULT_AUTH_URL = os.environ.get(
+    "Z_AUTH_URL", "https://z-git-283858537418.europe-west1.run.app"
+)
 GOOGLE_CLIENT_ID = os.environ.get("Z_GOOGLE_CLIENT_ID", "")
 AUTH_TIMEOUT_SECONDS = 300
 

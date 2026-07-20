@@ -116,7 +116,7 @@ Repo-root `Dockerfile.server` builds only the FastAPI API (not the Next.js front
 docker build -f Dockerfile.server -t z-server .
 docker run --rm -p 8080:8080 \
   -e Z_SECRET_KEY=replace-me \
-  -e Z_PUBLIC_BASE_URL=https://YOUR_API_HOST \
+  -e Z_PUBLIC_BASE_URL=https://z-git-283858537418.europe-west1.run.app \
   -e Z_FRONTEND_URL=https://z-agent.dev \
   -e DATABASE_URL=postgresql+psycopg://USER:PASS@HOST:5432/z \
   z-server
@@ -130,7 +130,9 @@ docker run --rm -p 8080:8080 \
 | Build type | Dockerfile |
 | Source location | `/Dockerfile.server` |
 
-Set these env vars on the Cloud Run service (at minimum): `Z_SECRET_KEY`, `Z_PUBLIC_BASE_URL` (e.g. `https://api.z-agent.dev`), `Z_FRONTEND_URL` (`https://z-agent.dev`), `DATABASE_URL`. Optional: Google OAuth + Twilio for phone.
+Set these env vars on the Cloud Run service (at minimum): `Z_SECRET_KEY`, `Z_PUBLIC_BASE_URL=https://z-git-283858537418.europe-west1.run.app`, `Z_FRONTEND_URL=https://z-agent.dev`, `DATABASE_URL`. Optional: Google OAuth + Twilio for phone.
+
+Later you can alias `api.z-agent.dev` → this Cloud Run service and switch rewrites/`Z_PUBLIC_BASE_URL` to that hostname.
 
 ## MCP integrations
 
