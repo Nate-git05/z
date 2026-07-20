@@ -34,20 +34,41 @@ def _ctx(request: Request, user: User | None = None, **extra):
     }
 
 
+def _frontend_redirect(path: str) -> RedirectResponse | None:
+    """Send browsers to the Next.js app when Z_FRONTEND_URL is configured."""
+    from z_server.config import get_settings
+
+    base = get_settings().frontend_url
+    if not base:
+        return None
+    if not path.startswith("/"):
+        path = f"/{path}"
+    return RedirectResponse(f"{base}{path}", status_code=307)
+
+
 @router.get("/", response_class=HTMLResponse)
 def home(request: Request, user: User | None = Depends(get_optional_user)):
     """Public landing page with waitlist — always at /."""
+    redirect = _frontend_redirect("/")
+    if redirect:
+        return redirect
     return templates.TemplateResponse(request, "landing.html", _ctx(request, user))
 
 
 @router.get("/pricing", response_class=HTMLResponse)
 def pricing(request: Request, user: User | None = Depends(get_optional_user)):
     """Public pricing page — BYOK free forever, router coming soon."""
+    redirect = _frontend_redirect("/pricing")
+    if redirect:
+        return redirect
     return templates.TemplateResponse(request, "pricing.html", _ctx(request, user))
 
 
 @router.get("/login", response_class=HTMLResponse)
 def login_page(request: Request, user: User | None = Depends(get_optional_user)):
+    redirect = _frontend_redirect("/login")
+    if redirect:
+        return redirect
     if user:
         return RedirectResponse("/app/integrations")
     return templates.TemplateResponse("login.html", _ctx(request, user, error=None))
@@ -96,7 +117,10 @@ def login_submit(
 
 @router.post("/logout")
 def web_logout():
-    response = RedirectResponse("/", status_code=303)
+    from z_server.config import get_settings
+
+    dest = f"{get_settings().frontend_url}/" if get_settings().frontend_url else "/"
+    response = RedirectResponse(dest, status_code=303)
     response.delete_cookie("z_session")
     return response
 

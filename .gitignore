@@ -18,4 +18,9 @@ aider/_version.py
 tmp.benchmarks/
 .docker_bash_history
 z_server.db
+node_modules/
+web/node_modules/
+web/.next/
+web/.env*.local
+.vercel/
 
