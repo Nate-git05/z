@@ -1,0 +1,25 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "installCommand": "cd web && npm ci",
+  "buildCommand": "cd web && npm run build",
+  "outputDirectory": "web/.next",
+  "rewrites": [
+    {
+      "source": "/v1/:path*",
+      "destination": "https://api.zim-s.com/v1/:path*"
+    },
+    {
+      "source": "/static/:path*",
+      "destination": "https://api.zim-s.com/static/:path*"
+    },
+    {
+      "source": "/app/:path*",
+      "destination": "https://api.zim-s.com/app/:path*"
+    },
+    {
+      "source": "/health",
+      "destination": "https://api.zim-s.com/health"
+    }
+  ]
+}

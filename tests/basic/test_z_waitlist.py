@@ -47,6 +47,7 @@ class WaitlistApiTest(unittest.TestCase):
                 pass
 
     def test_landing_page_served_at_root(self):
+        # Jinja fallback when Z_FRONTEND_URL is unset (Next owns these in prod).
         resp = self.client.get("/")
         self.assertEqual(resp.status_code, 200)
         self.assertIn("text/html", resp.headers.get("content-type", ""))
@@ -76,6 +77,23 @@ class WaitlistApiTest(unittest.TestCase):
         self.assertIn("data-waitlist-tag=\"router\"", body)
         self.assertIn("waitlist-modal", body)
         self.assertIn("JetBrains+Mono", body)
+
+    def test_public_pages_redirect_when_frontend_url_set(self):
+        os.environ["Z_FRONTEND_URL"] = "https://zim-s.com"
+        get_settings.cache_clear()
+        try:
+            app = create_app()
+            client = TestClient(app, follow_redirects=False)
+            for path in ("/", "/pricing", "/login"):
+                resp = client.get(path)
+                self.assertEqual(resp.status_code, 307, path)
+                self.assertEqual(
+                    resp.headers.get("location"),
+                    f"https://zim-s.com{path if path != '/' else '/'}",
+                )
+        finally:
+            os.environ.pop("Z_FRONTEND_URL", None)
+            get_settings.cache_clear()
 
     def test_static_assets(self):
         css = self.client.get("/static/css/landing.css")

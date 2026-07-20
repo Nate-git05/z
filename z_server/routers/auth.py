@@ -6,7 +6,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -121,13 +121,23 @@ def email_verify(payload: EmailVerifyRequest, request: Request, db: Session = De
     challenge.status = "confirmed"
     challenge.confirmed_at = _utcnow()
     user = find_or_create_user_by_email(db, email, payload.name or challenge.name)
-    return issue_session(
+    tokens = issue_session(
         db,
         user,
         AuthProvider.email,
         user_agent=request.headers.get("user-agent"),
         ip_address=request.client.host if request.client else None,
     )
+    # Also set the web session cookie so Next.js login works with /app/* pages.
+    response = JSONResponse(content=tokens)
+    response.set_cookie(
+        "z_session",
+        tokens["access_token"],
+        httponly=True,
+        samesite="lax",
+        max_age=get_settings().access_token_ttl_seconds,
+    )
+    return response
 
 
 @router.get("/email/magic/{challenge_id}", response_class=HTMLResponse)
