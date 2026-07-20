@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sign in — Z</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Sans+3:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/app_login.css" />
+</head>
+<body
+  data-redirect-uri="{{ redirect_uri }}"
+  data-state="{{ callback_state }}"
+  data-signed-in="{{ '1' if signed_in else '0' }}"
+  data-session="{{ session_json|e }}"
+>
+  <div class="auth-shell">
+    <div class="auth-mark" aria-hidden="true">Z</div>
+    <div class="auth-card" id="auth-card">
+      {% if signed_in %}
+      <div class="auth-success" id="auth-success">
+        <p class="auth-title">Signed in.</p>
+        <p class="auth-sub">You can close this tab and return to your terminal.</p>
+      </div>
+      {% else %}
+      <div id="auth-form">
+        <h1 class="auth-title">Sign in to Z</h1>
+        <p class="auth-sub">How would you like to sign in?</p>
+
+        {% if error %}
+        <div class="auth-error" role="alert">{{ error }}</div>
+        {% else %}
+        <div class="auth-error" id="auth-error" hidden></div>
+        {% endif %}
+
+        <a class="auth-btn" id="btn-google" href="{{ google_start_url }}"
+          >Continue with Google</a>
+
+        <button type="button" class="auth-btn" id="btn-z">Continue with Z</button>
+
+        <div class="auth-z-panel" id="z-panel" hidden>
+          <div class="auth-tabs" role="tablist">
+            <button type="button" class="auth-tab active" data-tab="email" role="tab">Email</button>
+            <button type="button" class="auth-tab" data-tab="phone" role="tab">Phone</button>
+          </div>
+
+          <form id="form-email" class="auth-form-block">
+            <label for="email">Email</label>
+            <input id="email" name="email" type="email" autocomplete="email" required placeholder="you@example.com" />
+            <label for="name">Name <span class="opt">(optional)</span></label>
+            <input id="name" name="name" type="text" autocomplete="name" placeholder="Ada" />
+            <button type="submit" class="auth-btn auth-btn-primary" data-action="send">Send code</button>
+            <div class="auth-code-block" id="email-code-block" hidden>
+              <label for="email-code">Verification code</label>
+              <input id="email-code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="000000" value="000000" />
+              <button type="button" class="auth-btn auth-btn-primary" id="email-verify">Verify</button>
+            </div>
+          </form>
+
+          <form id="form-phone" class="auth-form-block" hidden>
+            <label for="phone">Phone</label>
+            <input id="phone" name="phone" type="tel" autocomplete="tel" required placeholder="+15551234567" />
+            <button type="submit" class="auth-btn auth-btn-primary" data-action="send">Send code</button>
+            <div class="auth-code-block" id="phone-code-block" hidden>
+              <label for="phone-code">Verification code</label>
+              <input id="phone-code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="000000" value="000000" />
+              <button type="button" class="auth-btn auth-btn-primary" id="phone-verify">Verify</button>
+            </div>
+          </form>
+        </div>
+
+        <p class="auth-legal">
+          By continuing you agree to the
+          <a href="/#">Terms of Service</a> and
+          <a href="/#">Privacy Notice</a>.
+        </p>
+      </div>
+      <div class="auth-success" id="auth-success" hidden>
+        <p class="auth-title">Signed in.</p>
+        <p class="auth-sub">You can close this tab and return to your terminal.</p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  <script src="/static/js/app_login.js"></script>
+</body>
+</html>

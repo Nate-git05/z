@@ -355,14 +355,56 @@ def test_configured_mode_still_requires_login_when_signed_out():
     setup.assert_not_called()
 
 
-def test_explicit_z_login_command_unaffected():
+def test_explicit_z_login_uses_web_login():
     from aider.z import cli as z_cli
 
     io = MagicMock()
-    with patch("aider.z.auth.run_login_flow", return_value=None) as login, patch(
+    with patch("aider.z.auth.open_web_login", return_value=None) as login, patch(
         "aider.z.auth.open_web_setup"
-    ) as setup:
+    ) as setup, patch("aider.z.auth.run_login_flow") as terminal:
         code = z_cli.cmd_login(io)
     assert code == 1
     login.assert_called_once_with(io)
     setup.assert_not_called()
+    terminal.assert_not_called()
+
+
+def test_auth_switch_uses_web_login_and_byok_skip_login():
+    from aider.z import cli as z_cli
+
+    io = MagicMock()
+    creds = Credentials(
+        access_token="tok",
+        user=UserProfile(email="a@b.com", provider="email"),
+        expires_at=9_999_999_999,
+    )
+    captured = {}
+
+    def fake_setup(_io, mode, *, skip_login=False):
+        captured["mode"] = mode
+        captured["skip_login"] = skip_login
+        return {
+            "credentials": None,
+            "mode_result": {
+                "model_id": "claude-sonnet-5",
+                "env_var": "ANTHROPIC_API_KEY",
+                "api_key": "sk",
+            },
+        }
+
+    with patch("aider.z.auth.current_session", return_value=None), patch(
+        "aider.z.auth.open_web_login", return_value=creds
+    ) as login, patch(
+        "aider.z.login_screen.prompt_auth_mode_choice", return_value="byok"
+    ), patch("aider.z.auth.open_web_setup", side_effect=fake_setup), patch(
+        "aider.z.onboarding.save_auth_mode"
+    ) as save_mode, patch("aider.z.cli._apply_web_setup_result"), patch(
+        "aider.z.auth.run_login_flow"
+    ) as terminal:
+        code = z_cli.cmd_auth_switch(io)
+
+    assert code == 0
+    login.assert_called_once()
+    terminal.assert_not_called()
+    assert captured == {"mode": "byok", "skip_login": True}
+    save_mode.assert_called_once_with("byok")

@@ -158,8 +158,9 @@ def ensure_agent_session(io) -> bool:
     choose BYOK vs router in the terminal, THEN (BYOK only) finish model/key
     setup via a second, skip_login web trip.
 
-    ``z login`` / ``z auth switch`` remain separate explicit commands using the
-    original in-terminal flow, unaffected by this.
+    ``z login`` / ``z auth switch`` also use the web login page — never the
+    in-terminal Google/Email/Phone picker. Only BYOK-vs-router mode choice
+    stays in the terminal.
 
     Set Z_SKIP_ACCOUNT=1 to bypass (automation / tests).
     """
@@ -427,27 +428,32 @@ def cmd_mcp(io, args) -> int:
 
 
 def cmd_auth_switch(io) -> int:
-    """Re-choose BYOK vs router using the in-terminal flows (unchanged)."""
-    from aider.z.auth import current_session, prompt_byok_setup, run_login_flow
+    """Re-choose BYOK vs router. Login (if needed) goes through the web page."""
+    from aider.z.auth import current_session, open_web_login, open_web_setup
     from aider.z.login_screen import prompt_auth_mode_choice
     from aider.z.onboarding import save_auth_mode
 
     creds = current_session()
     if not (creds and creds.is_authenticated()):
-        creds = run_login_flow(io)
+        creds = open_web_login(io)
         if not creds:
             return 1
 
     mode = prompt_auth_mode_choice(io)
-    if mode == "byok" and prompt_byok_setup(io):
-        save_auth_mode("byok")
-        return 0
+    if mode is None:
+        io.tool_output("Switch cancelled.")
+        return 1
+
+    if mode == "byok":
+        result = open_web_setup(io, "byok", skip_login=True)
+        if result is None:
+            return 1
+        _apply_web_setup_result(result, mode="byok")
+
+    save_auth_mode(mode)
     if mode == "router":
-        save_auth_mode("router")
         io.tool_output("Using Z's router for model access.")
-        return 0
-    io.tool_output("Switch cancelled.")
-    return 1
+    return 0
 
 
 def cmd_workspace(io, args) -> int:
@@ -545,50 +551,12 @@ def cmd_workspace(io, args) -> int:
 
 
 def cmd_login(io, provider: str | None = None) -> int:
-    from aider.z import auth
+    """Explicit re-auth via the web sign-in page (same as bare ``z`` login)."""
+    from aider.z.auth import open_web_login
 
-    # Force-enable interactive prompts
-    if provider == "email":
-        try:
-            result = auth.login_with_email(io)
-        except auth.AuthError as err:
-            io.tool_error(str(err))
-            return 1
-        if result.ok and result.credentials:
-            auth.save_credentials(result.credentials)
-            auth.apply_credentials_to_env(result.credentials)
-            io.tool_output(f"Signed in as {result.credentials.display_name()}.")
-            return 0
-        io.tool_error(result.message or "Login failed.")
-        return 1
-    if provider == "phone":
-        try:
-            result = auth.login_with_phone(io)
-        except auth.AuthError as err:
-            io.tool_error(str(err))
-            return 1
-        if result.ok and result.credentials:
-            auth.save_credentials(result.credentials)
-            auth.apply_credentials_to_env(result.credentials)
-            io.tool_output(f"Signed in as {result.credentials.display_name()}.")
-            return 0
-        io.tool_error(result.message or "Login failed.")
-        return 1
-    if provider == "google":
-        try:
-            result = auth.login_with_google(io)
-        except auth.AuthError as err:
-            io.tool_error(str(err))
-            return 1
-        if result.ok and result.credentials:
-            auth.save_credentials(result.credentials)
-            auth.apply_credentials_to_env(result.credentials)
-            io.tool_output(f"Signed in as {result.credentials.display_name()}.")
-            return 0
-        io.tool_error(result.message or "Login failed.")
-        return 1
-
-    creds = auth.run_login_flow(io)
+    # provider is ignored — Google / Email / Phone are chosen on the web page.
+    _ = provider
+    creds = open_web_login(io)
     return 0 if creds else 1
 
 
