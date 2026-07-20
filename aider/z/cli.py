@@ -34,6 +34,26 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("logout", help="Sign out and clear ~/.z/credentials")
     sub.add_parser("whoami", help="Show the current Z account / workspace")
 
+    workspace = sub.add_parser("workspace", help="Create/manage a Z workspace")
+    workspace_sub = workspace.add_subparsers(dest="workspace_command")
+
+    create_ws = workspace_sub.add_parser("create", help="Create a new workspace")
+    create_ws.add_argument("name", nargs="*", help="Workspace name (prompted if omitted)")
+    create_ws.add_argument("--organization", default=None, help="Organization name")
+
+    invite = workspace_sub.add_parser("invite", help="Invite a member by email or phone")
+    invite.add_argument(
+        "identifier",
+        nargs="*",
+        help="Email or phone number (prompted if omitted)",
+    )
+
+    workspace_sub.add_parser("members", help="List current workspace members")
+    workspace_sub.add_parser(
+        "switch",
+        help="Switch active workspace (if in more than one)",
+    )
+
     models = sub.add_parser(
         "models",
         help="List curated current models (and search all known models)",
@@ -188,6 +208,9 @@ def _print_help() -> None:
         "  z\n"
         "  z login\n"
         "  z auth switch\n"
+        "  z workspace create\n"
+        "  z workspace invite\n"
+        "  z workspace members\n"
         "  z models\n"
         "  z mcp list\n"
         "  z skill add\n"
@@ -239,6 +262,7 @@ def main(argv: list[str] | None = None) -> int | None:
         "auth",
         "logout",
         "whoami",
+        "workspace",
         "models",
         "mcp",
         "skill",
@@ -278,6 +302,8 @@ def dispatch(args) -> int:
 
         io.tool_output(whoami_text())
         return 0
+    if args.command == "workspace":
+        return cmd_workspace(io, args)
     if args.command == "models":
         return cmd_models(io, search=args.search or "", show_all=args.all)
     if args.command == "mcp":
@@ -393,6 +419,100 @@ def cmd_auth_switch(io) -> int:
         io.tool_output("Using Z's router for model access.")
         return 0
     io.tool_output("Switch cancelled.")
+    return 1
+
+
+def cmd_workspace(io, args) -> int:
+    sub = getattr(args, "workspace_command", None)
+    from aider.z.auth import current_session
+    from aider.z.credentials import WorkspaceContext, save_credentials
+    from aider.z.workspace_cli import (
+        WorkspaceError,
+        create_workspace,
+        invite_member,
+        list_members,
+    )
+
+    if sub == "create":
+        name = (
+            " ".join(args.name).strip()
+            if args.name
+            else (io.prompt_ask("Workspace name") or "").strip()
+        )
+        if not name:
+            io.tool_error("Workspace name required.")
+            return 1
+        try:
+            ws = create_workspace(name, organization=args.organization)
+        except WorkspaceError as err:
+            io.tool_error(str(err))
+            return 1
+        # Persist the new workspace onto the current session so subsequent
+        # `z` launches sync into it automatically (engine.py reads
+        # creds.workspace.id).
+        creds = current_session()
+        if creds:
+            if not creds.workspace:
+                creds.workspace = WorkspaceContext()
+            creds.workspace.id = ws.get("id")
+            creds.workspace.name = ws.get("name")
+            creds.workspace.role = ws.get("role") or creds.workspace.role
+            creds.workspace.organization = ws.get("organization")
+            save_credentials(creds)
+        io.tool_output(f"Workspace '{name}' created.")
+        return 0
+
+    if sub == "invite":
+        creds = current_session()
+        if not creds or not creds.workspace or not creds.workspace.id:
+            io.tool_error("No active workspace — run `z workspace create` first.")
+            return 1
+        identifier = (
+            " ".join(args.identifier).strip()
+            if args.identifier
+            else (io.prompt_ask("Email or phone to invite") or "").strip()
+        )
+        if not identifier:
+            io.tool_error("Email or phone required.")
+            return 1
+        try:
+            invite_member(creds.workspace.id, identifier)
+        except WorkspaceError as err:
+            io.tool_error(str(err))
+            return 1
+        io.tool_output(f"Invited {identifier}.")
+        return 0
+
+    if sub == "members":
+        creds = current_session()
+        if not creds or not creds.workspace or not creds.workspace.id:
+            io.tool_error("No active workspace.")
+            return 1
+        try:
+            members = list_members(creds.workspace.id)
+        except WorkspaceError as err:
+            io.tool_error(str(err))
+            return 1
+        if not members:
+            io.tool_output("No members found.")
+            return 0
+        for m in members:
+            label = m.get("name") or m.get("email") or m.get("phone") or m.get("id")
+            io.tool_output(f"  {label} ({m.get('role', 'member')})")
+        return 0
+
+    if sub == "switch":
+        # Multi-workspace membership needs a backend data-model decision
+        # (Credentials.workspace is still a single object). Don't invent
+        # a list schema client-side until that exists.
+        io.tool_error(
+            "Workspace switch is not available yet — "
+            "multi-workspace membership is not supported in this client."
+        )
+        return 1
+
+    io.tool_error(f"Unknown workspace subcommand: {sub}")
+    io.tool_output("Usage: z workspace create | invite | members | switch")
     return 1
 
 

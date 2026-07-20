@@ -17,6 +17,7 @@ class WorkspaceContext:
     id: str | None = None
     name: str | None = None
     role: str | None = None
+    organization: str | None = None
 
 
 @dataclass
@@ -76,7 +77,9 @@ class Credentials:
             user=UserProfile(
                 **{k: user_data.get(k) for k in ("id", "email", "name", "phone", "provider")}
             ),
-            workspace=WorkspaceContext(**{k: ws_data.get(k) for k in ("id", "name", "role")}),
+            workspace=WorkspaceContext(
+                **{k: ws_data.get(k) for k in ("id", "name", "role", "organization")}
+            ),
         )
 
 
