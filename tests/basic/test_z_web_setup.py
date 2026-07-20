@@ -169,3 +169,71 @@ def test_open_web_setup_router_dev_fallback():
     with patch.object(z_auth, "auth_dev_mode", return_value=True):
         result = open_web_setup(io, "router")
     assert result == {"workspace_id": "ws-dev", "plan": "dev"}
+
+
+def test_open_web_login_falls_back_to_terminal_in_dev_mode():
+    io = FakeIO()
+    creds = MagicMock()
+    with patch.object(z_auth, "auth_dev_mode", return_value=True), patch.object(
+        z_auth, "run_login_flow", return_value=creds
+    ) as login, patch.object(z_auth.webbrowser, "open") as browser_open:
+        result = z_auth.open_web_login(io)
+    assert result is creds
+    login.assert_called_once_with(io, analytics=None)
+    browser_open.assert_not_called()
+
+
+def test_open_web_login_posts_credentials_via_callback():
+    io = FakeIO()
+    opened = {}
+
+    def capture_open(url):
+        opened["url"] = url
+        parsed = urlparse(url)
+        qs = parse_qs(parsed.query)
+        redirect = qs["redirect_uri"][0]
+        state = qs["state"][0]
+
+        def post_ok():
+            import time
+
+            time.sleep(0.05)
+            body = {
+                "state": state,
+                "data": {
+                    "access_token": "tok-from-web",
+                    "refresh_token": "ref",
+                    "user": {
+                        "email": "web@example.com",
+                        "name": "Web User",
+                        "provider": "google",
+                    },
+                    "workspace": {"id": "ws1", "name": "Personal", "role": "owner"},
+                },
+            }
+            req = urllib.request.Request(
+                redirect,
+                data=json.dumps(body).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            urllib.request.urlopen(req, timeout=2)
+
+        threading.Thread(target=post_ok, daemon=True).start()
+        return True
+
+    with patch.object(z_auth, "auth_dev_mode", return_value=False), patch.object(
+        z_auth, "get_auth_base_url", return_value="https://auth.example.test"
+    ), patch.object(z_auth, "AUTH_TIMEOUT_SECONDS", 3), patch.object(
+        z_auth.webbrowser, "open", side_effect=capture_open
+    ), patch.object(z_auth, "save_credentials") as save, patch.object(
+        z_auth, "apply_credentials_to_env"
+    ):
+        result = z_auth.open_web_login(io)
+
+    assert result is not None
+    assert result.access_token == "tok-from-web"
+    assert result.user.email == "web@example.com"
+    assert "auth.example.test/app/login" in opened["url"]
+    save.assert_called_once()
+    assert any("return to the terminal" in o.lower() or "close the browser" in o.lower() for o in io.outputs)

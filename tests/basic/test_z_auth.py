@@ -209,7 +209,7 @@ class TestZCli(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("Z_SKIP_ACCOUNT", None)
             with patch("aider.z.auth.current_session", return_value=creds):
-                with patch("aider.z.auth.run_login_flow") as login:
+                with patch("aider.z.auth.open_web_login") as login:
                     with patch(
                         "aider.z.onboarding.load_config",
                         return_value=OnboardingConfig(auth_mode="router"),
@@ -218,7 +218,7 @@ class TestZCli(unittest.TestCase):
         self.assertTrue(ok)
         login.assert_not_called()
 
-    def test_ensure_agent_session_runs_login_when_signed_out(self):
+    def test_ensure_agent_session_runs_web_login_when_signed_out(self):
         from aider.z.cli import ensure_agent_session
         from aider.z.credentials import Credentials, UserProfile
         from aider.z.onboarding import OnboardingConfig
@@ -232,7 +232,7 @@ class TestZCli(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("Z_SKIP_ACCOUNT", None)
             with patch("aider.z.auth.current_session", return_value=None):
-                with patch("aider.z.auth.run_login_flow", return_value=creds) as login:
+                with patch("aider.z.auth.open_web_login", return_value=creds) as login:
                     with patch(
                         "aider.z.onboarding.load_config",
                         return_value=OnboardingConfig(auth_mode="router"),
