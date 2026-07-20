@@ -90,7 +90,7 @@ class EnsureSessionOrderTest(unittest.TestCase):
     def test_account_login_required_before_byok_setup_even_offered(self):
         io = FakeIO()
         login_calls = []
-        byok_calls = []
+        setup_calls = []
         mode_calls = []
 
         def fake_login(_io):
@@ -101,9 +101,13 @@ class EnsureSessionOrderTest(unittest.TestCase):
             mode_calls.append(1)
             return "byok"
 
-        def fake_byok(_io):
-            byok_calls.append(1)
-            return True
+        def fake_setup(_io, mode):
+            setup_calls.append(mode)
+            return {
+                "model_id": "claude-sonnet-5",
+                "env_var": "ANTHROPIC_API_KEY",
+                "api_key": "sk-test",
+            }
 
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("Z_SKIP_ACCOUNT", None)
@@ -118,15 +122,18 @@ class EnsureSessionOrderTest(unittest.TestCase):
                             side_effect=fake_mode,
                         ):
                             with patch(
-                                "aider.z.auth.prompt_byok_setup",
-                                side_effect=fake_byok,
+                                "aider.z.auth.open_web_setup",
+                                side_effect=fake_setup,
                             ):
                                 with patch("aider.z.onboarding.save_auth_mode"):
-                                    ok = ensure_agent_session(io)
+                                    with patch(
+                                        "aider.z.auth.apply_byok_setup_result"
+                                    ):
+                                        ok = ensure_agent_session(io)
         self.assertTrue(ok)
         self.assertEqual(login_calls, [1])
         self.assertEqual(mode_calls, [1])
-        self.assertEqual(byok_calls, [1])
+        self.assertEqual(setup_calls, ["byok"])
         # Login must precede BYOK setup
         self.assertEqual(len(login_calls), 1)
 

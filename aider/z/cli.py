@@ -172,25 +172,32 @@ def ensure_agent_session(io) -> bool:
         if not creds:
             return False
 
-    # Step 2: BYOK vs router — asked once, persisted, not re-asked after.
+    # Step 2: BYOK vs router — asked once, then completed in the browser
+    # (local-callback pattern, same as Google OAuth). Dev mode falls back
+    # to an in-terminal picker when no auth backend is configured.
     from aider.z.onboarding import load_config, save_auth_mode
 
     config = load_config()
     if config.auth_mode in ("byok", "router"):
         return True
 
-    from aider.z.auth import prompt_byok_setup
+    from aider.z.auth import apply_byok_setup_result, open_web_setup
     from aider.z.login_screen import prompt_auth_mode_choice
 
     mode = prompt_auth_mode_choice(io)
     if mode is None:
         io.tool_output("Setup cancelled.")
         return False
+
+    result = open_web_setup(io, mode)
+    if result is None:
+        return False
+
     if mode == "byok":
-        if not prompt_byok_setup(io):
-            return False
+        apply_byok_setup_result(result)
         save_auth_mode("byok")
         return True
+
     save_auth_mode("router")
     return True
 
@@ -400,7 +407,12 @@ def cmd_mcp(io, args) -> int:
 
 def cmd_auth_switch(io) -> int:
     """Re-choose BYOK vs router without forcing a fresh account login."""
-    from aider.z.auth import current_session, prompt_byok_setup, run_login_flow
+    from aider.z.auth import (
+        apply_byok_setup_result,
+        current_session,
+        open_web_setup,
+        run_login_flow,
+    )
     from aider.z.login_screen import prompt_auth_mode_choice
     from aider.z.onboarding import save_auth_mode
 
@@ -411,15 +423,22 @@ def cmd_auth_switch(io) -> int:
             return 1
 
     mode = prompt_auth_mode_choice(io)
-    if mode == "byok" and prompt_byok_setup(io):
+    if mode is None:
+        io.tool_output("Switch cancelled.")
+        return 1
+
+    result = open_web_setup(io, mode)
+    if result is None:
+        return 1
+
+    if mode == "byok":
+        apply_byok_setup_result(result)
         save_auth_mode("byok")
         return 0
-    if mode == "router":
-        save_auth_mode("router")
-        io.tool_output("Using Z's router for model access.")
-        return 0
-    io.tool_output("Switch cancelled.")
-    return 1
+
+    save_auth_mode("router")
+    io.tool_output("Using Z's router for model access.")
+    return 0
 
 
 def cmd_workspace(io, args) -> int:
