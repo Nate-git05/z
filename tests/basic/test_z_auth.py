@@ -209,36 +209,41 @@ class TestZCli(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("Z_SKIP_ACCOUNT", None)
             with patch("aider.z.auth.current_session", return_value=creds):
-                with patch("aider.z.auth.open_web_setup") as setup:
-                    with patch(
-                        "aider.z.onboarding.load_config",
-                        return_value=OnboardingConfig(auth_mode="router"),
-                    ):
-                        ok = ensure_agent_session(io)
+                with patch("aider.z.auth.open_web_login") as login:
+                    with patch("aider.z.auth.open_web_setup") as setup:
+                        with patch(
+                            "aider.z.onboarding.load_config",
+                            return_value=OnboardingConfig(auth_mode="router"),
+                        ):
+                            ok = ensure_agent_session(io)
         self.assertTrue(ok)
+        login.assert_not_called()
         setup.assert_not_called()
 
-    def test_ensure_agent_session_reauths_router_when_signed_out(self):
+    def test_ensure_agent_session_web_login_when_signed_out_with_saved_mode(self):
         from aider.z.cli import ensure_agent_session
+        from aider.z.credentials import Credentials, UserProfile
         from aider.z.onboarding import OnboardingConfig
 
+        creds = Credentials(
+            access_token="tok",
+            user=UserProfile(email="a@b.com", provider="email"),
+            expires_at=9_999_999_999,
+        )
         io = MagicMock()
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("Z_SKIP_ACCOUNT", None)
             with patch("aider.z.auth.current_session", return_value=None):
-                with patch(
-                    "aider.z.auth.open_web_setup",
-                    return_value={"credentials": {"access_token": "tok"}, "mode_result": {}},
-                ) as setup:
-                    with patch(
-                        "aider.z.onboarding.load_config",
-                        return_value=OnboardingConfig(auth_mode="router"),
-                    ):
-                        with patch("aider.z.cli._apply_web_setup_result") as apply:
+                with patch("aider.z.auth.open_web_login", return_value=creds) as login:
+                    with patch("aider.z.auth.open_web_setup") as setup:
+                        with patch(
+                            "aider.z.onboarding.load_config",
+                            return_value=OnboardingConfig(auth_mode="router"),
+                        ):
                             ok = ensure_agent_session(io)
         self.assertTrue(ok)
-        setup.assert_called_once()
-        apply.assert_called_once()
+        login.assert_called_once()
+        setup.assert_not_called()
 
     def test_help_does_not_start_agent(self):
         from aider.z import cli as z_cli

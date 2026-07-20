@@ -196,7 +196,7 @@ def test_open_web_setup_router_dev_fallback_skip_login():
     }
 
 
-def test_skip_login_passed_when_valid_session_already_exists():
+def test_byok_setup_trip_uses_skip_login_true():
     io = FakeIO()
     creds = Credentials(
         access_token="tok",
@@ -217,49 +217,80 @@ def test_skip_login_passed_when_valid_session_already_exists():
             },
         }
 
-    with patch("aider.z.onboarding.load_config", return_value=OnboardingConfig()), patch(
+    with patch("aider.z.auth.current_session", return_value=creds), patch(
+        "aider.z.auth.open_web_login"
+    ) as login, patch(
+        "aider.z.onboarding.load_config", return_value=OnboardingConfig()
+    ), patch(
         "aider.z.login_screen.prompt_auth_mode_choice", return_value="byok"
-    ), patch("aider.z.auth.current_session", return_value=creds), patch(
-        "aider.z.auth.open_web_setup", side_effect=fake_setup
-    ), patch("aider.z.onboarding.save_auth_mode"), patch(
-        "aider.z.cli._apply_web_setup_result"
-    ):
+    ), patch("aider.z.auth.open_web_setup", side_effect=fake_setup), patch(
+        "aider.z.onboarding.save_auth_mode"
+    ), patch("aider.z.cli._apply_web_setup_result"):
         ok = ensure_agent_session(io)
 
     assert ok
+    login.assert_not_called()
     assert captured == {"mode": "byok", "skip_login": True}
 
 
-def test_mode_choice_happens_before_login_check():
+def test_login_happens_before_mode_choice_on_fresh_config():
     io = FakeIO()
     order: list[str] = []
+
+    def fake_login(_io, **_k):
+        order.append("login")
+        return Credentials(
+            access_token="tok",
+            user=UserProfile(email="a@b.com", provider="email"),
+            expires_at=9_999_999_999,
+        )
 
     def fake_mode(_io, **_k):
         order.append("mode")
         return "byok"
 
-    def fake_session():
-        order.append("session")
-        return None
-
     def fake_setup(_io, mode, *, skip_login=False):
         order.append(f"setup:{mode}:{skip_login}")
         return {
-            "credentials": {"access_token": "tok"},
+            "credentials": None,
             "mode_result": {"model_id": "m", "env_var": "K", "api_key": "sk"},
         }
 
-    with patch("aider.z.onboarding.load_config", return_value=OnboardingConfig()), patch(
+    with patch("aider.z.auth.current_session", return_value=None), patch(
+        "aider.z.auth.open_web_login", side_effect=fake_login
+    ), patch("aider.z.onboarding.load_config", return_value=OnboardingConfig()), patch(
         "aider.z.login_screen.prompt_auth_mode_choice", side_effect=fake_mode
-    ), patch("aider.z.auth.current_session", side_effect=fake_session), patch(
-        "aider.z.auth.open_web_setup", side_effect=fake_setup
-    ), patch("aider.z.onboarding.save_auth_mode"), patch(
-        "aider.z.cli._apply_web_setup_result"
-    ):
+    ), patch("aider.z.auth.open_web_setup", side_effect=fake_setup), patch(
+        "aider.z.onboarding.save_auth_mode"
+    ), patch("aider.z.cli._apply_web_setup_result"):
         ok = ensure_agent_session(io)
 
     assert ok
-    assert order == ["mode", "session", "setup:byok:False"]
+    assert order == ["login", "mode", "setup:byok:True"]
+
+
+def test_router_mode_needs_no_second_web_trip():
+    io = FakeIO()
+    creds = Credentials(
+        access_token="tok",
+        user=UserProfile(email="a@b.com", provider="email"),
+        expires_at=9_999_999_999,
+    )
+    with patch("aider.z.auth.current_session", return_value=creds), patch(
+        "aider.z.auth.open_web_login"
+    ) as login, patch(
+        "aider.z.onboarding.load_config", return_value=OnboardingConfig()
+    ), patch(
+        "aider.z.login_screen.prompt_auth_mode_choice", return_value="router"
+    ), patch("aider.z.auth.open_web_setup") as setup, patch(
+        "aider.z.onboarding.save_auth_mode"
+    ) as save_mode:
+        ok = ensure_agent_session(io)
+
+    assert ok
+    login.assert_not_called()
+    setup.assert_not_called()
+    save_mode.assert_called_once_with("router")
 
 
 def test_apply_web_setup_result_saves_credentials_when_present():
@@ -305,17 +336,22 @@ def test_apply_web_setup_result_skips_credentials_when_absent():
     save_model.assert_called_once_with("claude-sonnet-5")
 
 
-def test_byok_configured_skips_account_check():
+def test_configured_mode_still_requires_login_when_signed_out():
     io = FakeIO()
+    creds = Credentials(
+        access_token="tok",
+        user=UserProfile(email="a@b.com", provider="email"),
+        expires_at=9_999_999_999,
+    )
     with patch(
         "aider.z.onboarding.load_config",
         return_value=OnboardingConfig(auth_mode="byok"),
-    ), patch("aider.z.auth.current_session") as session, patch(
-        "aider.z.auth.open_web_setup"
-    ) as setup:
+    ), patch("aider.z.auth.current_session", return_value=None), patch(
+        "aider.z.auth.open_web_login", return_value=creds
+    ) as login, patch("aider.z.auth.open_web_setup") as setup:
         ok = ensure_agent_session(io)
     assert ok
-    session.assert_not_called()
+    login.assert_called_once()
     setup.assert_not_called()
 
 
