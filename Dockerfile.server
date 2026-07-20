@@ -1,0 +1,39 @@
+# Z FastAPI auth/API server — for Cloud Run / container hosts.
+# Google Cloud "Source location": /Dockerfile.server
+#
+# Build:  docker build -f Dockerfile.server -t z-server .
+# Run:    docker run --rm -p 8080:8080 \
+#           -e Z_SECRET_KEY=... -e Z_PUBLIC_BASE_URL=https://api.example.com \
+#           -e Z_FRONTEND_URL=https://z-ten-beta.vercel.app \
+#           -e DATABASE_URL=postgresql+psycopg://... \
+#           z-server
+
+FROM python:3.12-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PORT=8080 \
+    Z_SERVER_DEV=0
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y build-essential \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 1000 --shell /bin/bash appuser
+
+COPY requirements/requirements-web.txt /app/requirements/requirements-web.txt
+RUN pip install --upgrade pip \
+    && pip install -r /app/requirements/requirements-web.txt
+
+COPY alembic.ini /app/alembic.ini
+COPY z_server /app/z_server
+
+RUN chown -R appuser:appuser /app
+USER appuser
+
+EXPOSE 8080
+
+# Cloud Run injects PORT; default locally is 8080.
+CMD ["sh", "-c", "exec uvicorn z_server.app:app --host 0.0.0.0 --port ${PORT:-8080}"]

@@ -108,6 +108,30 @@ export Z_AUTH_DEV=0
 z login
 ```
 
+## Docker / Google Cloud Run
+
+Repo-root `Dockerfile.server` builds only the FastAPI API (not the Next.js frontend, not the CLI agent image).
+
+```bash
+docker build -f Dockerfile.server -t z-server .
+docker run --rm -p 8080:8080 \
+  -e Z_SECRET_KEY=replace-me \
+  -e Z_PUBLIC_BASE_URL=https://YOUR_API_HOST \
+  -e Z_FRONTEND_URL=https://z-ten-beta.vercel.app \
+  -e DATABASE_URL=postgresql+psycopg://USER:PASS@HOST:5432/z \
+  z-server
+```
+
+**Google Cloud console → Build configuration**
+
+| Field | Value |
+|---|---|
+| Branch | `main` |
+| Build type | Dockerfile |
+| Source location | `/Dockerfile.server` |
+
+Set these env vars on the Cloud Run service (at minimum): `Z_SECRET_KEY`, `Z_PUBLIC_BASE_URL`, `Z_FRONTEND_URL`, `DATABASE_URL`. Optional: Google OAuth + Twilio for phone.
+
 ## MCP integrations
 
 Connect MCP servers in the web UI at `/app/integrations` (not via local CLI config).
