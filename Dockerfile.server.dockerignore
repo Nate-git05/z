@@ -1,0 +1,33 @@
+# Used when building with: docker build -f Dockerfile.server
+# (also picked up by Cloud Build when Source location is /Dockerfile.server)
+
+.git
+.github
+.venv
+venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/node_modules
+web
+.vercel
+tmp.benchmarks
+benchmark
+tests
+docs
+assets
+aider
+aider_chat.egg-info
+build
+dist
+_site
+*.db
+z_server.db
+.DS_Store
+.vscode
+.cursor
+scripts
+docker
+HISTORY.md
+CONTRIBUTING.md
+install.sh
