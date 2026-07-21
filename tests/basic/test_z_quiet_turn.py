@@ -80,6 +80,22 @@ class AutoCreateFilesTests(unittest.TestCase):
 
 
 class QuietSkillsExploreTests(unittest.TestCase):
+    def test_empty_preamble_never_emits_dash_line(self):
+        """Regression: hello → Planning · skills — · explore — · plan —"""
+        from aider.z.ux_preamble import TurnPreamble
+
+        pre = TurnPreamble(verbose=False)
+        self.assertEqual(pre.format_lines(), [])
+        outputs = []
+        io = SimpleNamespace(tool_output=lambda *a, **k: outputs.append(a[0]))
+        with patch.dict(os.environ, {"Z_UX_PREAMBLE": "1"}):
+            pre.flush(io)
+        self.assertEqual(outputs, [])
+        self.assertNotIn(
+            "Planning · skills — · explore — · plan —",
+            "\n".join(outputs),
+        )
+
     def test_preamble_format_still_available_for_escape(self):
         from aider.z.ux_preamble import TurnPreamble
 
@@ -89,11 +105,19 @@ class QuietSkillsExploreTests(unittest.TestCase):
         line = pre.format_lines()[0]
         self.assertIn("1 skill", line)
         self.assertIn("explore 1", line)
+        self.assertNotIn("skills —", line)
 
         outputs = []
         io = SimpleNamespace(tool_output=lambda *a, **k: outputs.append(a[0]))
         pre.flush(io)
         self.assertEqual(outputs, [])
+
+    def test_casual_hello_skips_planning_chrome(self):
+        from aider.z.task_mode import looks_like_casual_chat
+
+        self.assertTrue(looks_like_casual_chat("hello"))
+        self.assertTrue(looks_like_casual_chat("hi"))
+        self.assertFalse(looks_like_casual_chat("add a REST endpoint for users"))
 
     def test_phase_spinner_uses_working_label(self):
         from aider.coders.base_coder import Coder

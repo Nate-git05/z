@@ -101,41 +101,45 @@ class TurnPreamble:
         if approved is not None:
             self.plan_approved = bool(approved)
 
+    def has_substance(self) -> bool:
+        """True when a compact preamble would say something other than dashes."""
+        return bool(
+            self.skill_names
+            or self.capability_only
+            or self.explore_files
+            or self.plan_gated
+            or self.plan_approved is not None
+            or self.capability_gaps
+        )
+
     def format_lines(self) -> List[str]:
+        # Never emit the empty "Planning · skills — · explore — · plan —" line.
+        if not self.has_substance():
+            return []
         parts: List[str] = []
         if self.skill_names:
             parts.append(f"{len(self.skill_names)} skill" + ("s" if len(self.skill_names) != 1 else ""))
         elif self.capability_only:
             parts.append("capability plan")
-        else:
-            parts.append("skills —")
 
         if self.explore_files:
             parts.append(f"explore {self.explore_files} file" + ("s" if self.explore_files != 1 else ""))
-        else:
-            parts.append("explore —")
 
         if self.plan_approved is True:
             parts.append("plan approved")
         elif self.plan_gated:
             parts.append("plan-gate")
-        else:
-            parts.append("plan —")
 
-        line = "Planning · " + " · ".join(parts)
-        lines = [line]
-        if self.capability_gaps:
-            # Gaps stay as a separate warning via tool_warning at the call site;
-            # preamble only notes count when flushing status.
-            pass
-        return lines[:2]
+        if not parts:
+            return []
+        return [("Planning · " + " · ".join(parts))][:2]
 
     def flush(self, io) -> None:
         if self._flushed or self.verbose:
             return
         self._flushed = True
         # Quiet by default: skills/explore/plan are not narrated.
-        # Opt back in with Z_UX_PREAMBLE=1 for the compact Planning line.
+        # Opt back in with Z_UX_PREAMBLE=1 for a compact line *with substance*.
         if not ux_preamble_enabled():
             return
         if io is None:

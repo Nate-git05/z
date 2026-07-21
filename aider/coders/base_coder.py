@@ -1340,69 +1340,80 @@ class Coder:
 
             # Skills + overlapped explore, with continuous mascot/eyes updates.
             # Explore forks off the critical path while checklist/plan draft (T3).
+            from aider.z.task_mode import TaskMode as _TM
+            from aider.z.task_mode import looks_like_casual_chat
             from aider.z.ux_preamble import TurnPreamble, ux_verbose
 
-            self._turn_preamble = TurnPreamble(verbose=ux_verbose(coder=self))
-            try:
-                self._phase_spinner_start("Planning — matching skills…")
-                self._maybe_pull_skills(user_text, checkpoint="turn")
-
-                if mode.allows_explore_pass:
-                    try:
-                        from aider.z.explore import explore_pass_enabled
-
-                        if explore_pass_enabled():
-                            self._phase_spinner_start(
-                                "Planning — exploring related files…"
-                            )
-                    except Exception:
-                        pass
-                explore_fut = self._start_explore_pass_async(user_text)
-                self._explore_future = explore_fut
-
-                # House instructions (AGENTS.md) — once per session
+            # Greetings / small-talk: no skills/explore/plan chrome — just answer.
+            if looks_like_casual_chat(user_text):
+                eng = getattr(self, "uncertainty_engine", None)
+                if eng is not None and getattr(eng, "ctx", None) is not None:
+                    eng.ctx.plan = None
+                    eng.ctx.plan_required = False
+                    eng.ctx.plan_approved = True
+                self._turn_preamble = None
                 self._maybe_inject_house_instructions()
+            else:
+                self._turn_preamble = TurnPreamble(verbose=ux_verbose(coder=self))
+                explore_fut = None
+                try:
+                    self._phase_spinner_start("Planning — matching skills…")
+                    self._maybe_pull_skills(user_text, checkpoint="turn")
 
-                if mode.allows_requirement_decomposition:
-                    self._phase_spinner_start(
-                        "Planning — drafting approach checklist…"
-                    )
-                    self._maybe_begin_uncertainty_task(user_text)
+                    if mode.allows_explore_pass:
+                        try:
+                            from aider.z.explore import explore_pass_enabled
 
-                # PLAN mode: inject reminder; skip high-stakes *implement* plan confirm
-                from aider.z.task_mode import TaskMode as _TM
+                            if explore_pass_enabled():
+                                self._phase_spinner_start(
+                                    "Planning — exploring related files…"
+                                )
+                        except Exception:
+                            pass
+                    explore_fut = self._start_explore_pass_async(user_text)
+                    self._explore_future = explore_fut
 
-                if mode is _TM.PLAN:
-                    self._phase_spinner_start("Planning — refining plan interview…")
-                    self._maybe_advance_plan_interview(user_text)
+                    # House instructions (AGENTS.md) — once per session
+                    self._maybe_inject_house_instructions()
+
+                    if mode.allows_requirement_decomposition:
+                        self._phase_spinner_start(
+                            "Planning — drafting approach checklist…"
+                        )
+                        self._maybe_begin_uncertainty_task(user_text)
+
+                    # PLAN mode: inject reminder; skip high-stakes *implement* plan confirm
+                    if mode is _TM.PLAN:
+                        self._phase_spinner_start("Planning — refining plan interview…")
+                        self._maybe_advance_plan_interview(user_text)
+                        self._phase_spinner_stop()
+                        self._inject_plan_mode_reminder()
+                    elif mode.allows_planning:
+                        self._phase_spinner_start(
+                            "Planning — drafting implementation plan…"
+                        )
+                        if not self._maybe_require_implementation_plan(user_text):
+                            self._cancel_explore_pass(explore_fut)
+                            return
+                    else:
+                        # Ensure no stale plan from a prior turn leaks into this message
+                        eng = getattr(self, "uncertainty_engine", None)
+                        if eng is not None and getattr(eng, "ctx", None) is not None:
+                            eng.ctx.plan = None
+                            eng.ctx.plan_required = False
+                            eng.ctx.plan_approved = True
+                finally:
                     self._phase_spinner_stop()
-                    self._inject_plan_mode_reminder()
-                elif mode.allows_planning:
-                    self._phase_spinner_start(
-                        "Planning — drafting implementation plan…"
-                    )
-                    if not self._maybe_require_implementation_plan(user_text):
-                        self._cancel_explore_pass(explore_fut)
-                        return
-                else:
-                    # Ensure no stale plan from a prior turn leaks into this message
-                    eng = getattr(self, "uncertainty_engine", None)
-                    if eng is not None and getattr(eng, "ctx", None) is not None:
-                        eng.ctx.plan = None
-                        eng.ctx.plan_required = False
-                        eng.ctx.plan_approved = True
-            finally:
-                self._phase_spinner_stop()
-                self._explore_future = None
+                    self._explore_future = None
 
-            # Join explore before the model turn so findings still land in context
-            self._finish_explore_pass(explore_fut)
-            try:
-                pre = getattr(self, "_turn_preamble", None)
-                if pre is not None:
-                    pre.flush(self.io)
-            except Exception:
-                pass
+                # Join explore before the model turn so findings still land in context
+                self._finish_explore_pass(explore_fut)
+                try:
+                    pre = getattr(self, "_turn_preamble", None)
+                    if pre is not None:
+                        pre.flush(self.io)
+                except Exception:
+                    pass
 
         while message:
             self.reflected_message = None
