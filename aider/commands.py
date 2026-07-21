@@ -1252,6 +1252,96 @@ class Commands:
 
         return self._generic_chat_command(args, "ask", task_mode=TaskMode.ASK)
 
+    def cmd_plan(self, args):
+        """Enter plan mode: design only — no product edits. Write a plan artifact, then `/plan-exit`."""  # noqa
+        from aider.z.task_mode import TaskMode
+
+        if not (args or "").strip():
+            self.coder.forced_task_mode = TaskMode.PLAN
+            self.coder.task_mode = TaskMode.PLAN
+            try:
+                self.coder._inject_plan_mode_reminder()
+            except Exception:
+                pass
+            self.io.tool_output(
+                "Switched to plan mode (product edits blocked). "
+                "Describe the task, then `/plan-exit` when the plan is ready."
+            )
+            return
+
+        # Use the normal edit format so a plan markdown file can be written;
+        # TaskMode.PLAN blocks product-file applies.
+        return self._generic_chat_command(
+            args,
+            self.coder.main_model.edit_format,
+            task_mode=TaskMode.PLAN,
+        )
+
+    def cmd_plan_exit(self, args):
+        """Leave plan mode, load the latest plan as binding context, and switch to code mode."""  # noqa
+        from pathlib import Path
+
+        from aider.z.plan_mode import format_plan_exit_context, plans_dir
+        from aider.z.task_mode import TaskMode
+
+        plan_text = ""
+        plan_path = None
+        # Prefer coder's active path, else newest file in plans_dir
+        active = getattr(self.coder, "_active_plan_path", None)
+        if active and Path(active).is_file():
+            plan_path = active
+            plan_text = Path(active).read_text(encoding="utf-8", errors="replace")
+        else:
+            plans = sorted(
+                plans_dir().glob("*.md"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            if plans:
+                plan_path = str(plans[0])
+                plan_text = plans[0].read_text(encoding="utf-8", errors="replace")
+
+        extra = (args or "").strip()
+        if not plan_text and not extra:
+            self.io.tool_warning(
+                "No plan artifact found under "
+                f"{plans_dir()}. Staying in plan mode — write a plan first."
+            )
+            return
+
+        # Clear sticky plan forcing
+        self.coder.forced_task_mode = None
+        self.coder.task_mode = TaskMode.IMPLEMENT
+        if hasattr(self.coder, "_active_plan_path"):
+            self.coder._active_plan_path = None
+
+        if plan_text:
+            block = format_plan_exit_context(plan_text, plan_path=plan_path)
+            self.coder.cur_messages += [
+                {"role": "user", "content": block},
+                {
+                    "role": "assistant",
+                    "content": (
+                        "Plan approved via /plan-exit. I'll treat it as binding "
+                        "and implement next."
+                    ),
+                },
+            ]
+            eng = getattr(self.coder, "uncertainty_engine", None)
+            if eng is not None and getattr(eng, "ctx", None) is not None:
+                eng.ctx.plan_approved = True
+                eng.ctx.plan_required = False
+            self.io.tool_output(
+                f"Plan exit — loaded {plan_path or '(inline)'}; switching to code mode."
+            )
+
+        prompt = extra or "Implement the approved plan."
+        return self._generic_chat_command(
+            prompt,
+            self.coder.main_model.edit_format,
+            task_mode=TaskMode.IMPLEMENT,
+        )
+
     def cmd_code(self, args):
         """Ask for changes to your code. If no prompt provided, switches to code mode."""  # noqa
         return self._generic_chat_command(args, self.coder.main_model.edit_format)
