@@ -104,6 +104,10 @@ class MascotSpinner:
         self.frame_idx = (self.frame_idx + 1) % len(self.frames)
         return frame
 
+    def set_text(self, text: str) -> None:
+        """Update status text while the spinner keeps animating."""
+        self.text = text or self.text
+
     def step(self, text: str | None = None) -> None:
         if text is not None:
             self.text = text
