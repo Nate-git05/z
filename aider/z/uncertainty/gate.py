@@ -62,16 +62,124 @@ class GateResult:
     force_override: bool = False
     reason: str = ""
     claimed_complete: bool = False
+    # True when format_commit_blocked_message was already printed to io
+    # (callers should not re-print a bare "Commit blocked…" line).
+    block_ui_emitted: bool = False
+    block_message: Optional[str] = None
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def ni_gate_policy() -> str:
+    """Non-interactive gate policy: block | force | reflect (default block)."""
+    raw = (os.environ.get("Z_NI_GATE") or "block").strip().lower()
+    if raw in ("force", "reflect", "block"):
+        return raw
+    return "block"
+
+
 def _force_requested(coder) -> bool:
     if getattr(coder, "force_commit", False):
         return True
-    return os.environ.get("Z_FORCE_COMMIT", "").strip() in ("1", "true", "yes")
+    if os.environ.get("Z_FORCE_COMMIT", "").strip().lower() in ("1", "true", "yes"):
+        return True
+    # Trusted CI: Z_NI_GATE=force acts like Z_FORCE_COMMIT for High overrides
+    return ni_gate_policy() == "force"
+
+
+def _dirty_file_count(coder, edited: Optional[Sequence[str]] = None) -> int:
+    if edited:
+        return len({str(p) for p in edited if p})
+    try:
+        files = getattr(coder, "aider_edited_files", None) or ()
+        n = len({str(p) for p in files if p})
+        if n:
+            return n
+    except Exception:
+        pass
+    try:
+        repo = getattr(coder, "repo", None)
+        if repo is not None and hasattr(repo, "get_dirty_files"):
+            return len(list(repo.get_dirty_files() or []))
+    except Exception:
+        pass
+    return 0
+
+
+def format_commit_blocked_message(
+    reason: str,
+    *,
+    dirty_count: Optional[int] = None,
+) -> str:
+    """User-facing block text with discoverable NI escapes (fault-plan gate-ni-ux)."""
+    reason_line = (reason or "verification gate blocked commit").strip()
+    if dirty_count is None:
+        dirty_line = "Working tree: DIRTY (unknown file count). Commit did NOT happen."
+    elif dirty_count <= 0:
+        dirty_line = "Working tree: may be dirty. Commit did NOT happen."
+    else:
+        dirty_line = (
+            f"Working tree: DIRTY ({dirty_count} file"
+            f"{'s' if dirty_count != 1 else ''}). Commit did NOT happen."
+        )
+    return (
+        "Commit blocked by Z verification gate.\n"
+        f"Reason: {reason_line}\n"
+        f"{dirty_line}\n"
+        "Non-interactive options:\n"
+        "  • Fix issues and re-run\n"
+        "  • Z_FORCE_COMMIT=1  — log override and commit (High still logged)\n"
+        "  • Z_SKIP_VERIFY_GATE=1 — disable gate (escape hatch)\n"
+        "  • Z_NI_GATE=block|force|reflect  — policy (default block)"
+    )
+
+
+def emit_commit_blocked(
+    io,
+    reason: str,
+    *,
+    dirty_count: Optional[int] = None,
+    coder=None,
+    edited: Optional[Sequence[str]] = None,
+) -> str:
+    """Print the standard block message; return the text for chat history."""
+    if dirty_count is None and coder is not None:
+        dirty_count = _dirty_file_count(coder, edited)
+    msg = format_commit_blocked_message(reason, dirty_count=dirty_count)
+    if io is not None:
+        try:
+            io.tool_error(msg)
+        except Exception:
+            pass
+    return msg
+
+
+def _yes_always(io) -> bool:
+    return getattr(io, "yes", None) is True
+
+
+def _reflect_for_ni_gate(
+    *,
+    reason: str,
+    high: Sequence[UncertaintyNode],
+    medium: Sequence[UncertaintyNode],
+) -> str:
+    lines = [
+        "Z_NI_GATE=reflect: commit was not allowed. Address the blockers below, "
+        "then continue with SEARCH/REPLACE / tests — do not claim completion.",
+        f"Reason: {reason}",
+    ]
+    for n in list(high)[:8]:
+        lines.append(f"- HIGH: {n.title}: {n.summary}")
+    for n in list(medium)[:6]:
+        lines.append(f"- MEDIUM: {n.title}: {n.summary}")
+    lines.append(
+        "Escapes if intentional: Z_FORCE_COMMIT=1 or Z_NI_GATE=force "
+        "(logged); Z_SKIP_VERIFY_GATE=1 disables the gate."
+    )
+    return "\n".join(lines)
 
 
 def _mark_gate_signal(node: UncertaintyNode, kind: str, *, commit_hash: Optional[str] = None):
@@ -878,12 +986,16 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
                 "sanitizer still shows no improvement.\n"
                 f"{_last_failure_excerpt(record)}"
             )
-            io.tool_error(f"Commit blocked by Z verification gate. {reason}")
+            blocked_msg = emit_commit_blocked(
+                io, reason, coder=coder, edited=edited_list
+            )
             return GateResult(
                 allow_commit=False,
                 verification=record,
                 blocked_high=[node],
                 reason=reason,
+                block_ui_emitted=True,
+                block_message=blocked_msg,
             )
 
     elif needs_compiler_fix and not record.meaningful_pass:
@@ -938,12 +1050,16 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
                 "typecheck still failing. Re-read the real types.\n"
                 f"{_last_failure_excerpt(record)}"
             )
-            io.tool_error(f"Commit blocked by Z verification gate. {reason}")
+            blocked_msg = emit_commit_blocked(
+                io, reason, coder=coder, edited=edited_list
+            )
             return GateResult(
                 allow_commit=False,
                 verification=record,
                 blocked_high=[node],
                 reason=reason,
+                block_ui_emitted=True,
+                block_message=blocked_msg,
             )
 
     elif needs_generate and not record.meaningful_pass:
@@ -1038,12 +1154,16 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
                 "tests still failing. A human needs to look.\n"
                 f"{failure}"
             )
-            io.tool_error(f"Commit blocked by Z verification gate. {reason}")
+            blocked_msg = emit_commit_blocked(
+                io, reason, coder=coder, edited=edited_list
+            )
             return GateResult(
                 allow_commit=False,
                 verification=record,
                 blocked_high=[node],
                 reason=reason,
+                block_ui_emitted=True,
+                block_message=blocked_msg,
             )
 
     else:
@@ -1301,6 +1421,59 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
                 "or give an explicit typed acknowledgment in the interactive prompt."
             )
 
+        # Non-interactive / --yes-always: confirm_ask(explicit_yes_required) would
+        # silently answer "n". Print discoverable escapes and apply Z_NI_GATE.
+        reason_high = (
+            "dependency fabrication blockers"
+            if fab_nodes
+            else "high-risk blockers"
+        )
+        if _yes_always(io):
+            blocked_msg = emit_commit_blocked(
+                io,
+                reason_high,
+                coder=coder,
+                edited=edited_list,
+            )
+            policy = ni_gate_policy()
+            if policy == "force" and not fab_nodes:
+                # Should have been handled by _force_requested already; belt+suspenders
+                record_acceptances(store, high, "force_override")
+                if medium:
+                    record_acceptances(store, medium, "force_override")
+                coder._z_gate_hold_dirty = False
+                return GateResult(
+                    allow_commit=True,
+                    verification=record,
+                    blocked_high=high,
+                    needs_ack_medium=medium,
+                    force_override=True,
+                    reason="Z_NI_GATE=force override of high-risk blockers",
+                    claimed_complete=record.meaningful_pass,
+                )
+            if policy == "reflect" and not fab_nodes:
+                return GateResult(
+                    allow_commit=False,
+                    reflect_message=_reflect_for_ni_gate(
+                        reason=reason_high, high=high, medium=medium
+                    ),
+                    verification=record,
+                    blocked_high=high,
+                    needs_ack_medium=medium,
+                    reason=reason_high,
+                    block_ui_emitted=True,
+                    block_message=blocked_msg,
+                )
+            return GateResult(
+                allow_commit=False,
+                verification=record,
+                blocked_high=high,
+                needs_ack_medium=medium,
+                reason=reason_high,
+                block_ui_emitted=True,
+                block_message=blocked_msg,
+            )
+
         # Interactive override — dependency fabrication needs a distinct ack
         if fab_nodes:
             pkg = str(
@@ -1339,16 +1512,20 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
                 ),
                 claimed_complete=False,
             )
+        blocked_msg = emit_commit_blocked(
+            io,
+            reason_high,
+            coder=coder,
+            edited=edited_list,
+        )
         return GateResult(
             allow_commit=False,
             verification=record,
             blocked_high=high,
             needs_ack_medium=medium,
-            reason=(
-                "dependency fabrication blockers"
-                if fab_nodes
-                else "high-risk blockers"
-            ),
+            reason=reason_high,
+            block_ui_emitted=True,
+            block_message=blocked_msg,
         )
 
     if medium:
@@ -1357,6 +1534,59 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
             f"{len(medium)} medium-risk issue(s) require explicit acknowledgment "
             f"before commit:\n{subject}"
         )
+        if force:
+            record_acceptances(store, medium, "force_override")
+            coder._z_gate_hold_dirty = False
+            return GateResult(
+                allow_commit=True,
+                verification=record,
+                needs_ack_medium=[],
+                acknowledged_medium=list(medium),
+                force_override=True,
+                reason="force override acknowledged medium-risk nodes",
+                claimed_complete=record.meaningful_pass,
+            )
+        if _yes_always(io):
+            reason_med = "medium-risk not acknowledged"
+            blocked_msg = emit_commit_blocked(
+                io,
+                reason_med,
+                coder=coder,
+                edited=edited_list,
+            )
+            policy = ni_gate_policy()
+            if policy == "force":
+                record_acceptances(store, medium, "force_override")
+                coder._z_gate_hold_dirty = False
+                return GateResult(
+                    allow_commit=True,
+                    verification=record,
+                    needs_ack_medium=[],
+                    acknowledged_medium=list(medium),
+                    force_override=True,
+                    reason="Z_NI_GATE=force acknowledged medium-risk nodes",
+                    claimed_complete=record.meaningful_pass,
+                )
+            if policy == "reflect":
+                return GateResult(
+                    allow_commit=False,
+                    reflect_message=_reflect_for_ni_gate(
+                        reason=reason_med, high=[], medium=medium
+                    ),
+                    verification=record,
+                    needs_ack_medium=medium,
+                    reason=reason_med,
+                    block_ui_emitted=True,
+                    block_message=blocked_msg,
+                )
+            return GateResult(
+                allow_commit=False,
+                verification=record,
+                needs_ack_medium=medium,
+                reason=reason_med,
+                block_ui_emitted=True,
+                block_message=blocked_msg,
+            )
         ok = io.confirm_ask(
             "Acknowledge medium-risk nodes and proceed with commit?",
             default="n",
@@ -1364,11 +1594,20 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
             subject=subject,
         )
         if not ok:
+            reason_med = "medium-risk not acknowledged"
+            blocked_msg = emit_commit_blocked(
+                io,
+                reason_med,
+                coder=coder,
+                edited=edited_list,
+            )
             return GateResult(
                 allow_commit=False,
                 verification=record,
                 needs_ack_medium=medium,
-                reason="medium-risk not acknowledged",
+                reason=reason_med,
+                block_ui_emitted=True,
+                block_message=blocked_msg,
             )
         record_acceptances(store, medium, "medium_ack")
         coder._z_gate_hold_dirty = False
@@ -1421,10 +1660,18 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
                 io.tool_output(format_backtrack(bt))
         except Exception:
             pass
+        blocked_msg = emit_commit_blocked(
+            io,
+            "verification did not meaningfully pass",
+            coder=coder,
+            edited=edited_list,
+        )
         return GateResult(
             allow_commit=False,
             verification=record,
             reason="verification did not meaningfully pass",
+            block_ui_emitted=True,
+            block_message=blocked_msg,
         )
 
     # --- P1 reliability: artifacts, weak assertions, clean-room, multi-session ---
@@ -1883,7 +2130,10 @@ def report_auto_fix_exhaustion(
         "tests still failing. A human needs to look.\n"
         f"{failure}"
     )
-    blocked_msg = f"Commit blocked by Z verification gate. {detail}"
+    blocked_msg = format_commit_blocked_message(
+        detail,
+        dirty_count=_dirty_file_count(coder),
+    )
     if io is not None:
         io.tool_error(
             f"Only {max_reflections} reflections allowed, stopping — "

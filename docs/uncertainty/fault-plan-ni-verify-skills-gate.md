@@ -1,10 +1,15 @@
 # Spec: Non-interactive continuity, verify honesty, skill retrieval, gate UX
 
-**Status:** planning (no implementation in this doc’s first commit)  
+**Status:** planning — **runtime not implemented** (flags/`ni_contract`/cmake reconfigure
+exist only in docs; confirmed by repo grep on `main`)  
+**Deep dive + feature plan:** [fault-impl-deep-dive.md](./fault-impl-deep-dive.md)  
 **Triggered by:** Claude Code writeup of live faults on `miniregex` / `minilfu`  
 **Thesis (confirmed in code):** The model can write correct C++; the **orchestration /
 product layer** is where false-completion-shaped silence, wrong-suite “verify,”
 soft-blocked sanitizers, skill non-retrieval, and undiscoverable gate exits live.
+
+> **Not the coding-quality stack.** Compact skills, explore, plan interview, tool-loop,
+> and live P2 **are** on `main`. This fault set is a **separate** implement pass.
 
 ---
 
@@ -141,7 +146,7 @@ pin/suppress Chroma product telemetry.
 
 ## Workstreams (implementation order)
 
-### P0 — Non-interactive run contract (`ni-contract`)
+### P0 — Non-interactive run contract (`ni-contract`) — **IMPLEMENTED**
 
 **Goals**
 
@@ -157,15 +162,11 @@ pin/suppress Chroma product telemetry.
   a **structured miss** → auto `/add` candidates or create-new-file path,
   not silent success.
 
-**Acceptance**
-
-- Fixture: empty CMake project + SPEC requiring new `src/foo.c`; NI run must
-  create files or exit nonzero.
-- Exit 0 only if `len(aider_edited_files) > 0` or classified non-edit mode
-  completed with an artifact (diagnosis text / review findings).
-
-**Files (expected):** `aider/main.py`, `aider/coders/base_coder.py`,
-new `aider/z/ni_contract.py`, tests under `tests/basic/test_z_ni_contract.py`.
+**Shipped:** `aider/z/ni_contract.py`; `aider/main.py` one-shot paths call
+`apply_ni_reflection_floor` + `finish_ni_run` (exit code + outcome line);
+`base_coder` calls `maybe_auto_seed_reflect` after empty applies.
+Flags: `Z_NI_REQUIRE_EDITS` (default on), `Z_NI_AUTO_SEED` (default on),
+`Z_NI_MIN_REFLECTIONS` (default 5). Tests: `tests/basic/test_z_ni_contract.py`.
 
 ---
 
@@ -217,7 +218,7 @@ optional `aider/z/uncertainty/recipe_runner.py`.
 
 ---
 
-### P1 — Gate UX for automation (`gate-ni-ux`)
+### P1 — Gate UX for automation (`gate-ni-ux`) — **IMPLEMENTED**
 
 **Goals**
 
@@ -238,13 +239,11 @@ optional `aider/z/uncertainty/recipe_runner.py`.
   the above (today it answers `n` via `explicit_yes_required`).
 - Optional: `Z_NI_GATE=force` for trusted CI after green verify+sanitizer.
 
-**Acceptance**
-
-- NI run that hits High gate: exit ≠ 0, message contains `Z_FORCE_COMMIT` and
-  `Z_SKIP_VERIFY_GATE` substrings; tree remains dirty unless force set.
-
-**Files:** `gate.py`, `io.py` (document yes-always + explicit_yes interaction),
-`base_coder.py` block path.
+**Shipped:** `format_commit_blocked_message` / `emit_commit_blocked` / `ni_gate_policy`
+in `aider/z/uncertainty/gate.py`; yes-always High/Medium paths apply `Z_NI_GATE`;
+`Z_NI_GATE=force` honored via `_force_requested`; `base_coder` / `/commit` avoid
+double-print when UI already emitted; `io.confirm_ask` documents yes-always +
+explicit_yes interaction. Tests: `tests/basic/test_z_gate_ni_ux.py`.
 
 ---
 
@@ -274,7 +273,7 @@ optional `aider/z/uncertainty/recipe_runner.py`.
 
 ---
 
-### P2 — Chroma telemetry silence (`chroma-telemetry`)
+### P2 — Chroma telemetry silence (`chroma-telemetry`) — **IMPLEMENTED**
 
 **Goals**
 
@@ -283,12 +282,10 @@ optional `aider/z/uncertainty/recipe_runner.py`.
 - Swallow/ignore product telemetry errors; never print to coding session
   unless `Z_VERBOSE=1`.
 
-**Acceptance**
-
-- Fresh session with skills/Chroma: no `ClientStartEvent` / `capture()` TypeError
-  lines on stderr.
-
-**Files:** `skills/vector.py`, maybe `main.py` early env.
+**Shipped:** `aider/z/skills/vector.py` (`configure_chroma_telemetry`), early call from
+`aider/z/cli.py`, tests in `tests/basic/test_z_chroma_telemetry.py`. Also no-ops
+Chroma’s broken 3-arg `Posthog.capture` (posthog SDK arity mismatch) so
+`ClientStartEvent` TypeErrors cannot spam stderr even when Chroma still invokes capture.
 
 ---
 
@@ -330,10 +327,23 @@ optional `aider/z/uncertainty/recipe_runner.py`.
 
 ## Suggested PR slice order
 
+<<<<<<< HEAD
 1. **chroma-telemetry** — tiny, confidence win (separate PR)  
 2. **gate-ni-ux** — block message + `Z_NI_GATE` (separate PR)  
 3. **ni-contract** — exit codes + auto-seed (separate PR)  
 4. **verify-cmake** — ✅ shipped (reconfigure + refuse stale suite-only green)  
+=======
+<<<<<<< HEAD
+1. **chroma-telemetry** — tiny, confidence win (separate PR)  
+2. **gate-ni-ux** — block message + `Z_NI_GATE` (separate PR)  
+3. **ni-contract** — ✅ shipped (exit codes + auto-seed + outcome line)  
+=======
+1. **chroma-telemetry** — ✅ shipped (`configure_chroma_telemetry`)  
+2. **gate-ni-ux** — ✅ shipped (block message + `Z_NI_GATE`)  
+3. **ni-contract** — exit codes + auto-seed  
+>>>>>>> origin/main
+4. **verify-cmake** — stale build  
+>>>>>>> origin/main
 5. **sanitizer-teeth** — policy  
 6. **skill-retrieve** — lexical fallback + near-dup  
 

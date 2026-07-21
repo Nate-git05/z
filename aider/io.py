@@ -889,6 +889,10 @@ class InputOutput:
             return text.lower() in valid_responses
 
         if self.yes is True:
+            # --yes-always: auto-yes for ordinary confirms, but NEVER for
+            # explicit_yes_required (force-commit / medium-ack / fabrication).
+            # Those must stay fail-closed; gate.py prints Z_FORCE_COMMIT /
+            # Z_SKIP_VERIFY_GATE / Z_NI_GATE escapes when this path answers "n".
             res = "n" if explicit_yes_required else "y"
         elif self.yes is False:
             res = "n"
