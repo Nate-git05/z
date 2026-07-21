@@ -2,6 +2,10 @@
 
 ### main branch
 
+- Implemented P3 turn flow: Idle / Busy / WaitingInput orchestrator with message queue while Busy (see `docs/uncertainty/terminal-ux-p3-plan.md`).
+- Documented P3 terminal UX plan: unified turn flow (Idle / Busy / WaitingInput / message queue) — see `docs/uncertainty/terminal-ux-p3-plan.md`.
+- Fixed false-positive verify gate on green `ctest` (parser expected pytest-style `N passed`; now reads CTest summary / per-test lines and reconciles discovery from `ctest -N`).
+- Clearer busy UI: planning/LLM spinner shows `Ctrl+C to interrupt`, stops on interrupt and before any prompt; chat file list is one path per line outside prompt_toolkit (stops glued/duplicated paths).
 - Fixed terminal-resize garble on drift/plan escalation prompts: long text stays in the Rich panel; prompt_toolkit only sees a short `(Y)es/(N)o` line.
 - Ambiguous noun-phrase prompts (e.g. `users and sessions`) now classify as ASK instead of IMPLEMENT, avoiding surprise plan panels (`looks_like_ambiguous_topic`; escape `Z_MODE_CLASSIFY=0`).
 - P2 terminal UX: Rich `/uncertainties` on the production tree, compact `Uncertainty · N High · M Medium — /uncertainties` summary, and golden implement-turn noise-budget fixtures.

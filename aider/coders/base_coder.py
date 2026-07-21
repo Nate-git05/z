@@ -789,6 +789,11 @@ class Coder:
     def _stop_waiting_spinner(self):
         """Clear the waiting spinner."""
         spinner = getattr(self, "waiting_spinner", None)
+        try:
+            if getattr(self, "io", None) is not None:
+                self.io.agent_busy = False
+        except Exception:
+            pass
         if not spinner:
             return
         try:
@@ -801,23 +806,54 @@ class Coder:
         self._stop_waiting_spinner()
         if not text:
             return
+        orch = None
+        try:
+            orch = self.io.ensure_turn_ux()
+            orch.enter_busy(text)
+        except Exception:
+            orch = getattr(self.io, "turn_orchestrator", None)
+        label = text
+        if orch is not None:
+            try:
+                orch.set_phase(text)
+                label = orch.status_label(text)
+            except Exception:
+                if "Ctrl+C" not in label:
+                    label = f"{text}  · Ctrl+C to interrupt"
+        elif "Ctrl+C" not in label:
+            label = f"{text}  · Ctrl+C to interrupt"
         try:
             if not self.show_pretty():
                 # Non-pretty / dumb terminals: still print a static breadcrumb
-                self.io.tool_output(text)
+                self.io.tool_output(label)
                 return
         except Exception:
             return
         try:
+            # Separate from leftover slash-menu / prompt redraw so \r spinner
+            # does not overwrite file paths or completer chrome.
+            import sys as _sys
+
+            _sys.stdout.write("\n")
+            _sys.stdout.flush()
+        except Exception:
+            pass
+        try:
             if getattr(self.io, "z_theme", True):
-                self.waiting_spinner = waiting_display(text)
+                self.waiting_spinner = waiting_display(label)
             else:
-                self.waiting_spinner = WaitingSpinner(text)
+                self.waiting_spinner = WaitingSpinner(label)
             self.waiting_spinner.start()
+            try:
+                self.io.agent_busy = True
+                self.io._stop_agent_busy = self._phase_spinner_stop
+                self.io.start_busy_queue_reader()
+            except Exception:
+                pass
         except Exception:
             self.waiting_spinner = None
             try:
-                self.io.tool_output(text)
+                self.io.tool_output(label)
             except Exception:
                 pass
 
@@ -825,23 +861,38 @@ class Coder:
         """Update spinner status text without stopping the eyes animation."""
         if not text:
             return
+        orch = getattr(self.io, "turn_orchestrator", None)
+        if orch is not None:
+            try:
+                orch.set_phase(text)
+                label = orch.status_label(text)
+            except Exception:
+                label = text
+        else:
+            label = text
+            if "Ctrl+C" not in label:
+                label = f"{text}  · Ctrl+C to interrupt"
         spinner = getattr(self, "waiting_spinner", None)
         if spinner is None:
             self._phase_spinner_start(text)
             return
         try:
             if hasattr(spinner, "set_text"):
-                spinner.set_text(text)
+                spinner.set_text(label)
             elif hasattr(spinner, "text"):
-                spinner.text = text
+                spinner.text = label
             elif hasattr(spinner, "spinner") and hasattr(spinner.spinner, "text"):
-                spinner.spinner.text = text
+                spinner.spinner.text = label
         except Exception:
             pass
 
     def _phase_spinner_stop(self) -> None:
         """Stop planning-phase spinner before printing or prompting."""
         self._stop_waiting_spinner()
+        try:
+            self.io.stop_busy_queue_reader()
+        except Exception:
+            pass
 
     def get_abs_fnames_content(self):
         for fname in list(self.abs_fnames):
@@ -1128,27 +1179,91 @@ class Coder:
 
     def run(self, with_message=None, preproc=True):
         try:
+            self.io.ensure_turn_ux()
+            self.io._refresh_busy_status = self._refresh_busy_status
+            self.io._stop_agent_busy = self._phase_spinner_stop
             if with_message:
                 self.io.user_input(with_message)
-                self.run_one(with_message, preproc)
+                self._begin_turn_busy("planning")
+                try:
+                    self.run_one(with_message, preproc)
+                finally:
+                    self._end_turn_idle()
                 return self.partial_response_content
             while True:
                 try:
                     if not self.io.placeholder:
                         self.copy_context()
-                    user_message = self.get_input()
-                    self.run_one(user_message, preproc)
-                    self.show_undo_hint()
+                    user_message = self._next_user_message()
+                    self._begin_turn_busy("planning")
+                    try:
+                        self.run_one(user_message, preproc)
+                        self.show_undo_hint()
+                    finally:
+                        self._end_turn_idle()
                 except KeyboardInterrupt:
                     self.keyboard_interrupt()
         except EOFError:
             return
+
+    def _next_user_message(self):
+        """Idle: auto-drain one queued message (D7) or block on full prompt."""
+        orch = self.io.ensure_turn_ux()
+        orch.enter_idle()
+        queued = self.io.pop_queued_user_message()
+        if queued:
+            try:
+                self.io.tool_output(orch.format_queued_preview(queued))
+            except Exception:
+                pass
+            try:
+                self.io.ring_bell()
+            except Exception:
+                pass
+            return queued
+        return self.get_input()
+
+    def _begin_turn_busy(self, phase: str = "planning") -> None:
+        orch = self.io.ensure_turn_ux()
+        orch.enter_busy(phase)
+        try:
+            self.io.start_busy_queue_reader()
+        except Exception:
+            pass
+
+    def _end_turn_idle(self) -> None:
+        self._phase_spinner_stop()
+        try:
+            self.io.stop_busy_queue_reader()
+        except Exception:
+            pass
+        orch = getattr(self.io, "turn_orchestrator", None)
+        if orch is not None:
+            orch.enter_idle()
+
+    def _refresh_busy_status(self) -> None:
+        """Update spinner text with phase + Queued N (orchestrator status_label)."""
+        orch = getattr(self.io, "turn_orchestrator", None)
+        spinner = getattr(self, "waiting_spinner", None)
+        if orch is None or spinner is None:
+            return
+        base = orch.phase or "Working"
+        label = orch.status_label(base)
+        try:
+            if hasattr(spinner, "set_text"):
+                spinner.set_text(label)
+            elif hasattr(spinner, "text"):
+                spinner.text = label
+        except Exception:
+            pass
 
     def copy_context(self):
         if self.auto_copy_context:
             self.commands.cmd_copy_context()
 
     def get_input(self):
+        # Never leave planning/LLM spinner running into the next prompt.
+        self._phase_spinner_stop()
         inchat_files = self.get_inchat_relative_files()
         read_only_files = [self.get_rel_fname(fname) for fname in self.abs_read_only_fnames]
         all_files = sorted(set(inchat_files + read_only_files))
@@ -1224,6 +1339,7 @@ class Coder:
                     except Exception:
                         pass
                 explore_fut = self._start_explore_pass_async(user_text)
+                self._explore_future = explore_fut
 
                 # House instructions (AGENTS.md) — once per session
                 self._maybe_inject_house_instructions()
@@ -1258,6 +1374,7 @@ class Coder:
                         eng.ctx.plan_approved = True
             finally:
                 self._phase_spinner_stop()
+                self._explore_future = None
 
             # Join explore before the model turn so findings still land in context
             self._finish_explore_pass(explore_fut)
@@ -2790,7 +2907,24 @@ class Coder:
         return inp
 
     def keyboard_interrupt(self):
-        # Ensure cursor is visible on exit
+        # Ensure cursor is visible on exit; stop any busy spinner immediately.
+        # D8: keep the message queue across a single ^C.
+        qlen = 0
+        orch = getattr(self.io, "turn_orchestrator", None)
+        if orch is not None:
+            qlen = orch.queue_len
+            try:
+                orch.interrupt_busy()
+            except Exception:
+                pass
+        self._phase_spinner_stop()
+        # Cancel in-flight explore if present
+        try:
+            fut = getattr(self, "_explore_future", None)
+            if fut is not None:
+                self._cancel_explore_pass(fut)
+        except Exception:
+            pass
         Console().show_cursor(True)
 
         now = time.time()
@@ -2801,7 +2935,10 @@ class Coder:
             self.event("exit", reason="Control-C")
             sys.exit()
 
-        self.io.tool_warning("\n\n^C again to exit")
+        kept = f" · queued {qlen} kept" if qlen else ""
+        self.io.tool_warning(
+            f"\n\n^C again to exit  (agent work interrupted{kept})"
+        )
 
         self.last_keyboard_interrupt = now
 
@@ -3273,12 +3410,24 @@ class Coder:
 
         self.multi_response_content = ""
         if self.show_pretty():
-            spinner_text = "Waiting for " + self.main_model.name
+            base = "Waiting for " + self.main_model.name
+            try:
+                orch = self.io.ensure_turn_ux()
+                orch.enter_busy(base)
+                spinner_text = orch.status_label(base)
+            except Exception:
+                spinner_text = f"{base}  · Ctrl+C to interrupt"
             if getattr(self.io, "z_theme", True):
                 self.waiting_spinner = waiting_display(spinner_text)
             else:
                 self.waiting_spinner = WaitingSpinner(spinner_text)
             self.waiting_spinner.start()
+            try:
+                self.io.agent_busy = True
+                self.io._stop_agent_busy = self._stop_waiting_spinner
+                self.io.start_busy_queue_reader()
+            except Exception:
+                pass
             if self.stream:
                 self.mdstream = self.io.get_assistant_mdstream()
             else:

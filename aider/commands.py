@@ -520,6 +520,29 @@ class Commands:
         self._clear_chat_history()
         self.io.tool_output("All chat history cleared.")
 
+    def cmd_queue(self, args):
+        "List messages queued while the agent was busy (P3 turn flow)"
+        orch = self.io.ensure_turn_ux()
+        items = orch.list_queue()
+        if not items:
+            self.io.tool_output("Queue empty — type while Z is working to enqueue the next turn.")
+            return
+        self.io.tool_output(f"Queued · {len(items)} (FIFO — auto-runs at idle):")
+        for i, msg in enumerate(items, 1):
+            one = " ".join(msg.split())
+            if len(one) > 80:
+                one = one[:79] + "…"
+            self.io.tool_output(f"  {i}. {one}")
+
+    def cmd_queue_clear(self, args):
+        "Clear the busy-turn message queue"
+        orch = self.io.ensure_turn_ux()
+        n = orch.clear_queue()
+        if n:
+            self.io.tool_output(f"Cleared {n} queued message(s).")
+        else:
+            self.io.tool_output("Queue already empty.")
+
     def _drop_all_files(self):
         self.coder.abs_fnames = set()
 

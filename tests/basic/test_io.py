@@ -518,7 +518,7 @@ class TestInputOutputFormatFiles(unittest.TestCase):
     def test_format_files_for_input_pretty_true_no_files(
         self, mock_join, mock_abspath, mock_columns, mock_is_dumb_terminal
     ):
-        io = InputOutput(pretty=True, root="test_root")
+        io = InputOutput(pretty=True, root="test_root", z_theme=False)
         io.format_files_for_input([], [])
         mock_columns.assert_not_called()
 
@@ -528,7 +528,7 @@ class TestInputOutputFormatFiles(unittest.TestCase):
     def test_format_files_for_input_pretty_true_editable_only(
         self, mock_join, mock_abspath, mock_columns, mock_is_dumb_terminal
     ):
-        io = InputOutput(pretty=True, root="test_root")
+        io = InputOutput(pretty=True, root="test_root", z_theme=False)
         rel_fnames = ["edit1.txt", "edit[markup].txt"]
 
         io.format_files_for_input(rel_fnames, [])
@@ -549,7 +549,7 @@ class TestInputOutputFormatFiles(unittest.TestCase):
     def test_format_files_for_input_pretty_true_readonly_only(
         self, mock_join, mock_abspath, mock_columns, mock_is_dumb_terminal
     ):
-        io = InputOutput(pretty=True, root="test_root")
+        io = InputOutput(pretty=True, root="test_root", z_theme=False)
 
         # Mock path functions to ensure rel_path is chosen by the shortener logic
         mock_join.side_effect = lambda *args: "/".join(args)
@@ -579,7 +579,7 @@ class TestInputOutputFormatFiles(unittest.TestCase):
     def test_format_files_for_input_pretty_true_mixed_files(
         self, mock_join, mock_abspath, mock_columns, mock_is_dumb_terminal
     ):
-        io = InputOutput(pretty=True, root="test_root")
+        io = InputOutput(pretty=True, root="test_root", z_theme=False)
 
         mock_join.side_effect = lambda *args: "/".join(args)
         mock_abspath.side_effect = lambda p: "/ABS_PREFIX_VERY_LONG/" + os.path.normpath(p)

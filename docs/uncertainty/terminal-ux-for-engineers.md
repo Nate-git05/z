@@ -54,6 +54,18 @@ Revision rounds reprint the full plan (`plan.interactive_plan_confirm`).
 `run_one` runs skills → explore → checklist → plan before the first model token.  
 Even with phase spinners, completed milestones still print multiple lines.
 
+**Busy vs input:** leftover prompt_toolkit chrome + `\r` mascot spinner made Busy look
+interactive. Honesty contract (#141):
+
+1. Spinner label includes `Ctrl+C to interrupt`.
+2. Spinner stops on KeyboardInterrupt and before every `get_input` / confirm / prompt_ask.
+3. Chat file paths print **above** the prompt (one per line), never inside PromptSession.
+
+**P3 turn flow:** one orchestrator owns Idle / Busy / WaitingInput / Queued — type while
+Busy to enqueue the next turn; blocking asks freeze the queue; auto-drain at Idle.
+
+**Plan:** [terminal-ux-p3-plan.md](./terminal-ux-p3-plan.md)
+
 ### 3.4 Mode discoverability
 
 - `/ask` with args ≠ sticky ASK; bare `/ask` only flips edit format  
@@ -218,7 +230,16 @@ Document this next to NI gate UX (`fault-plan-ni-verify-skills-gate.md`).
 
 **Extensive plan:** [terminal-ux-p2-plan.md](./terminal-ux-p2-plan.md) · **Implemented:** this PR
 
-**Out of scope for these tranches:** removing plan gates, auto-skipping verify, web UI.
+### P3 — Turn flow (busy · queue · interrupt)
+
+9. Single turn orchestrator (Idle / Busy / WaitingInput)  
+10. Message queue while Busy; FIFO drain at Idle  
+11. One ^C / cancel contract that keeps the queue  
+
+**Extensive plan:** [terminal-ux-p3-plan.md](./terminal-ux-p3-plan.md) · **Implemented:** this PR
+
+**Out of scope for these tranches:** removing plan gates, auto-skipping verify, web UI,
+mid-stream steer (P4).
 
 ---
 
