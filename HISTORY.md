@@ -2,6 +2,7 @@
 
 ### main branch
 
+- P1 terminal UX: prompt mode chrome (`PLAN›` / `ASK›` / `›`), usage report opt-in (`--show-cost` / `Z_SHOW_USAGE`), and quieter chat-history mirroring (status lines no longer blockquoted by default).
 - Expanded `ANTHROPIC_MODELS` list with Claude Opus 4.1/4.5/4.6/4.7 dated variants and Claude Sonnet 3.7 so the Anthropic API key auto-detection (`models.sanity_check_models`) recognises them.
 - Added support for Claude 4.5/4.6 models and updated model aliases (sonnet/haiku/opus).
 - Expanded Gemini model support with 2.5 Flash and Flash‑Lite, added Gemini 3 preview models, and updated the flash alias to gemini/gemini-flash-latest.

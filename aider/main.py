@@ -607,6 +607,8 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
         io = get_io(False)
         io.tool_warning("Terminal does not support pretty output (UnicodeDecodeError)")
 
+    io.show_cost = bool(getattr(args, "show_cost", False))
+
     # Process any environment variables set via --set-env
     if args.set_env:
         for env_setting in args.set_env:
@@ -1053,6 +1055,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
             auto_accept_architect=args.auto_accept_architect,
             add_gitignore_files=args.add_gitignore_files,
         )
+        coder.show_cost = bool(getattr(args, "show_cost", False) or getattr(io, "show_cost", False))
     except UnknownEditFormat as err:
         io.tool_error(str(err))
         io.offer_url(urls.edit_formats, "Open documentation about edit formats?")
