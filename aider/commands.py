@@ -378,10 +378,20 @@ class Commands:
                         self.io.tool_output(result.reflect_message)
                         return
                     if not result.allow_commit:
-                        self.io.tool_error(
-                            "Commit blocked by Z verification gate. "
-                            f"{result.reason or 'Resolve high-risk issues first.'}"
+                        from aider.z.uncertainty.gate import (
+                            format_commit_blocked_message,
                         )
+
+                        detail = result.reason or "Resolve high-risk issues first."
+                        if getattr(result, "block_ui_emitted", False):
+                            msg = result.block_message or format_commit_blocked_message(
+                                detail, dirty_count=len(dirty or [])
+                            )
+                        else:
+                            msg = format_commit_blocked_message(
+                                detail, dirty_count=len(dirty or [])
+                            )
+                            self.io.tool_error(msg)
                         return
                     commit_message = args.strip() if args else None
                     res = self.coder.repo.commit(
