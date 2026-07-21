@@ -68,6 +68,12 @@ from .gate import (
 from .verify import VerificationRecord, verify_edits
 from .auto_act import default_prompt_for_node, plan_auto_act
 from .context import assess_repo_maturity
+from .capabilities import build_capability_plan, infer_capabilities
+from .architecture import draft_architecture_checkpoint
+from .journeys import infer_critical_journeys, mark_journey_evidence
+from .completion import evaluate_completion
+from .integrity import scan_verification_integrity
+from .failure_classify import classify_failure
 
 __all__ = [
     "Area",
@@ -136,4 +142,12 @@ __all__ = [
     "default_prompt_for_node",
     "plan_auto_act",
     "assess_repo_maturity",
+    "build_capability_plan",
+    "infer_capabilities",
+    "draft_architecture_checkpoint",
+    "infer_critical_journeys",
+    "mark_journey_evidence",
+    "evaluate_completion",
+    "scan_verification_integrity",
+    "classify_failure",
 ]

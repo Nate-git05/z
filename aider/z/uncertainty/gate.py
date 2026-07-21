@@ -320,6 +320,15 @@ def _reflect_fix_tests(record: VerificationRecord, edited: Sequence[str]) -> str
             + "\nUpdate those established tests (or the implementation) to match the "
             "intentional behavior change. Do not only add parallel coverage elsewhere.\n"
         )
+    from .failure_classify import classify_failure, format_classification_for_reflect
+
+    cls = classify_failure(
+        output=record.output_excerpt or "",
+        error=record.error or "",
+        command=record.command or "",
+        exit_code=record.exit_code,
+        failure_kind=record.failure_kind or "test",
+    )
     return (
         "Z verification gate: the test suite failed after your edits"
         f"{f' to {files}' if files else ''}.\n"
@@ -327,6 +336,7 @@ def _reflect_fix_tests(record: VerificationRecord, edited: Sequence[str]) -> str
         f"Exit code: {record.exit_code}\n"
         f"Discovered tests: {record.tests_discovered}\n"
         f"{relevant_note}"
+        f"{format_classification_for_reflect(cls)}\n\n"
         f"Output (excerpt):\n{excerpt}\n\n"
         "ALLOWED fixes: correct the implementation/tests under review; "
         "install a real declared dependency (pip install / requirements).\n"
@@ -340,7 +350,10 @@ def _reflect_fix_tests(record: VerificationRecord, edited: Sequence[str]) -> str
         "the same name as a missing third-party library (e.g. freezegun/__init__.py "
         "that only satisfies imports); editing unrelated conftest/CI to hide "
         "import errors; skipping or disabling tests to go green; "
-        "getattr/hasattr fallbacks for constructor params you just introduced.\n"
+        "getattr/hasattr fallbacks for constructor params you just introduced; "
+        "replacing typecheck/test scripts with `exit 0`; adding broad @ts-ignore; "
+        "disabling strict mode; weakening assertions to alternatives "
+        "(expect(a||b).toBeTruthy).\n"
         "If install fails, STOP and report the exact error — do not fabricate a stand-in.\n"
         "Do not claim completion while tests are red."
     )
@@ -464,11 +477,50 @@ def _reflect_fix_compiler(record: VerificationRecord, edited: Sequence[str]) -> 
     excerpt = (record.output_excerpt or record.error or "")[-1800:]
     files = ", ".join(list(edited)[:6])
     kind = record.failure_kind or getattr(record.state, "value", "TYPECHECK")
+    from .failure_classify import classify_failure, format_classification_for_reflect
+
+    cls = classify_failure(
+        output=record.output_excerpt or "",
+        error=record.error or "",
+        command=record.command or "",
+        exit_code=record.exit_code,
+        failure_kind=kind,
+    )
+    # command_not_found is NOT a TypeScript error — backtrack to install/deps
+    if cls.layer == "command_not_found":
+        return (
+            "Z verification gate: TOOLCHAIN MISSING "
+            f"({kind}){f' for {files}' if files else ''}.\n"
+            f"Command: {record.command}\n"
+            f"Exit code: {record.exit_code}\n"
+            f"{format_classification_for_reflect(cls)}\n\n"
+            f"Output (excerpt):\n{excerpt}\n\n"
+            "This is NOT a TypeScript/type error. The executable is missing.\n"
+            "REQUIRED:\n"
+            "1. Install dependencies from the lockfile (npm ci / bun install / …).\n"
+            "2. Confirm the toolchain binary exists.\n"
+            "3. Re-run the ORIGINAL typecheck command unchanged.\n\n"
+            "FORBIDDEN: replacing the typecheck script with `exit 0`; removing "
+            "the script; adding @ts-ignore; disabling strict mode.\n"
+            "Do not claim completion while verification cannot run."
+        )
+    if cls.layer == "dependency_install":
+        return (
+            "Z verification gate: DEPENDENCY / MANIFEST FAILURE "
+            f"({kind}){f' for {files}' if files else ''}.\n"
+            f"Command: {record.command}\n"
+            f"{format_classification_for_reflect(cls)}\n\n"
+            f"Output (excerpt):\n{excerpt}\n\n"
+            "Correct the package version using registry evidence, install from "
+            "the lockfile, then re-run the original check unchanged.\n"
+            "Do not fabricate local stand-ins for missing packages."
+        )
     return (
         "Z verification gate: COMPILER / TYPECHECK failed "
         f"({kind}){f' for {files}' if files else ''}.\n"
         f"Command: {record.command}\n"
         f"Exit code: {record.exit_code}\n"
+        f"{format_classification_for_reflect(cls)}\n\n"
         f"Output (excerpt):\n{excerpt}\n\n"
         "This is NOT a generic test failure. Do NOT burn retries on unrelated "
         "import-path / encoding / test-harness edits.\n\n"
@@ -481,7 +533,8 @@ def _reflect_fix_compiler(record: VerificationRecord, edited: Sequence[str]) -> 
         "fields/methods, or use the actual API that exists on this pin.\n\n"
         "FORBIDDEN: guessing plausible field names; switching to a different "
         "Effect/stdlib API from training priors without checking the pinned "
-        "version; patching around the error without re-reading the type.\n"
+        "version; patching around the error without re-reading the type; "
+        "weakening typecheck/strictness to go green.\n"
         "Do not claim completion while the typechecker is red."
     )
 
@@ -1068,6 +1121,76 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
         if getattr(coder, "verbose", False):
             io.tool_warning(f"Uncertainty analysis skipped: {err}")
 
+    # --- 2b) Verification integrity (never weaken checks to go green) -------
+    try:
+        from .failure_classify import classify_failure
+        from .integrity import (
+            format_integrity_block,
+            integrity_nodes_from_report,
+            scan_verification_integrity,
+        )
+
+        prior_failed = bool(
+            getattr(coder, "_z_verify_fix_attempts", 0)
+            or getattr(coder, "_z_verify_gen_attempts", 0)
+            or (
+                engine.ctx.last_verification
+                and not getattr(
+                    engine.ctx.last_verification, "meaningful_pass", True
+                )
+            )
+        )
+        if not record.meaningful_pass:
+            prior_failed = True
+            cls = classify_failure(
+                output=record.output_excerpt or "",
+                error=record.error or "",
+                command=record.command or "",
+                exit_code=record.exit_code,
+                failure_kind=record.failure_kind or "",
+            )
+            engine.ctx.last_failure_classification = cls
+
+        diff_text = getattr(engine.ctx, "last_diff", "") or ""
+        rels_for_int = []
+        for path in edited_list:
+            try:
+                rels_for_int.append(coder.get_rel_fname(path))
+            except Exception:
+                rels_for_int.append(str(path))
+        integrity = scan_verification_integrity(
+            diff_text,
+            edited=rels_for_int,
+            had_prior_failure=prior_failed,
+            approved_override=bool(
+                force or getattr(engine.ctx, "verification_integrity_override", False)
+            ),
+        )
+        if integrity.findings:
+            inode_list = integrity_nodes_from_report(
+                integrity,
+                task_id=getattr(engine.ctx, "current_task_id", None),
+                task_title=getattr(engine.ctx, "current_task_title", None),
+                created_by_session=getattr(engine.ctx, "session_id", None),
+            )
+            if inode_list:
+                store.add_many(inode_list)
+                store.save_local()
+            if integrity.blocked and not force:
+                msg = format_integrity_block(integrity)
+                io.tool_error(msg)
+                coder._z_gate_hold_dirty = True
+                return GateResult(
+                    allow_commit=False,
+                    reflect_message=msg,
+                    verification=record,
+                    blocked_high=inode_list,
+                    reason="verification integrity — weakening blocked",
+                )
+    except Exception as err:  # noqa: BLE001
+        if getattr(coder, "verbose", False):
+            io.tool_warning(f"Integrity scan skipped: {err}")
+
     # --- 3) Auto-act (OFF by default — prevents scope-expanding remediations) ---
     # Enable only with Z_UNCERTAINTY_AUTO_ACT=1. Even then, only narrow prompts.
     auto_act_on = os.environ.get("Z_UNCERTAINTY_AUTO_ACT", "").strip().lower() in (
@@ -1264,6 +1387,87 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
             verification=record,
             reason="verification did not meaningfully pass",
         )
+
+    # --- Completion gate (false-completion rate is the north-star metric) ---
+    try:
+        from .completion import (
+            completion_nodes_from_report,
+            evaluate_completion,
+            format_completion_report,
+        )
+
+        open_high = [
+            n
+            for n in store.list(include_resolved=False)
+            if _effective_gate_tier(n) == Tier.HIGH
+        ]
+        plan = getattr(engine.ctx, "plan", None)
+        report = evaluate_completion(
+            verification=record,
+            checklist=getattr(engine.ctx, "checklist", None),
+            journeys=getattr(plan, "journeys", None)
+            or getattr(engine.ctx, "journey_plan", None),
+            architecture=getattr(plan, "architecture", None)
+            or getattr(engine.ctx, "architecture_checkpoint", None),
+            capabilities=getattr(plan, "capability_plan", None)
+            or getattr(engine.ctx, "capability_plan", None),
+            unresolved_critical_nodes=len(open_high),
+        )
+        engine.ctx.completion_report = report
+        if not report.complete and not force:
+            cnodes = completion_nodes_from_report(
+                report,
+                task_id=getattr(engine.ctx, "current_task_id", None),
+                task_title=getattr(engine.ctx, "current_task_title", None),
+                created_by_session=getattr(engine.ctx, "session_id", None),
+            )
+            # Only hard-block when critical journeys or integrity-class items fail.
+            hard_ids = {
+                "critical_journeys",
+                "verification_integrity",
+                "unresolved_critical",
+            }
+            hard_fail = [
+                i
+                for i in report.items
+                if i.critical and not i.satisfied and i.id in hard_ids
+            ]
+            if hard_fail and cnodes:
+                store.add_many(cnodes)
+                store.save_local()
+                msg = format_completion_report(report)
+                io.tool_warning(msg)
+                # Journeys without browser evidence → allow commit of code but
+                # refuse claimed_complete (partial completion).
+                journey_only = all(i.id == "critical_journeys" for i in hard_fail)
+                if journey_only:
+                    coder._z_verify_gen_attempts = 0
+                    coder._z_verify_fix_attempts = 0
+                    coder._z_auto_act_attempts = 0
+                    coder._z_gate_hold_dirty = False
+                    io.tool_warning(
+                        "Lower-level checks passed, but critical journey evidence "
+                        "is missing — reporting PARTIAL COMPLETION."
+                    )
+                    return GateResult(
+                        allow_commit=True,
+                        verification=record,
+                        reason="partial completion — critical journey unverified",
+                        claimed_complete=False,
+                        blocked_high=cnodes,
+                    )
+                coder._z_gate_hold_dirty = True
+                return GateResult(
+                    allow_commit=False,
+                    reflect_message=report.user_message,
+                    verification=record,
+                    blocked_high=cnodes,
+                    reason="completion gate — critical evidence missing",
+                    claimed_complete=False,
+                )
+    except Exception as err:  # noqa: BLE001
+        if getattr(coder, "verbose", False):
+            io.tool_warning(f"Completion gate skipped: {err}")
 
     # Reset retry counters on success; allow dirty-commits again
     coder._z_verify_gen_attempts = 0

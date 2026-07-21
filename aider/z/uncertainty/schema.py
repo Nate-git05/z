@@ -71,6 +71,14 @@ class NodeType(str, enum.Enum):
     LEAK_ANALYSIS = "Leak Analysis"
     # Generic / umbrella dynamic-analysis node when category is unspecified
     DYNAMIC_ANALYSIS = "Dynamic Analysis"
+    # Agent tried to weaken typecheck/tests/CI/lint after a failure
+    VERIFICATION_INTEGRITY = "Verification Integrity"
+    # Claiming done without correctly typed critical-journey evidence
+    FALSE_COMPLETION_RISK = "False Completion Risk"
+    # Critical architecture item still unknown at coding time
+    ARCHITECTURE_GAP = "Architecture Gap"
+    # Required capability has no skill and no compensation workflow yet
+    CAPABILITY_GAP = "Capability Coverage Gap"
 
 
 # Older persisted display strings → current NodeType
@@ -103,6 +111,10 @@ _NODE_TYPE_ALIASES = {
     "Memory Safety Analysis": NodeType.MEMORY_SAFETY,
     "Leak Analysis": NodeType.LEAK_ANALYSIS,
     "Dynamic Analysis": NodeType.DYNAMIC_ANALYSIS,
+    "Verification Integrity": NodeType.VERIFICATION_INTEGRITY,
+    "False Completion Risk": NodeType.FALSE_COMPLETION_RISK,
+    "Architecture Gap": NodeType.ARCHITECTURE_GAP,
+    "Capability Coverage Gap": NodeType.CAPABILITY_GAP,
 }
 
 

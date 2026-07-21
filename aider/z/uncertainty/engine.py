@@ -90,6 +90,13 @@ class SessionContext:
     plan: Optional[PlanningArtifact] = None
     plan_required: bool = False
     plan_approved: bool = False
+    # Reliability-9 session state
+    last_failure_classification: Optional[object] = None
+    verification_integrity_override: bool = False
+    capability_plan: Optional[object] = None
+    journey_plan: Optional[object] = None
+    architecture_checkpoint: Optional[object] = None
+    completion_report: Optional[object] = None
 
 
 class UncertaintyEngine:
@@ -109,6 +116,12 @@ class UncertaintyEngine:
         self.ctx.plan = None
         self.ctx.plan_required = False
         self.ctx.plan_approved = False
+        self.ctx.last_failure_classification = None
+        self.ctx.verification_integrity_override = False
+        self.ctx.capability_plan = None
+        self.ctx.journey_plan = None
+        self.ctx.architecture_checkpoint = None
+        self.ctx.completion_report = None
         return checklist
 
     def maybe_require_plan(
@@ -156,10 +169,17 @@ class UncertaintyEngine:
             checklist=self.ctx.checklist,
             reason=reason,
             files=files,
+            skill_capabilities=list(
+                getattr(self.ctx, "_skill_capabilities", None) or []
+            ),
+            skill_ids=list(getattr(self.ctx, "_skill_ids", None) or []),
         )
         self.ctx.plan = plan
         self.ctx.plan_required = True
         self.ctx.plan_approved = False
+        self.ctx.capability_plan = plan.capability_plan
+        self.ctx.journey_plan = plan.journeys
+        self.ctx.architecture_checkpoint = plan.architecture
         if self.ctx.checklist:
             merge_plan_invariants_into_checklist(self.ctx.checklist, plan)
         self.record_execution(f"planning required: {reason}")

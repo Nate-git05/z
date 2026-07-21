@@ -12,7 +12,10 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from typing import List, Optional, Sequence, Tuple
 
+from .architecture import ArchitectureCheckpoint
+from .capabilities import CapabilityPlan
 from .established_solutions import EstablishedSolutionConsideration
+from .journeys import JourneyPlan
 from .risk import DetectionSignals, collect_base_signals, scan_high_stakes
 from .schema import (
     DEFAULT_BLAST_RADIUS_THRESHOLD,
@@ -57,6 +60,10 @@ class PlanningArtifact:
     established_solutions: List[EstablishedSolutionConsideration] = field(
         default_factory=list
     )
+    # Reliability-9 extensions (Codex evaluation priorities)
+    capability_plan: Optional[CapabilityPlan] = None
+    architecture: Optional[ArchitectureCheckpoint] = None
+    journeys: Optional[JourneyPlan] = None
     approved: bool = False
     skipped: bool = False  # True when triage said planning not required
 
@@ -75,6 +82,13 @@ class PlanningArtifact:
             "invariants": list(self.invariants),
             "ambiguities": [asdict(a) for a in self.ambiguities],
             "established_solutions": [asdict(e) for e in self.established_solutions],
+            "capability_plan": (
+                self.capability_plan.to_dict() if self.capability_plan else None
+            ),
+            "architecture": (
+                self.architecture.to_dict() if self.architecture else None
+            ),
+            "journeys": self.journeys.to_dict() if self.journeys else None,
         }
 
 
@@ -175,6 +189,18 @@ def triage_for_planning(
         ids = ",".join(c.category_id for c in est_cats[:6])
         reasons.append(f"established_solution:{ids}")
 
+    # Multiplayer / collaborative / browser journeys need planning even when
+    # high-stakes path keywords are absent (reliability-9 / CUJ gate).
+    from .architecture import architecture_review_needed
+    from .journeys import infer_critical_journeys
+
+    if user_text and architecture_review_needed(user_text):
+        reasons.append("architecture_review")
+    if user_text:
+        jp = infer_critical_journeys(user_text)
+        if jp.journeys:
+            reasons.append(f"critical_journeys:{len(jp.journeys)}")
+
     if not reasons:
         return False, "", signals
     return True, "; ".join(reasons), signals
@@ -216,11 +242,14 @@ def draft_plan_from_request(
     checklist: Optional[TaskChecklist] = None,
     reason: str = "",
     files: Sequence[str] = (),
+    skill_capabilities: Sequence[str] = (),
+    skill_ids: Sequence[str] = (),
 ) -> PlanningArtifact:
     """
     Build a mechanical planning skeleton from the request + checklist.
 
     No LLM required — humans review/correct before diffs are written.
+    Includes capability plan, architecture checkpoint, and critical journeys.
     """
     task_id = (checklist.task_id if checklist else None) or str(uuid.uuid4())
     title = title or (checklist.title if checklist else "") or "Task plan"
@@ -255,6 +284,8 @@ def draft_plan_from_request(
     boilerplate = [
         "Invalid public inputs are rejected at the boundary (no limp-forward defaults).",
         "Do not fabricate local stand-ins for missing third-party packages.",
+        "Do not weaken typecheck/tests/CI/lint to go green without human approval.",
+        "Do not claim completion without correctly typed evidence for critical journeys.",
     ]
     for b in boilerplate:
         if b not in invariants:
@@ -320,15 +351,36 @@ def draft_plan_from_request(
     if est_invariant not in invariants:
         invariants.append(est_invariant)
 
+    # --- Reliability-9: capabilities / architecture / journeys ---------------
+    from .architecture import draft_architecture_checkpoint
+    from .capabilities import build_capability_plan
+    from .journeys import infer_critical_journeys
+
+    req_blob = blob_for_est or user_message or ""
+    cap_plan = build_capability_plan(
+        req_blob,
+        skill_capabilities=skill_capabilities,
+        skill_ids=skill_ids,
+    )
+    arch = draft_architecture_checkpoint(req_blob)
+    journeys = infer_critical_journeys(req_blob)
+
+    for tip in cap_plan.compensation:
+        if tip not in invariants:
+            invariants.append(tip[:200])
+
     return PlanningArtifact(
         task_id=task_id,
         title=title,
         reason=reason,
         validation_contracts=contracts,
         input_domain_table=table,
-        invariants=invariants[:16],
+        invariants=invariants[:24],
         ambiguities=ambiguities[:8],
         established_solutions=established[:8],
+        capability_plan=cap_plan,
+        architecture=arch if arch.items else None,
+        journeys=journeys if journeys.journeys else None,
         approved=False,
         skipped=False,
     )
@@ -392,6 +444,24 @@ def format_plan_for_user(plan: PlanningArtifact) -> str:
             "algorithm problem?)"
         )
 
+    if plan.capability_plan:
+        lines.append("")
+        from .capabilities import format_capability_plan
+
+        lines.append(format_capability_plan(plan.capability_plan))
+
+    if plan.architecture:
+        lines.append("")
+        from .architecture import format_architecture_checkpoint
+
+        lines.append(format_architecture_checkpoint(plan.architecture))
+
+    if plan.journeys:
+        lines.append("")
+        from .journeys import format_journey_plan
+
+        lines.append(format_journey_plan(plan.journeys))
+
     lines.append("")
     lines.append(
         "Confirm this plan to proceed. Reject to stop before any diff is written."
@@ -440,11 +510,31 @@ def format_plan_for_context(plan: PlanningArtifact) -> str:
         )
         if e.custom_justification:
             lines.append(f"  custom justification: {e.custom_justification}")
+    if plan.capability_plan:
+        from .capabilities import format_capability_plan
+
+        lines.append("")
+        lines.append("## Capability plan")
+        lines.append(format_capability_plan(plan.capability_plan))
+    if plan.architecture:
+        from .architecture import format_architecture_checkpoint
+
+        lines.append("")
+        lines.append("## Architecture checkpoint")
+        lines.append(format_architecture_checkpoint(plan.architecture))
+    if plan.journeys:
+        from .journeys import format_journey_plan
+
+        lines.append("")
+        lines.append("## Critical user journeys")
+        lines.append(format_journey_plan(plan.journeys))
     lines.append("")
     lines.append(
         "Implement only what this plan authorizes. "
         "Detectors will check the diff against these invariants and against "
-        "the established-solutions taxonomy."
+        "the established-solutions taxonomy. "
+        "Never weaken verification to go green. "
+        "Never claim completion without correctly typed journey evidence."
     )
     return "\n".join(lines)
 

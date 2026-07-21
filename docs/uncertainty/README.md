@@ -159,6 +159,21 @@ that is ignored or force-committed far more than it is resolved is a boy-who-cri
 candidate — use that to raise its bar later. This release only **records + reports**;
 it does not auto-tune thresholds yet.
 
+## Reliability 9/10 (false-completion focus)
+
+See [reliability-9.md](./reliability-9.md) for the Codex-gap roadmap.
+
+P0 subsystems:
+
+| Module | Role |
+|--------|------|
+| `integrity.py` | Block weakening typecheck/tests/CI after failures |
+| `failure_classify.py` | Env vs type vs assertion layers + causal backtrack |
+| `capabilities.py` | Capability plan above named skills |
+| `architecture.py` | Pre-coding architecture checkpoint |
+| `journeys.py` | Critical user journeys with typed evidence |
+| `completion.py` | Partial vs complete — never claim ready without evidence |
+
 ## Design principles
 
 - **Human worries over metrics** — nodes should sound like a senior engineer’s checklist  
@@ -169,5 +184,7 @@ it does not auto-tune thresholds yet.
 - **Gate drives behavior** — High worries block or auto-act; don’t only report  
 - **Quality over quantity** — cap nodes; suppress greenfield scaffold noise  
 - **Measure dispositions** — track which detectors get overridden  
+- **Never weaken verification to go green** — repair product/environment, not the detector  
+- **False completion is worse than honest partial** — unit green ≠ journey proven  
 
 That’s the Uncertainty Tree: the agent still ships code — Z makes the guesswork inspectable the way a careful human would.
