@@ -171,6 +171,7 @@ Control-flow and evidence phases:
 | [p1-evidence-lifecycle.md](./p1-evidence-lifecycle.md) | Clauses, resolution contracts, exceptions |
 | [p2-benchmark.md](./p2-benchmark.md) | Behavior benchmark harness + scoring |
 | [coding-quality.md](./coding-quality.md) | Compact context, explore scout, plan interview, tool-output budget, thin tool-loop, live P2 |
+| [fault-plan-ni-verify-skills-gate.md](./fault-plan-ni-verify-skills-gate.md) | Spec: NI exit contract, cmake/verify honesty, sanitizer teeth, skill near-dup, gate UX |
 
 P0 subsystems:
 
