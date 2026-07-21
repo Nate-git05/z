@@ -216,6 +216,8 @@ Document this next to NI gate UX (`fault-plan-ni-verify-skills-gate.md`).
 7. Unify `/uncertainties` presentation  
 8. Golden “one implement turn” transcript fixtures for noise budget  
 
+**Extensive implementation plan (no code yet):** [terminal-ux-p2-plan.md](./terminal-ux-p2-plan.md)
+
 **Out of scope for these tranches:** removing plan gates, auto-skipping verify, web UI.
 
 ---
