@@ -220,7 +220,7 @@ optional `aider/z/uncertainty/recipe_runner.py`.
 
 ---
 
-### P1 — Gate UX for automation (`gate-ni-ux`)
+### P1 — Gate UX for automation (`gate-ni-ux`) — **IMPLEMENTED**
 
 **Goals**
 
@@ -241,13 +241,11 @@ optional `aider/z/uncertainty/recipe_runner.py`.
   the above (today it answers `n` via `explicit_yes_required`).
 - Optional: `Z_NI_GATE=force` for trusted CI after green verify+sanitizer.
 
-**Acceptance**
-
-- NI run that hits High gate: exit ≠ 0, message contains `Z_FORCE_COMMIT` and
-  `Z_SKIP_VERIFY_GATE` substrings; tree remains dirty unless force set.
-
-**Files:** `gate.py`, `io.py` (document yes-always + explicit_yes interaction),
-`base_coder.py` block path.
+**Shipped:** `format_commit_blocked_message` / `emit_commit_blocked` / `ni_gate_policy`
+in `aider/z/uncertainty/gate.py`; yes-always High/Medium paths apply `Z_NI_GATE`;
+`Z_NI_GATE=force` honored via `_force_requested`; `base_coder` / `/commit` avoid
+double-print when UI already emitted; `io.confirm_ask` documents yes-always +
+explicit_yes interaction. Tests: `tests/basic/test_z_gate_ni_ux.py`.
 
 ---
 
@@ -333,8 +331,8 @@ optional `aider/z/uncertainty/recipe_runner.py`.
 
 ## Suggested PR slice order
 
-1. **chroma-telemetry** — tiny, confidence win  
-2. **gate-ni-ux** — messaging only  
+1. **chroma-telemetry** — tiny, confidence win (separate PR)  
+2. **gate-ni-ux** — ✅ shipped (block message + `Z_NI_GATE`)  
 3. **ni-contract** — exit codes + auto-seed  
 4. **verify-cmake** — stale build  
 5. **sanitizer-teeth** — policy  
