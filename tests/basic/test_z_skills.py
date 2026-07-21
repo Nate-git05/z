@@ -432,7 +432,7 @@ class SkillsApiTest(unittest.TestCase):
         self.assertEqual(start.status_code, 200)
         verify = self.client.post(
             "/v1/auth/email/verify",
-            json={"email": "skills@example.com", "code": "000000", "name": "Skiller"},
+            json={"email": "skills@example.com", "code": "123456", "name": "Skiller"},
         )
         self.assertEqual(verify.status_code, 200, verify.text)
         self.headers = {"Authorization": f"Bearer {verify.json()['access_token']}"}

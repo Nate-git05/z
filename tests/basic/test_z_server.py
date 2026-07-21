@@ -61,7 +61,7 @@ class ZServerTestCase(unittest.TestCase):
 
         verify = self.client.post(
             "/v1/auth/email/verify",
-            json={"email": "ada@example.com", "code": "000000", "name": "Ada"},
+            json={"email": "ada@example.com", "code": "123456", "name": "Ada"},
         )
         self.assertEqual(verify.status_code, 200, verify.text)
         data = verify.json()
@@ -108,7 +108,7 @@ class ZServerTestCase(unittest.TestCase):
 
         verify = self.client.post(
             "/v1/auth/phone/verify",
-            json={"phone": "+15551234567", "code": "000000"},
+            json={"phone": "+15551234567", "code": "123456"},
         )
         self.assertEqual(verify.status_code, 200, verify.text)
         data = verify.json()

@@ -258,9 +258,9 @@ def _poll_email_session(io, session_id, email, name) -> AuthResult:
 
 def _dev_email_login(io, email: str, name: str | None) -> AuthResult:
     io.tool_warning("Z auth dev mode — no email will be sent.")
-    io.tool_output("Enter any 6-digit code (dev accepts 000000).")
-    code = (io.prompt_ask("Enter the code", default="000000") or "").strip()
-    if code != "000000" and not (code.isdigit() and len(code) == 6):
+    io.tool_output("Enter any 6-digit code (dev accepts 123456).")
+    code = (io.prompt_ask("Enter the code", default="123456") or "").strip()
+    if code != "123456" and not (code.isdigit() and len(code) == 6):
         # Still accept any 6-digit in dev for UX flexibility
         if not (code.isdigit() and len(code) >= 4):
             raise AuthError("Invalid code.")
@@ -314,8 +314,8 @@ def login_with_phone(io) -> AuthResult:
 
 def _dev_phone_login(io, phone: str) -> AuthResult:
     io.tool_warning("Z auth dev mode — no SMS will be sent.")
-    io.tool_output("Enter any code (dev accepts 000000).")
-    code = (io.prompt_ask("Enter the SMS code", default="000000") or "").strip()
+    io.tool_output("Enter any code (dev accepts 123456).")
+    code = (io.prompt_ask("Enter the SMS code", default="123456") or "").strip()
     if not code:
         raise AuthError("No code entered.")
     return AuthResult(

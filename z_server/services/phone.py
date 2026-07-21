@@ -25,7 +25,7 @@ def start_phone_verification(phone: str) -> str | None:
         and settings.twilio_verify_service_sid
     ):
         logger.warning("DEV phone verify start for %s (Twilio not configured)", phone)
-        print(f"DEV phone verify start for {phone} — use code 000000", flush=True)
+        print(f"DEV phone verify start for {phone} — use code 123456", flush=True)
         return None
 
     try:
@@ -48,7 +48,7 @@ def check_phone_verification(phone: str, code: str) -> bool:
         and settings.twilio_verify_service_sid
     ):
         # Dev fallback
-        return code == "000000" or (code.isdigit() and len(code) >= 4)
+        return code == "123456" or (code.isdigit() and len(code) >= 4)
 
     try:
         from twilio.rest import Client

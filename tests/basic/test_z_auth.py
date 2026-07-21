@@ -71,7 +71,7 @@ class TestAuthFlows(unittest.TestCase):
 
     def test_dev_email_login(self):
         io = MagicMock()
-        io.prompt_ask.side_effect = ["000000"]
+        io.prompt_ask.side_effect = ["123456"]
         result = _dev_email_login(io, "ada@example.com", "Ada")
         self.assertTrue(result.ok)
         self.assertEqual(result.credentials.user.email, "ada@example.com")
@@ -80,7 +80,7 @@ class TestAuthFlows(unittest.TestCase):
 
     def test_dev_phone_login(self):
         io = MagicMock()
-        io.prompt_ask.side_effect = ["000000"]
+        io.prompt_ask.side_effect = ["123456"]
         result = _dev_phone_login(io, "+15551234567")
         self.assertTrue(result.ok)
         self.assertEqual(result.credentials.user.phone, "+15551234567")
