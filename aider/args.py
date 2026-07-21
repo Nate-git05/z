@@ -307,8 +307,8 @@ def get_parser(default_config_files, git_root):
         default=True,
         help=(
             "Use the Z terminal theme: black/white/gray + burnt-orange accent,"
-            " Z banner, scientist mascot, and spiral waiting animation"
-            " (default: True). Set Z_WAITING_GAME=0 for the compact spinner."
+            " Z banner, scientist mascot, and compact waiting spinner"
+            " (default: True)."
         ),
     )
     group.add_argument(
