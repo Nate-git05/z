@@ -155,16 +155,21 @@ def _skip_account_gate() -> bool:
 
 
 def _complete_mode_setup(io, mode: str) -> bool:
-    """Finish BYOK key setup or router model preference after mode is chosen."""
+    """Finish BYOK key setup or router model preference after mode is chosen.
+
+    Only called when the user has just picked a mode (first run or
+    ``z auth switch``) — never on every launch once ``auth_mode`` is saved.
+    """
     from aider.z.onboarding import save_auth_mode, save_selected_model
 
     if mode == "byok":
-        from aider.z.auth import open_web_setup
+        # Model/key picker is post-auth only. (/app/setup is not shipped yet.)
+        from aider.z.auth import prompt_byok_setup
 
-        result = open_web_setup(io, "byok", skip_login=True)
-        if result is None:
+        io.tool_output("")
+        io.tool_output("Bring your own key — choose a model and paste its API key.")
+        if not prompt_byok_setup(io):
             return False
-        _apply_web_setup_result(result, mode="byok")
         save_auth_mode(mode)
         return True
 
@@ -191,33 +196,33 @@ def _complete_mode_setup(io, mode: str) -> bool:
 def ensure_agent_session(io) -> bool:
     """First-run / session gate for the coding agent.
 
-    Bare ``z`` is the only first-run path:
-      1. If not signed in → Sign in / Sign up → Google or Z → browser auth
-      2. After account is live → BYOK vs Z router (terminal)
-      3. BYOK → browser model/key setup; router → choose preferred Z model
+    Bare ``z`` order:
+      1. Not signed in → Google or Z → browser sign-in / sign-up
+      2. After account is live, if no saved mode → BYOK vs Z router
+      3. BYOK → model + API key; router → preferred Z model
+      4. Next launches: reuse saved mode (change only via ``z auth switch``)
 
-    ``z login`` is only for explicit re-auth. Set Z_SKIP_ACCOUNT=1 to bypass.
+    Set Z_SKIP_ACCOUNT=1 to bypass.
     """
     if _skip_account_gate():
         return True
 
     from aider.z.auth import current_session, open_web_login
+    from aider.z.onboarding import load_config
 
     creds = current_session()
     if not (creds and creds.is_authenticated()):
+        # Never show model menus before account auth.
         creds = open_web_login(io)
         if not creds:
             return False
 
-    from aider.z.onboarding import load_config
-
     config = load_config()
+    # Remembered choice — do not re-ask on every launch.
     if config.auth_mode == "byok":
         return True
     if config.auth_mode == "router" and config.selected_model:
         return True
-
-    # Signed in but mode (or router model) not finished yet.
     if config.auth_mode == "router" and not config.selected_model:
         return _complete_mode_setup(io, "router")
 
@@ -261,9 +266,10 @@ def _has_explicit_model_flag(argv: list[str]) -> bool:
 def _print_help() -> None:
     build_parser().print_help()
     print(
-        "\nAfter install, just run `z`. If you're not signed in, Z opens the browser\n"
-        "to sign up / sign in, then asks BYOK vs Z's router in the terminal.\n"
-        "Any other arguments are passed through to the agent (same as `aider …`).\n"
+        "\nAfter install, just run `z`:\n"
+        "  not signed in → Google or Z → browser → BYOK vs Z router (saved).\n"
+        "  already signed in → reuse your saved BYOK/router choice.\n"
+        "Change mode later with `z auth switch`. Agent flags work like `aider …`.\n"
         "Examples:\n"
         "  z\n"
         "  z auth switch\n"

@@ -52,19 +52,24 @@ class AuthError(Exception):
     pass
 
 
+def get_auth_base_url() -> str:
+    return os.environ.get("Z_AUTH_URL", DEFAULT_AUTH_URL).rstrip("/")
+
+
 def auth_dev_mode() -> bool:
-    """True when we should use the local mock auth backend."""
+    """True when we should use the local mock auth backend.
+
+    Production installs ship a real Cloud Run default URL, so we do **not**
+    treat a missing ``Z_AUTH_URL`` env var as dev mode (that previously made
+    BYOK dump the model catalog in the terminal before/around sign-in).
+    """
     flag = os.environ.get("Z_AUTH_DEV", "").strip().lower()
     if flag in ("1", "true", "yes", "on"):
         return True
     if flag in ("0", "false", "no", "off"):
         return False
-    # Auto-enable when no real auth URL / client id is configured
-    return not os.environ.get("Z_AUTH_URL") and not GOOGLE_CLIENT_ID
-
-
-def get_auth_base_url() -> str:
-    return os.environ.get("Z_AUTH_URL", DEFAULT_AUTH_URL).rstrip("/")
+    base = get_auth_base_url()
+    return base.startswith("http://127.0.0.1") or base.startswith("http://localhost")
 
 
 def refresh_access_token(creds: Credentials) -> Credentials | None:
@@ -771,45 +776,37 @@ def open_web_login(
     method: str | None = None,
     intent: str | None = None,
 ) -> Credentials | None:
-    """Terminal asks Sign in/Sign up, then Google vs Z, then opens the web page.
+    """Terminal asks Google vs Z, then opens the web sign-in/sign-up page.
 
-    Credentials are collected only in the browser. ``intent``: ``signin``|``signup``.
-    ``method``: ``google``|``z``. After success, the page tells the user to return
-    to the terminal and attempts to close the tab.
+    First-run order is: Google/Z → browser auth → (caller) BYOK vs router.
+    Model catalogs must never appear before account auth finishes.
+    ``intent`` is optional; the browser page can switch sign-in ↔ sign-up.
     """
-    from .login_screen import prompt_auth_intent_choice, prompt_web_login_choice
-
-    if intent not in ("signin", "signup"):
-        intent = prompt_auth_intent_choice(io)
-    if intent not in ("signin", "signup"):
-        io.tool_output("Cancelled.")
-        return None
+    from .login_screen import prompt_web_login_choice
 
     if method not in ("google", "z"):
-        method = prompt_web_login_choice(io, intent=intent)
+        method = prompt_web_login_choice(io)
     if method not in ("google", "z"):
         io.tool_output("Cancelled.")
         return None
 
+    if intent not in ("signin", "signup"):
+        intent = "signin"
     label = "Google" if method == "google" else "Z"
     path = "/app/signup" if intent == "signup" else "/app/login"
-    verb = "sign up" if intent == "signup" else "sign in"
     data = _open_web_page_for_post_callback(
         io,
         path=path,
         extra_params={"method": method, "intent": intent},
-        opening_message=f"Opening browser to {verb} with {label}…",
+        opening_message=(
+            f"Opening browser to continue with {label} "
+            "(sign in or create an account)…"
+        ),
         success_html=(
-            "Account created. Return to your terminal — this tab can close."
-            if intent == "signup"
-            else "You're signed in to Z. Return to your terminal — this tab can close."
+            "You're signed in to Z. Return to your terminal — this tab can close."
         ),
-        timeout_message=(
-            "Timed out waiting for sign-up to finish in the browser."
-            if intent == "signup"
-            else "Timed out waiting for the browser to finish."
-        ),
-        failure_label="Sign up" if intent == "signup" else "Sign in",
+        timeout_message="Timed out waiting for the browser to finish signing in.",
+        failure_label="Sign in",
     )
     if data is None:
         return None
@@ -1002,7 +999,7 @@ def apply_byok_setup_result(result: dict) -> None:
 def whoami_text(creds: Credentials | None = None) -> str:
     creds = creds or current_session()
     if not creds or not creds.is_authenticated():
-        return "Not signed in. Run `z` (or `z login`) to sign in."
+        return "Not signed in. Run `z` to sign in or create an account."
     lines = [f"Signed in as {creds.display_name()}"]
     if creds.user:
         if creds.user.email:

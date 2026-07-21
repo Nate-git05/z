@@ -205,32 +205,21 @@ def test_byok_setup_trip_uses_skip_login_true():
     )
     captured = {}
 
-    def fake_setup(_io, mode, *, skip_login=False):
-        captured["mode"] = mode
-        captured["skip_login"] = skip_login
-        return {
-            "credentials": None,
-            "mode_result": {
-                "model_id": "claude-sonnet-5",
-                "env_var": "ANTHROPIC_API_KEY",
-                "api_key": "sk",
-            },
-        }
-
     with patch("aider.z.auth.current_session", return_value=creds), patch(
         "aider.z.auth.open_web_login"
     ) as login, patch(
         "aider.z.onboarding.load_config", return_value=OnboardingConfig()
     ), patch(
         "aider.z.login_screen.prompt_auth_mode_choice", return_value="byok"
-    ), patch("aider.z.auth.open_web_setup", side_effect=fake_setup), patch(
+    ), patch("aider.z.auth.prompt_byok_setup", return_value=True) as byok, patch(
         "aider.z.onboarding.save_auth_mode"
-    ), patch("aider.z.cli._apply_web_setup_result"):
+    ) as save_mode:
         ok = ensure_agent_session(io)
 
     assert ok
     login.assert_not_called()
-    assert captured == {"mode": "byok", "skip_login": True}
+    byok.assert_called_once()
+    save_mode.assert_called_once_with("byok")
 
 
 def test_login_happens_before_mode_choice_on_fresh_config():
@@ -249,24 +238,21 @@ def test_login_happens_before_mode_choice_on_fresh_config():
         order.append("mode")
         return "byok"
 
-    def fake_setup(_io, mode, *, skip_login=False):
-        order.append(f"setup:{mode}:{skip_login}")
-        return {
-            "credentials": None,
-            "mode_result": {"model_id": "m", "env_var": "K", "api_key": "sk"},
-        }
+    def fake_byok(_io):
+        order.append("byok")
+        return True
 
     with patch("aider.z.auth.current_session", return_value=None), patch(
         "aider.z.auth.open_web_login", side_effect=fake_login
     ), patch("aider.z.onboarding.load_config", return_value=OnboardingConfig()), patch(
         "aider.z.login_screen.prompt_auth_mode_choice", side_effect=fake_mode
-    ), patch("aider.z.auth.open_web_setup", side_effect=fake_setup), patch(
+    ), patch("aider.z.auth.prompt_byok_setup", side_effect=fake_byok), patch(
         "aider.z.onboarding.save_auth_mode"
-    ), patch("aider.z.cli._apply_web_setup_result"):
+    ):
         ok = ensure_agent_session(io)
 
     assert ok
-    assert order == ["login", "mode", "setup:byok:True"]
+    assert order == ["login", "mode", "byok"]
 
 
 def test_router_mode_needs_no_second_web_trip():
@@ -381,8 +367,6 @@ def test_open_web_login_never_uses_cli_credential_entry_in_dev_mode():
 
     io = FakeIO()
     with patch.object(z_auth, "auth_dev_mode", return_value=True), patch(
-        "aider.z.login_screen.prompt_auth_intent_choice", return_value="signin"
-    ), patch(
         "aider.z.login_screen.prompt_web_login_choice", return_value="z"
     ), patch.object(z_auth, "login_with_email") as email, patch.object(
         z_auth, "login_with_google"
@@ -442,21 +426,24 @@ def test_open_web_login_asks_google_vs_z_then_opens_method_url():
     with patch.object(z_auth, "auth_dev_mode", return_value=False), patch.object(
         z_auth, "get_auth_base_url", return_value="https://auth.example.test"
     ), patch.object(z_auth, "AUTH_TIMEOUT_SECONDS", 3), patch(
-        "aider.z.login_screen.prompt_auth_intent_choice", return_value="signin"
-    ), patch(
         "aider.z.login_screen.prompt_web_login_choice", return_value="google"
-    ), patch.object(z_auth.webbrowser, "open", side_effect=capture_open), patch(
-        "aider.z.auth.save_credentials"
-    ), patch("aider.z.auth.apply_credentials_to_env"):
+    ), patch(
+        "aider.z.login_screen.prompt_auth_intent_choice"
+    ) as intent_prompt, patch.object(
+        z_auth.webbrowser, "open", side_effect=capture_open
+    ), patch("aider.z.auth.save_credentials"), patch(
+        "aider.z.auth.apply_credentials_to_env"
+    ):
         creds = open_web_login(io)
 
     assert creds is not None
+    intent_prompt.assert_not_called()
     assert "auth.example.test/app/login" in opened["url"]
     assert "method=google" in opened["url"]
     assert "intent=signin" in opened["url"]
 
 
-def test_open_web_signup_opens_signup_path():
+def test_open_web_login_respects_explicit_signup_intent():
     from aider.z.auth import open_web_login
 
     io = FakeIO()
@@ -465,11 +452,13 @@ def test_open_web_signup_opens_signup_path():
     with patch.object(z_auth, "auth_dev_mode", return_value=False), patch.object(
         z_auth, "get_auth_base_url", return_value="https://auth.example.test"
     ), patch.object(z_auth, "AUTH_TIMEOUT_SECONDS", 0.2), patch(
-        "aider.z.login_screen.prompt_auth_intent_choice", return_value="signup"
-    ), patch(
         "aider.z.login_screen.prompt_web_login_choice", return_value="z"
-    ), patch.object(z_auth.webbrowser, "open", side_effect=lambda url: opened.update(url=url) or True):
-        open_web_login(io)
+    ), patch.object(
+        z_auth.webbrowser,
+        "open",
+        side_effect=lambda url: opened.update(url=url) or True,
+    ):
+        open_web_login(io, intent="signup")
 
     assert "auth.example.test/app/signup" in opened["url"]
     assert "method=z" in opened["url"]
@@ -485,33 +474,18 @@ def test_auth_switch_uses_web_login_and_byok_skip_login():
         user=UserProfile(email="a@b.com", provider="email"),
         expires_at=9_999_999_999,
     )
-    captured = {}
-
-    def fake_setup(_io, mode, *, skip_login=False):
-        captured["mode"] = mode
-        captured["skip_login"] = skip_login
-        return {
-            "credentials": None,
-            "mode_result": {
-                "model_id": "claude-sonnet-5",
-                "env_var": "ANTHROPIC_API_KEY",
-                "api_key": "sk",
-            },
-        }
 
     with patch("aider.z.auth.current_session", return_value=None), patch(
         "aider.z.auth.open_web_login", return_value=creds
     ) as login, patch(
         "aider.z.login_screen.prompt_auth_mode_choice", return_value="byok"
-    ), patch("aider.z.auth.open_web_setup", side_effect=fake_setup), patch(
+    ), patch("aider.z.auth.prompt_byok_setup", return_value=True) as byok, patch(
         "aider.z.onboarding.save_auth_mode"
-    ) as save_mode, patch("aider.z.cli._apply_web_setup_result"), patch(
-        "aider.z.auth.run_login_flow"
-    ) as terminal:
+    ) as save_mode, patch("aider.z.auth.run_login_flow") as terminal:
         code = z_cli.cmd_auth_switch(io)
 
     assert code == 0
     login.assert_called_once()
     terminal.assert_not_called()
-    assert captured == {"mode": "byok", "skip_login": True}
+    byok.assert_called_once()
     save_mode.assert_called_once_with("byok")

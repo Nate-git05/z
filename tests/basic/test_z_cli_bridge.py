@@ -147,8 +147,6 @@ def test_open_web_login_succeeds_via_cli_poll_when_localhost_unused():
     with patch.object(z_auth, "auth_dev_mode", return_value=False), patch.object(
         z_auth, "get_auth_base_url", return_value="https://auth.example.test"
     ), patch.object(z_auth, "AUTH_TIMEOUT_SECONDS", 5), patch(
-        "aider.z.login_screen.prompt_auth_intent_choice", return_value="signup"
-    ), patch(
         "aider.z.login_screen.prompt_web_login_choice", return_value="z"
     ), patch.object(z_auth.webbrowser, "open", side_effect=capture_open), patch.object(
         z_auth.requests, "get", side_effect=fake_get
@@ -159,7 +157,8 @@ def test_open_web_login_succeeds_via_cli_poll_when_localhost_unused():
 
     assert creds is not None
     assert creds.access_token == "tok-poll"
-    assert "app/signup" in opened["url"]
+    assert "app/login" in opened["url"]
+    assert "method=z" in opened["url"]
 
 
 if __name__ == "__main__":
