@@ -1175,6 +1175,16 @@ a:hover { color: var(--accent-bright); }
 }
 
 .auth-form-block .opt { color: var(--muted); font-weight: 400; }
+.auth-hint {
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+.auth-hint code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
 
 .auth-form-block input {
   width: 100%;

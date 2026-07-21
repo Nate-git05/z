@@ -2,7 +2,7 @@
 {% block title %}Sign in — Z{% endblock %}
 {% block body %}
   <h1>Sign in</h1>
-  <p class="muted">Use the same Z account as the CLI. In dev mode, enter code <span class="meta">123456</span>.</p>
+  <p class="muted">Use the same Z account as the CLI. Until Twilio is live, enter code <span class="meta">123456</span>.</p>
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
   <form method="post" action="/login" style="margin-top:1.5rem; max-width:420px">
     <label for="email">Email</label>
