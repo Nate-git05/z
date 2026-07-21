@@ -282,7 +282,7 @@ optional `aider/z/uncertainty/recipe_runner.py`.
 
 ---
 
-### P2 — Chroma telemetry silence (`chroma-telemetry`)
+### P2 — Chroma telemetry silence (`chroma-telemetry`) — **IMPLEMENTED**
 
 **Goals**
 
@@ -291,12 +291,10 @@ optional `aider/z/uncertainty/recipe_runner.py`.
 - Swallow/ignore product telemetry errors; never print to coding session
   unless `Z_VERBOSE=1`.
 
-**Acceptance**
-
-- Fresh session with skills/Chroma: no `ClientStartEvent` / `capture()` TypeError
-  lines on stderr.
-
-**Files:** `skills/vector.py`, maybe `main.py` early env.
+**Shipped:** `aider/z/skills/vector.py` (`configure_chroma_telemetry`), early call from
+`aider/z/cli.py`, tests in `tests/basic/test_z_chroma_telemetry.py`. Also no-ops
+Chroma’s broken 3-arg `Posthog.capture` (posthog SDK arity mismatch) so
+`ClientStartEvent` TypeErrors cannot spam stderr even when Chroma still invokes capture.
 
 ---
 
@@ -338,7 +336,7 @@ optional `aider/z/uncertainty/recipe_runner.py`.
 
 ## Suggested PR slice order
 
-1. **chroma-telemetry** — tiny, confidence win  
+1. **chroma-telemetry** — ✅ shipped (`configure_chroma_telemetry`)  
 2. **gate-ni-ux** — messaging only  
 3. **ni-contract** — exit codes + auto-seed  
 4. **verify-cmake** — stale build  
