@@ -232,7 +232,10 @@ class StartAgentInjectTest(unittest.TestCase):
                 with patch("aider.main.main", side_effect=fake_main):
                     code = _start_agent([])
         self.assertEqual(code, 0)
-        self.assertEqual(captured["argv"], ["--model", "claude-haiku-4-5"])
+        self.assertEqual(
+            captured["argv"],
+            ["--model", "claude-haiku-4-5", "--no-show-model-warnings"],
+        )
 
     def test_start_agent_respects_explicit_model_flag_over_saved_choice(self):
         captured = {}
@@ -251,7 +254,9 @@ class StartAgentInjectTest(unittest.TestCase):
                 with patch("aider.main.main", side_effect=fake_main):
                     code = _start_agent(["--model", "gpt-5.6"])
         self.assertEqual(code, 0)
-        self.assertEqual(captured["argv"], ["--model", "gpt-5.6"])
+        self.assertEqual(
+            captured["argv"], ["--model", "gpt-5.6", "--no-show-model-warnings"]
+        )
 
 
 class AuthModeChoiceTest(unittest.TestCase):
@@ -294,6 +299,8 @@ class RememberedModeTest(unittest.TestCase):
                 auth_mode="byok", selected_model="claude-sonnet-5"
             ),
         ), patch(
+            "aider.z.cli._model_missing_keys", return_value=[]
+        ), patch(
             "aider.z.login_screen.prompt_auth_mode_choice"
         ) as mode, patch(
             "aider.z.auth.prompt_byok_setup"
@@ -306,6 +313,22 @@ class RememberedModeTest(unittest.TestCase):
         mode.assert_not_called()
         byok.assert_not_called()
         router_model.assert_not_called()
+
+    def test_byok_missing_keys_reprompts_setup(self):
+        io = FakeIO()
+        with patch("aider.z.auth.current_session", return_value=_creds()), patch(
+            "aider.z.onboarding.load_config",
+            return_value=OnboardingConfig(
+                auth_mode="byok", selected_model="claude-sonnet-5"
+            ),
+        ), patch(
+            "aider.z.cli._model_missing_keys", return_value=["ANTHROPIC_API_KEY"]
+        ), patch(
+            "aider.z.auth.prompt_byok_setup", return_value=True
+        ) as byok:
+            ok = ensure_agent_session(io)
+        self.assertTrue(ok)
+        byok.assert_called_once()
 
 
 class RouterModeFlowTest(unittest.TestCase):
@@ -371,7 +394,10 @@ class RouterModeFlowTest(unittest.TestCase):
                 with patch("aider.main.main", side_effect=fake_main):
                     code = _start_agent([])
         self.assertEqual(code, 0)
-        self.assertEqual(captured["argv"], ["--model", "claude-haiku-4-5"])
+        self.assertEqual(
+            captured["argv"],
+            ["--model", "claude-haiku-4-5", "--no-show-model-warnings"],
+        )
 
 
 class CuratedSectionsTest(unittest.TestCase):

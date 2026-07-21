@@ -929,14 +929,22 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
         problem = models.sanity_check_models(io, main_model)
         if problem:
             analytics.event("model warning", main_model=main_model)
-            io.tool_output("You can skip this check with --no-show-model-warnings")
-
-            try:
-                io.offer_url(urls.model_warnings, "Open documentation url for more info?")
+            if os.environ.get("Z_CLI", "").strip().lower() in ("1", "true", "yes"):
+                # Never send Z users to Aider docs for missing keys.
+                io.tool_output(
+                    "Set your provider API key (e.g. export ANTHROPIC_API_KEY=…), "
+                    "or run `z auth switch` to choose a model and paste a key."
+                )
                 io.tool_output()
-            except KeyboardInterrupt:
-                analytics.event("exit", reason="Keyboard interrupt during model warnings")
-                return 1
+            else:
+                io.tool_output("You can skip this check with --no-show-model-warnings")
+
+                try:
+                    io.offer_url(urls.model_warnings, "Open documentation url for more info?")
+                    io.tool_output()
+                except KeyboardInterrupt:
+                    analytics.event("exit", reason="Keyboard interrupt during model warnings")
+                    return 1
 
     repo = None
     if args.git:

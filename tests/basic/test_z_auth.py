@@ -191,7 +191,7 @@ class TestZCli(unittest.TestCase):
                 code = z_cli.main([])
         self.assertEqual(code, 0)
         gate.assert_called_once()
-        agent_main.assert_called_once_with(argv=[])
+        agent_main.assert_called_once_with(argv=["--no-show-model-warnings"])
 
     def test_agent_flags_also_go_through_session_gate(self):
         from aider.z import cli as z_cli
@@ -200,7 +200,9 @@ class TestZCli(unittest.TestCase):
             with patch("aider.main.main", return_value=0) as agent_main:
                 code = z_cli.main(["--model", "sonnet"])
         self.assertEqual(code, 0)
-        agent_main.assert_called_once_with(argv=["--model", "sonnet"])
+        agent_main.assert_called_once_with(
+            argv=["--model", "sonnet", "--no-show-model-warnings"]
+        )
 
     def test_cancelled_login_does_not_start_agent(self):
         from aider.z import cli as z_cli
@@ -233,6 +235,8 @@ class TestZCli(unittest.TestCase):
                                 auth_mode="router",
                                 selected_model="claude-sonnet-5",
                             ),
+                        ), patch(
+                            "aider.z.cli._model_missing_keys", return_value=[]
                         ):
                             ok = ensure_agent_session(io)
         self.assertTrue(ok)
@@ -261,6 +265,8 @@ class TestZCli(unittest.TestCase):
                                 auth_mode="router",
                                 selected_model="claude-sonnet-5",
                             ),
+                        ), patch(
+                            "aider.z.cli._model_missing_keys", return_value=[]
                         ):
                             ok = ensure_agent_session(io)
         self.assertTrue(ok)

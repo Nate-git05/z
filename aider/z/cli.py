@@ -154,6 +154,47 @@ def _skip_account_gate() -> bool:
     return os.environ.get("Z_SKIP_ACCOUNT", "").strip().lower() in ("1", "true", "yes")
 
 
+def _load_byok_env() -> None:
+    """Load ~/.z/byok.env into the process before model checks run."""
+    from pathlib import Path
+
+    from dotenv import load_dotenv
+
+    from aider.z.paths import byok_env_path
+
+    path = byok_env_path()
+    if Path(path).exists():
+        load_dotenv(path, override=True)
+
+
+def _model_missing_keys(model_id: str | None) -> list[str]:
+    if not model_id:
+        return []
+    try:
+        from aider.models import Model
+
+        model = Model(model_id)
+        return list(model.missing_keys or [])
+    except Exception:
+        return []
+
+
+def _ensure_model_keys(io, model_id: str | None) -> bool:
+    """If the preferred model needs API keys that are missing, collect them."""
+    missing = _model_missing_keys(model_id)
+    if not missing:
+        return True
+
+    io.tool_output("")
+    io.tool_output(
+        f"Model {model_id} needs {', '.join(missing)} — "
+        "paste your key to continue (or run `z auth switch` later)."
+    )
+    from aider.z.auth import prompt_byok_setup
+
+    return prompt_byok_setup(io)
+
+
 def _complete_mode_setup(io, mode: str) -> bool:
     """Finish BYOK key setup or router model preference after mode is chosen.
 
@@ -217,12 +258,15 @@ def ensure_agent_session(io) -> bool:
         if not creds:
             return False
 
+    _load_byok_env()
     config = load_config()
-    # Remembered choice — do not re-ask on every launch.
+    # Remembered choice — do not re-ask mode on every launch.
+    # Still collect missing provider keys so we never fall into Aider's docs prompt.
     if config.auth_mode == "byok":
-        return True
+        return _ensure_model_keys(io, config.selected_model)
     if config.auth_mode == "router" and config.selected_model:
-        return True
+        # Hosted router billing is not live yet — need a provider key to run.
+        return _ensure_model_keys(io, config.selected_model)
     if config.auth_mode == "router" and not config.selected_model:
         return _complete_mode_setup(io, "router")
 
@@ -292,6 +336,7 @@ def _start_agent(argv: list[str]) -> int | None:
     # Mark this process as the Z CLI so Aider onboarding (OpenRouter "login",
     # "improve aider?" analytics copy) does not replace Z's account login.
     os.environ["Z_CLI"] = "1"
+    _load_byok_env()
 
     # yes=None → actually prompt; yes=False would auto-answer "no" to every ask
     io = InputOutput(pretty=True, fancy_input=True, yes=None)
@@ -306,6 +351,12 @@ def _start_agent(argv: list[str]) -> int | None:
         config = load_config()
         if config.selected_model and config.auth_mode in ("byok", "router"):
             argv = list(argv) + ["--model", config.selected_model]
+
+    # Avoid Aider's "Open documentation url?" model-warning prompt under Z.
+    if "--no-show-model-warnings" not in argv and not any(
+        a.startswith("--show-model-warnings") for a in argv
+    ):
+        argv = list(argv) + ["--no-show-model-warnings"]
 
     from aider.main import main as agent_main
 
