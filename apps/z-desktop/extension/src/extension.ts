@@ -16,7 +16,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   status.show();
   context.subscriptions.push(status);
 
-  const { refreshProfile } = registerViews(context, manager);
+  const { refreshProfile, openChat } = registerViews(context, manager);
   const refreshUi = () => {
     updateStatusBar(manager!);
     refreshProfile();
@@ -25,6 +25,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   registerAuthCommands(context, manager, refreshUi);
   registerWorkspaceSync(context, manager);
+
+  // Agent-first: Chat is the main interface (center), not a sidebar.
+  const cfgEarly = vscode.workspace.getConfiguration("z");
+  if (cfgEarly.get<boolean>("openChatOnActivate", true)) {
+    openChat();
+    void vscode.commands.executeCommand("workbench.view.extension.z-left");
+    void vscode.commands.executeCommand("workbench.view.extension.z-right");
+  }
 
   context.subscriptions.push(
     vscode.commands.registerCommand("z.startAppServer", async () => {

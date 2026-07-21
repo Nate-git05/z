@@ -1,6 +1,6 @@
 # Z Desktop (app shell)
 
-**Status:** Phase 0–4 — IPC, gateway, shell lifecycle, auth, Chat turn loop.
+**Status:** Phase 0–4 — IPC, gateway, shell lifecycle, auth, **agent-first** Chat turn loop.
 
 **Read first:** [`docs/app/z-editor-v1-implementation-plan.md`](../../docs/app/z-editor-v1-implementation-plan.md)
 
@@ -51,17 +51,26 @@ Extension settings: `z.appServerUrl`, `z.autoStartAppServer`, `z.zBinary`.
 - `GET /v1/gateway/usage`
 - Router CLI mode: `aider.z.gateway_client` (`Z_USE_GATEWAY=0` to disable)
 
-## Phase 4 — Chat turn loop
+## Agent-first layout (Phase 4)
 
-Type in the **Chat** sidebar (not the CLI). Flow:
+The user does **not** program in an editor pane. They prompt the agent; the agent does all coding.
+
+| Region | Surface |
+|--------|---------|
+| **Center** | Chat (`Z: Open Chat`) — main interface; message queue with visible preview while busy |
+| **Left** | Uncertainty Tree — live risk-ranked hierarchy as the agent works |
+| **Right** | Commit Gate — blocked vs ready / cleared |
+
+Flow:
 
 1. `turn/start` → worker thread runs `Coder.run(with_message=…)`
-2. Notifications: `turn/busy`, `item/agentMessage/delta`, `turn/waiting_input`, `turn/completed`
-3. Approvals / plan confirm answered via Chat buttons → `turn/respond`
+2. If busy: enqueue (does not interrupt) → `turn/queued` with `items` + `preview`
+3. Notifications: `turn/busy`, `item/agentMessage/delta`, `turn/waiting_input`, `uncertainty/changed`, `gate/commit_blocked`, `turn/completed`
+4. Approvals / plan confirm answered via Chat buttons → `turn/respond`
 
 ## Next (Phase 5+)
 
 1. Real gateway routing policy (TaskMode / escalate)
-2. Live uncertainty / skills / commit-blocks / MCP webviews
+2. Skills / MCP in-app surfaces; finer live uncertainty upserts
 3. Profile usage from `gateway_requests`
 4. Apply `product.z.json` when building from `vendor/vscode`

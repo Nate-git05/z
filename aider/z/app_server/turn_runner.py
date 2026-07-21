@@ -59,12 +59,18 @@ class ThreadTurnRunner:
             if self._busy and self._io is not None:
                 orch = self._io.ensure_turn_ux()
                 if orch.enqueue(text):
+                    items = list(orch.list_queue())
+                    preview = (
+                        orch.format_queued_preview(items[0]) if items else None
+                    )
                     return {
                         "turnId": self._current_turn_id,
                         "threadId": self.thread_id,
                         "accepted": True,
                         "queued": True,
                         "queueLen": orch.queue_len,
+                        "items": items,
+                        "preview": preview,
                     }
                 raise RuntimeError("Agent is busy and the turn queue is full")
 
@@ -188,8 +194,15 @@ class ThreadTurnRunner:
         self._current_turn_id = turn_id
         self._notify(
             "turn/started",
-            {"turnId": turn_id, "threadId": self.thread_id},
+            {
+                "turnId": turn_id,
+                "threadId": self.thread_id,
+                "text": first_text,
+                "fromQueue": False,
+            },
         )
+        # Side panels: pull uncertainty / commit gate as the turn begins.
+        self._notify("uncertainty/changed", {"turnId": turn_id, "reason": "turn_started"})
 
         message = first_text
         ok = True
@@ -204,7 +217,15 @@ class ThreadTurnRunner:
                         {
                             "turnId": self._current_turn_id,
                             "threadId": self.thread_id,
+                            "text": message,
                             "fromQueue": True,
+                        },
+                    )
+                    self._notify(
+                        "uncertainty/changed",
+                        {
+                            "turnId": self._current_turn_id,
+                            "reason": "queued_turn_started",
                         },
                     )
                 try:
@@ -244,6 +265,10 @@ class ThreadTurnRunner:
                     "interrupted": interrupted,
                     "finalText": (final_text or "")[:50000] if final_text else None,
                 },
+            )
+            self._notify(
+                "uncertainty/changed",
+                {"turnId": self._current_turn_id, "reason": "turn_completed"},
             )
             self._busy = False
             # Keep current_turn_id for a beat so late responds can still match

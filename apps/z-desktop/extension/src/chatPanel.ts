@@ -1,5 +1,6 @@
 /**
- * Phase 4 — Cursor-style Chat panel: type a prompt, stream the turn, answer WaitingInput.
+ * Agent-first main Chat — center editor webview (not a sidebar).
+ * Cursor-style queued prompt preview while the agent is mid-turn.
  */
 
 import * as vscode from "vscode";
@@ -23,30 +24,66 @@ interface WaitingPrompt {
   default?: string;
 }
 
-export class ChatViewProvider implements vscode.WebviewViewProvider {
-  private view?: vscode.WebviewView;
+interface QueueState {
+  queueLen: number;
+  items: string[];
+  preview: string | null;
+}
+
+export class MainChatPanel {
+  public static readonly viewType = "z.chatPanel";
+
+  private panel: vscode.WebviewPanel | undefined;
   private messages: ChatMessage[] = [];
   private busyLabel = "";
   private waiting: WaitingPrompt | null = null;
   private streamingAssistantId: string | null = null;
   private threadId = "default";
+  private queue: QueueState = { queueLen: 0, items: [], preview: null };
   private disposed = false;
 
-  constructor(private readonly manager: AppServerManager) {
+  constructor(
+    private readonly context: vscode.ExtensionContext,
+    private readonly manager: AppServerManager
+  ) {
     manager.onNotification((method, params) => {
       void this.onNotification(method, params as Record<string, unknown>);
     });
     manager.onDidChange(() => this.postState());
   }
 
-  resolveWebviewView(webviewView: vscode.WebviewView): void {
-    this.view = webviewView;
-    webviewView.webview.options = { enableScripts: true };
-    webviewView.webview.html = this.html();
-    webviewView.webview.onDidReceiveMessage((msg) => void this.onMessage(msg));
-    webviewView.onDidDispose(() => {
-      this.view = undefined;
-    });
+  /** Open (or reveal) Chat as the center main interface. */
+  show(): void {
+    if (this.panel) {
+      this.panel.reveal(vscode.ViewColumn.One, false);
+      this.postState();
+      return;
+    }
+
+    this.panel = vscode.window.createWebviewPanel(
+      MainChatPanel.viewType,
+      "Z",
+      { viewColumn: vscode.ViewColumn.One, preserveFocus: false },
+      {
+        enableScripts: true,
+        retainContextWhenHidden: true,
+        localResourceRoots: [this.context.extensionUri],
+      }
+    );
+    this.panel.iconPath = vscode.Uri.joinPath(this.context.extensionUri, "media", "z-activity.svg");
+    this.panel.webview.html = this.html();
+    this.panel.webview.onDidReceiveMessage(
+      (msg) => void this.onMessage(msg),
+      undefined,
+      this.context.subscriptions
+    );
+    this.panel.onDidDispose(
+      () => {
+        this.panel = undefined;
+      },
+      undefined,
+      this.context.subscriptions
+    );
     this.postState();
   }
 
@@ -54,7 +91,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this.postState();
   }
 
-  private async onMessage(msg: { type?: string; text?: string; response?: string; changeText?: string }) {
+  dispose(): void {
+    this.disposed = true;
+    this.panel?.dispose();
+  }
+
+  private async onMessage(msg: {
+    type?: string;
+    text?: string;
+    response?: string;
+    changeText?: string;
+  }) {
     if (!msg?.type) {
       return;
     }
@@ -98,6 +145,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this.streamingAssistantId = null;
       this.waiting = null;
       this.busyLabel = "";
+      this.queue = { queueLen: 0, items: [], preview: null };
       this.postState();
     }
   }
@@ -117,29 +165,42 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         return;
       }
     }
-    this.messages.push({
-      id: `u-${Date.now()}`,
-      role: "user",
-      text: trimmed,
-    });
-    this.streamingAssistantId = null;
-    this.busyLabel = "Working…";
-    this.postState();
+
+    const agentBusy = Boolean(this.busyLabel) || this.queue.queueLen > 0;
+
     try {
       const result = (await this.manager.rpc!.request("turn/start", {
         text: trimmed,
         threadId: this.threadId,
-      })) as { turnId?: string; queued?: boolean; accepted?: boolean };
+      })) as {
+        turnId?: string;
+        queued?: boolean;
+        accepted?: boolean;
+        queueLen?: number;
+        items?: string[];
+        preview?: string | null;
+      };
+
       if (result.queued) {
-        this.messages.push({
-          id: `s-${Date.now()}`,
-          role: "system",
-          text: "Queued — will run after the current turn.",
-        });
+        // Do not interrupt — show Cursor-style queued preview (not a chat bubble yet).
+        this.setQueueFromPayload(result);
         this.postState();
+        return;
       }
+
+      this.messages.push({
+        id: `u-${Date.now()}`,
+        role: "user",
+        text: trimmed,
+      });
+      this.streamingAssistantId = null;
+      this.busyLabel = "Working…";
+      this.queue = { queueLen: 0, items: [], preview: null };
+      this.postState();
     } catch (err) {
-      this.busyLabel = "";
+      if (!agentBusy) {
+        this.busyLabel = "";
+      }
       this.messages.push({
         id: `e-${Date.now()}`,
         role: "system",
@@ -147,6 +208,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       });
       this.postState();
     }
+  }
+
+  private setQueueFromPayload(params: {
+    queueLen?: number;
+    items?: string[];
+    preview?: string | null;
+  }): void {
+    const items = Array.isArray(params.items)
+      ? params.items.map((x) => String(x))
+      : [];
+    const queueLen = typeof params.queueLen === "number" ? params.queueLen : items.length;
+    let preview = params.preview != null ? String(params.preview) : null;
+    if (!preview && items.length) {
+      const one = items[0].replace(/\s+/g, " ").trim();
+      preview = one.length > 72 ? `▶ queued: ${one.slice(0, 71)}…` : `▶ queued: ${one}`;
+    }
+    this.queue = { queueLen, items, preview: queueLen ? preview : null };
   }
 
   private onNotification(method: string, params: Record<string, unknown>): void {
@@ -162,6 +240,30 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.busyLabel = label || "Waiting for your reply…";
       } else {
         this.busyLabel = label || "Working…";
+      }
+      if (typeof params.queueLen === "number" && params.queueLen === 0) {
+        this.queue = { queueLen: 0, items: [], preview: null };
+      }
+      this.postState();
+      return;
+    }
+    if (method === "turn/queued") {
+      this.setQueueFromPayload(params as { queueLen?: number; items?: string[]; preview?: string | null });
+      this.postState();
+      return;
+    }
+    if (method === "turn/started") {
+      const text = String(params.text || "").trim();
+      const fromQueue = Boolean(params.fromQueue);
+      if (fromQueue && text) {
+        // Promote queued preview into the transcript when the follow-up starts.
+        this.messages.push({
+          id: `u-${Date.now()}`,
+          role: "user",
+          text,
+        });
+        this.streamingAssistantId = null;
+        this.busyLabel = "Working…";
       }
       this.postState();
       return;
@@ -207,7 +309,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       if (!text) {
         return;
       }
-      // Keep chat clean: only surface warnings/errors as system lines
       if (level === "warning" || level === "error") {
         this.messages.push({
           id: `log-${Date.now()}`,
@@ -244,15 +345,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   private postState(): void {
-    if (!this.view) {
+    if (!this.panel) {
       return;
     }
-    this.view.webview.postMessage({
+    this.panel.webview.postMessage({
       type: "state",
       connection: this.manager.connectionState,
       busyLabel: this.busyLabel,
       waiting: this.waiting,
       messages: this.messages,
+      queue: this.queue,
     });
   }
 
@@ -262,102 +364,86 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 <head>
 <meta charset="UTF-8" />
 <style>
-  :root {
-    color-scheme: light dark;
-  }
+  :root { color-scheme: light dark; }
   html, body {
-    height: 100%;
-    margin: 0;
-    padding: 0;
+    height: 100%; margin: 0; padding: 0;
     font-family: var(--vscode-font-family);
     color: var(--vscode-foreground);
-    background: var(--vscode-sideBar-background);
+    background: var(--vscode-editor-background);
   }
   #app {
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-    box-sizing: border-box;
+    display: flex; flex-direction: column; height: 100vh; box-sizing: border-box;
+    max-width: 820px; margin: 0 auto; width: 100%;
+  }
+  #brand {
+    padding: 16px 20px 8px;
+    font-size: 22px; font-weight: 700; letter-spacing: -0.02em;
   }
   #status {
-    padding: 8px 12px;
-    font-size: 12px;
-    opacity: 0.85;
-    border-bottom: 1px solid var(--vscode-panel-border, rgba(127,127,127,0.3));
-    min-height: 18px;
+    padding: 0 20px 10px; font-size: 12px; opacity: 0.8; min-height: 16px;
   }
   #status.busy { opacity: 1; }
   #msgs {
-    flex: 1;
-    overflow-y: auto;
-    padding: 12px;
+    flex: 1; overflow-y: auto; padding: 8px 20px 16px;
   }
-  .msg { margin: 0 0 14px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+  .msg { margin: 0 0 16px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
   .msg .role {
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    opacity: 0.6;
-    margin-bottom: 4px;
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+    opacity: 0.55; margin-bottom: 4px;
   }
-  .msg.user .bubble { color: var(--vscode-foreground); }
-  .msg.assistant .bubble { }
   .msg.system .bubble { opacity: 0.8; font-size: 12px; }
   #waiting {
-    display: none;
-    padding: 10px 12px;
-    border-top: 1px solid var(--vscode-panel-border, rgba(127,127,127,0.3));
+    display: none; margin: 0 16px; padding: 12px 14px;
+    border: 1px solid var(--vscode-panel-border, rgba(127,127,127,0.35));
     background: var(--vscode-inputValidation-infoBackground, transparent);
   }
   #waiting.show { display: block; }
   #waiting .q { font-weight: 600; margin-bottom: 6px; }
   #waiting .subject {
-    max-height: 140px;
-    overflow: auto;
-    font-size: 12px;
-    opacity: 0.85;
-    margin-bottom: 8px;
-    white-space: pre-wrap;
+    max-height: 160px; overflow: auto; font-size: 12px; opacity: 0.85;
+    margin-bottom: 8px; white-space: pre-wrap;
   }
   #waiting .actions { display: flex; flex-wrap: wrap; gap: 6px; }
+  #queue {
+    display: none; margin: 8px 16px 0; padding: 10px 12px;
+    border: 1px dashed var(--vscode-panel-border, rgba(127,127,127,0.45));
+    background: var(--vscode-editorWidget-background, transparent);
+    font-size: 12px;
+  }
+  #queue.show { display: block; }
+  #queue .label {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+    opacity: 0.65; margin-bottom: 4px;
+  }
+  #queue .preview { white-space: pre-wrap; word-break: break-word; }
+  #queue .more { opacity: 0.65; margin-top: 4px; font-size: 11px; }
   #composer {
     border-top: 1px solid var(--vscode-panel-border, rgba(127,127,127,0.3));
-    padding: 10px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
+    padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 8px;
   }
   textarea {
-    width: 100%;
-    min-height: 72px;
-    resize: vertical;
-    box-sizing: border-box;
-    background: var(--vscode-input-background);
-    color: var(--vscode-input-foreground);
-    border: 1px solid var(--vscode-input-border, transparent);
-    padding: 8px;
-    font-family: inherit;
-    font-size: 13px;
+    width: 100%; min-height: 88px; resize: vertical; box-sizing: border-box;
+    background: var(--vscode-input-background); color: var(--vscode-input-foreground);
+    border: 1px solid var(--vscode-input-border, transparent); padding: 10px;
+    font-family: inherit; font-size: 14px;
   }
-  .row { display: flex; gap: 8px; align-items: center; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   button {
-    background: var(--vscode-button-background);
-    color: var(--vscode-button-foreground);
-    border: none;
-    padding: 6px 12px;
-    cursor: pointer;
+    background: var(--vscode-button-background); color: var(--vscode-button-foreground);
+    border: none; padding: 7px 14px; cursor: pointer;
   }
   button.secondary {
     background: var(--vscode-button-secondaryBackground);
     color: var(--vscode-button-secondaryForeground);
   }
   button:disabled { opacity: 0.5; cursor: default; }
-  .hint { font-size: 11px; opacity: 0.6; }
+  .hint { font-size: 11px; opacity: 0.55; }
 </style>
 </head>
 <body>
   <div id="app">
-    <div id="status">Z Chat</div>
+    <div id="brand">Z</div>
+    <div id="status">Ready</div>
     <div id="msgs"></div>
     <div id="waiting">
       <div class="q" id="wq"></div>
@@ -370,13 +456,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         </div>
       </div>
     </div>
+    <div id="queue">
+      <div class="label">Queued — runs after current turn</div>
+      <div class="preview" id="qpreview"></div>
+      <div class="more" id="qmore"></div>
+    </div>
     <div id="composer">
-      <textarea id="input" placeholder="Message Z…"></textarea>
+      <textarea id="input" placeholder="Prompt the agent…"></textarea>
       <div class="row">
         <button id="send">Send</button>
         <button class="secondary" id="cancel">Stop</button>
         <button class="secondary" id="clear">Clear</button>
-        <span class="hint">Enter to send · Shift+Enter newline</span>
+        <span class="hint">Enter to send · Shift+Enter newline · busy → queues</span>
       </div>
     </div>
   </div>
@@ -385,6 +476,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const msgsEl = document.getElementById('msgs');
     const statusEl = document.getElementById('status');
     const waitingEl = document.getElementById('waiting');
+    const queueEl = document.getElementById('queue');
     const input = document.getElementById('input');
     let waiting = null;
 
@@ -404,14 +496,27 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       msgsEl.scrollTop = msgsEl.scrollHeight;
     }
 
-    function renderWaiting(w) {
-      waiting = w;
-      const box = waitingEl;
-      if (!w) {
-        box.classList.remove('show');
+    function renderQueue(q) {
+      if (!q || !q.queueLen) {
+        queueEl.classList.remove('show');
         return;
       }
-      box.classList.add('show');
+      queueEl.classList.add('show');
+      const preview = q.preview || (q.items && q.items[0] ? ('▶ queued: ' + q.items[0]) : 'Queued follow-up');
+      document.getElementById('qpreview').textContent = preview;
+      const extra = Math.max(0, (q.queueLen || 0) - 1);
+      document.getElementById('qmore').textContent = extra
+        ? ('+' + extra + ' more queued')
+        : (q.queueLen + ' in queue');
+    }
+
+    function renderWaiting(w) {
+      waiting = w;
+      if (!w) {
+        waitingEl.classList.remove('show');
+        return;
+      }
+      waitingEl.classList.add('show');
       document.getElementById('wq').textContent = w.question || 'Confirm?';
       document.getElementById('wsubject').textContent = w.subject || '';
       const actions = document.getElementById('wactions');
@@ -440,10 +545,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       const busy = data.busyLabel || '';
       statusEl.textContent = busy
         ? busy
-        : (conn === 'connected' ? 'Z · ready' : 'Z · ' + conn);
+        : (conn === 'connected' ? 'Agent ready — you prompt, Z programs' : 'Z · ' + conn);
       statusEl.className = busy ? 'busy' : '';
       renderMessages(data.messages || []);
       renderWaiting(data.waiting || null);
+      renderQueue(data.queue || null);
     });
 
     document.getElementById('send').onclick = () => {

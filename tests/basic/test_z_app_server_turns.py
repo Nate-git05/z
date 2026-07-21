@@ -94,6 +94,28 @@ class AppServerIOBridgeTest(unittest.TestCase):
         self.assertIn("skills", busy[-1]["phase"] or "")
 
 
+class QueuePreviewNotifyTest(unittest.TestCase):
+    def test_queue_change_includes_items_and_preview(self):
+        from aider.z.app_server.io_bridge import AppServerIO
+
+        notes = []
+        io = AppServerIO(
+            notify=lambda m, p: notes.append((m, p)),
+            turn_id_provider=lambda: "t",
+            root=".",
+        )
+        orch = io.ensure_turn_ux()
+        orch.enter_busy("Working…")
+        self.assertTrue(orch.enqueue("follow up: fix the tests"))
+        queued = [p for m, p in notes if m == "turn/queued"]
+        self.assertTrue(queued)
+        last = queued[-1]
+        self.assertEqual(last["queueLen"], 1)
+        self.assertEqual(last["items"], ["follow up: fix the tests"])
+        self.assertIn("queued", (last.get("preview") or "").lower())
+        self.assertIn("follow up", last.get("preview") or "")
+
+
 class TurnManagerRespondTest(unittest.TestCase):
     def test_respond_routes_to_runner_io(self):
         from aider.z.app_server.turn_runner import TurnManager

@@ -92,12 +92,30 @@ class AppServerIO(InputOutput):
 
     def _on_queue_change(self, n: int) -> None:
         turn_id = self._turn_id_provider()
+        orch = self.turn_orchestrator
+        items: list[str] = []
+        preview = None
+        if orch is not None:
+            try:
+                items = list(orch.list_queue())
+            except Exception:
+                items = []
+            if items:
+                try:
+                    preview = orch.format_queued_preview(items[0])
+                except Exception:
+                    one = " ".join(items[0].split())
+                    preview = f"▶ queued: {one[:71]}…" if len(one) > 72 else f"▶ queued: {one}"
         self._notify(
             "turn/queued",
-            {"turnId": turn_id, "queueLen": n},
+            {
+                "turnId": turn_id,
+                "queueLen": n,
+                "items": items,
+                "preview": preview,
+            },
         )
         # Also refresh busy label
-        orch = self.turn_orchestrator
         if orch and orch.state == TurnState.BUSY:
             self._on_state_change(orch.state, orch.phase)
 

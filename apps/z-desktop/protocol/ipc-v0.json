@@ -38,8 +38,15 @@
         "threadId": "string",
         "text": "string"
       },
-      "result": { "turnId": "string", "accepted": true, "queued": "boolean" },
-      "notes": "Phase 4 — runs Coder.run(with_message) on a worker thread; streams turn/* notifications."
+      "result": {
+        "turnId": "string",
+        "accepted": true,
+        "queued": "boolean",
+        "queueLen": { "optional": true },
+        "items": { "optional": true, "type": "string[]" },
+        "preview": { "optional": true }
+      },
+      "notes": "Phase 4 — runs Coder.run(with_message) on a worker thread; if busy, enqueues and returns queued+preview (Cursor-style)."
     },
     "turn/respond": {
       "params": {
@@ -123,7 +130,12 @@
     }
   },
   "notifications": {
-    "turn/started": { "turnId": "string", "threadId": "string" },
+    "turn/started": {
+      "turnId": "string",
+      "threadId": "string",
+      "text": { "optional": true },
+      "fromQueue": { "optional": true }
+    },
     "turn/busy": {
       "turnId": "string",
       "state": { "enum": ["idle", "busy", "waiting_input"] },
@@ -133,9 +145,15 @@
     },
     "item/agentMessage/delta": { "turnId": "string", "text": "string" },
     "turn/log": { "turnId": "string", "level": "info|warning|error", "text": "string" },
-    "turn/queued": { "turnId": "string", "queueLen": "number" },
+    "turn/queued": {
+      "turnId": "string",
+      "queueLen": "number",
+      "items": "string[]",
+      "preview": "string|null"
+    },
     "turn/error": { "turnId": "string", "message": "string" },
     "uncertainty/upsert": { "node": "UncertaintyNode" },
+    "uncertainty/changed": { "turnId": { "optional": true }, "reason": "string" },
     "gate/commit_blocked": { "record": "CommitBlockRecord" },
     "turn/waiting_input": {
       "turnId": "string",

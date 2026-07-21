@@ -1,8 +1,8 @@
 {
   "name": "z-editor",
   "displayName": "Z",
-  "description": "Z coding agent — chat, uncertainty chain, skills, commit blocks, MCP, profile",
-  "version": "0.4.0",
+  "description": "Z coding agent — agent-first chat, uncertainty tree, commit gate",
+  "version": "0.5.0",
   "publisher": "z",
   "engines": {
     "vscode": "^1.85.0"
@@ -17,47 +17,53 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "z",
-          "title": "Z",
+          "id": "z-left",
+          "title": "Uncertainty",
+          "icon": "media/z-activity.svg"
+        }
+      ],
+      "secondarySidebar": [
+        {
+          "id": "z-right",
+          "title": "Commit Gate",
           "icon": "media/z-activity.svg"
         }
       ]
     },
     "views": {
-      "z": [
-        {
-          "id": "z.chat",
-          "name": "Chat",
-          "type": "webview"
-        },
+      "z-left": [
         {
           "id": "z.uncertainty",
-          "name": "Uncertainty",
-          "type": "webview"
-        },
-        {
-          "id": "z.skills",
-          "name": "Skills",
-          "type": "webview"
-        },
-        {
-          "id": "z.commitBlocks",
-          "name": "Commit blocks",
+          "name": "Uncertainty Tree",
           "type": "webview"
         },
         {
           "id": "z.profile",
           "name": "Profile",
           "type": "webview"
-        },
+        }
+      ],
+      "z-right": [
         {
-          "id": "z.mcp",
-          "name": "MCP",
+          "id": "z.commitGate",
+          "name": "Commit Gate",
           "type": "webview"
         }
       ]
     },
     "commands": [
+      {
+        "command": "z.openChat",
+        "title": "Z: Open Chat"
+      },
+      {
+        "command": "z.focusUncertainty",
+        "title": "Z: Focus Uncertainty Tree"
+      },
+      {
+        "command": "z.focusCommitGate",
+        "title": "Z: Focus Commit Gate"
+      },
       {
         "command": "z.startAppServer",
         "title": "Z: Start app-server"
@@ -104,6 +110,11 @@
           "type": "string",
           "default": "",
           "description": "Path to the `z` CLI binary. Empty = resolve via PATH."
+        },
+        "z.openChatOnActivate": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open the center Chat panel when the extension activates (agent-first main interface)."
         }
       }
     }

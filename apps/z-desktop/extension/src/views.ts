@@ -1,37 +1,67 @@
 /**
- * Sidebar webview providers — Chat (Phase 4) + Profile (Phase 3); others placeholders.
+ * Agent-first layout:
+ * - Center: Main Chat panel (editor area)
+ * - Left: Uncertainty Tree
+ * - Right: Commit Gate
+ * Profile remains a small utility view under Uncertainty.
  */
 
 import * as vscode from "vscode";
 import { AppServerManager } from "./appServerManager";
 import { AuthStatus } from "./appServerClient";
-import { ChatViewProvider } from "./chatView";
+import { MainChatPanel } from "./chatPanel";
+import { UncertaintyTreeProvider } from "./uncertaintyView";
+import { CommitGateProvider } from "./commitGateView";
 
 export function registerViews(
   context: vscode.ExtensionContext,
   manager: AppServerManager
-): { refreshProfile: () => void; refreshChat: () => void } {
-  const chat = new ChatViewProvider(manager);
+): {
+  refreshProfile: () => void;
+  refreshChat: () => void;
+  openChat: () => void;
+} {
+  const chat = new MainChatPanel(context, manager);
+  const uncertainty = new UncertaintyTreeProvider(manager);
+  const commitGate = new CommitGateProvider(manager);
   const profile = new ProfileViewProvider(manager);
+
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider("z.chat", chat, {
+    { dispose: () => chat.dispose() },
+    vscode.window.registerWebviewViewProvider("z.uncertainty", uncertainty, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
+    vscode.window.registerWebviewViewProvider("z.commitGate", commitGate, {
       webviewOptions: { retainContextWhenHidden: true },
     }),
     vscode.window.registerWebviewViewProvider("z.profile", profile)
   );
 
-  for (const viewId of ["z.uncertainty", "z.skills", "z.commitBlocks", "z.mcp"]) {
-    context.subscriptions.push(
-      vscode.window.registerWebviewViewProvider(
-        viewId,
-        new PlaceholderViewProvider(viewId, manager)
-      )
-    );
-  }
+  context.subscriptions.push(
+    vscode.commands.registerCommand("z.openChat", () => chat.show()),
+    vscode.commands.registerCommand("z.focusUncertainty", async () => {
+      await vscode.commands.executeCommand("workbench.view.extension.z-left");
+      await vscode.commands.executeCommand("z.uncertainty.focus");
+    }),
+    vscode.commands.registerCommand("z.focusCommitGate", async () => {
+      try {
+        await vscode.commands.executeCommand("workbench.action.focusAuxiliaryBar");
+      } catch {
+        /* older shells */
+      }
+      await vscode.commands.executeCommand("workbench.view.extension.z-right");
+      try {
+        await vscode.commands.executeCommand("z.commitGate.focus");
+      } catch {
+        /* ignore */
+      }
+    })
+  );
 
   return {
     refreshProfile: () => profile.refresh(),
     refreshChat: () => chat.refresh(),
+    openChat: () => chat.show(),
   };
 }
 
@@ -55,6 +85,8 @@ class ProfileViewProvider implements vscode.WebviewViewProvider {
         this.refresh();
       } else if (msg?.type === "refresh") {
         this.refresh();
+      } else if (msg?.type === "openChat") {
+        await vscode.commands.executeCommand("z.openChat");
       }
     });
     void this.refresh();
@@ -114,8 +146,8 @@ class ProfileViewProvider implements vscode.WebviewViewProvider {
 </style>
 </head>
 <body>
-  <h3>Z · Profile</h3>
-  <p class="muted">Account + app-server connection (Phase 3).</p>
+  <h3>Profile</h3>
+  <p class="muted">Account · app-server. Chat is the center panel.</p>
 
   <div class="row">
     <div class="label">App server</div>
@@ -153,17 +185,9 @@ class ProfileViewProvider implements vscode.WebviewViewProvider {
         )} · ${escapeHtml(auth.selected_model || "—")}</div></div>`
       : ""
   }
-  ${
-    auth?.login?.status && auth.login.status !== "idle"
-      ? `<div class="row"><div class="label">Login</div><div class="value">${escapeHtml(
-          auth.login.status
-        )}${
-          auth.login.error ? ` — ${escapeHtml(auth.login.error)}` : ""
-        }</div></div>`
-      : ""
-  }
 
   <div style="margin-top:14px">
+    <button data-cmd="openChat">Open Chat</button>
     ${
       auth?.authenticated
         ? `<button class="secondary" data-cmd="signOut">Sign out</button>`
@@ -180,27 +204,6 @@ class ProfileViewProvider implements vscode.WebviewViewProvider {
   </script>
 </body>
 </html>`;
-  }
-}
-
-class PlaceholderViewProvider implements vscode.WebviewViewProvider {
-  constructor(
-    private readonly viewId: string,
-    private readonly manager: AppServerManager
-  ) {}
-
-  resolveWebviewView(webviewView: vscode.WebviewView): void {
-    const title = this.viewId.replace(/^z\./, "");
-    const conn = this.manager.connectionState;
-    webviewView.webview.options = { enableScripts: false };
-    webviewView.webview.html = `<!DOCTYPE html>
-<html><body style="font-family: var(--vscode-font-family); padding: 12px; color: var(--vscode-foreground);">
-  <h3 style="margin:0 0 8px">Z · ${escapeHtml(title)}</h3>
-  <p style="opacity:0.8;margin:0 0 8px">Panel lands in a later phase. App-server: <strong>${escapeHtml(
-    conn
-  )}</strong>.</p>
-  <p style="opacity:0.65;margin:0;font-size:12px">Folder open / tabs / save come from the VS Code shell.</p>
-</body></html>`;
   }
 }
 

@@ -154,6 +154,7 @@ def emit_commit_blocked(
         except Exception:
             pass
     # Durable ledger for Z Editor commit-block view (best-effort).
+    record = None
     try:
         from .commit_block_ledger import append_block
 
@@ -164,14 +165,22 @@ def emit_commit_blocked(
             eng = getattr(coder, "uncertainty_engine", None)
             if eng is not None and getattr(eng, "ctx", None) is not None:
                 session_id = getattr(eng.ctx, "session_id", None)
-        append_block(
+        record = append_block(
             reason=reason,
             repo_key=str(repo_key) if repo_key else None,
             session_id=session_id,
             extra={"dirty_count": dirty_count},
         )
     except Exception:
-        pass
+        record = None
+    # Live Commit Gate panel (app-server IO).
+    if record is not None and io is not None:
+        notify = getattr(io, "_notify", None)
+        if callable(notify):
+            try:
+                notify("gate/commit_blocked", {"record": record})
+            except Exception:
+                pass
     return msg
 
 
