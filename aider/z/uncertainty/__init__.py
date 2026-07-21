@@ -61,6 +61,9 @@ from .detectors import classify_relevant_tests, find_relevant_tests
 from .verify import build_relevant_test_command
 from .gate import (
     GateResult,
+    emit_commit_blocked,
+    format_commit_blocked_message,
+    ni_gate_policy,
     prepare_commit,
     report_auto_fix_exhaustion,
     resolve_commit_edit_set,
@@ -142,6 +145,9 @@ __all__ = [
     "find_relevant_tests",
     "build_relevant_test_command",
     "GateResult",
+    "format_commit_blocked_message",
+    "ni_gate_policy",
+    "emit_commit_blocked",
     "prepare_commit",
     "report_auto_fix_exhaustion",
     "resolve_commit_edit_set",

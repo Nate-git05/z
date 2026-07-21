@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import os
 from pathlib import Path
 from typing import List, Optional, Sequence
 
@@ -10,6 +12,73 @@ from .store import chroma_dir
 
 
 COLLECTION_NAME = "z_skills"
+
+# Chroma's Posthog client still invokes posthog.capture(distinct_id, event, props)
+# even when anonymized_telemetry=False. Newer posthog SDKs use capture(event, **kw)
+# and raise TypeError — logged as "Failed to send telemetry event ClientStartEvent…"
+# on every skills session. Silence that before any PersistentClient is created.
+_TELEMETRY_CONFIGURED = False
+
+
+def configure_chroma_telemetry() -> None:
+    """Disable Chroma product telemetry and keep capture() TypeErrors out of stderr.
+
+    Safe to call repeatedly. Escape: ``Z_VERBOSE=1`` leaves the posthog logger
+    enabled (still no-ops the broken 3-arg capture so sessions stay readable).
+    """
+    global _TELEMETRY_CONFIGURED
+    os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
+    # pydantic-settings style alias some Chroma builds honor
+    os.environ.setdefault("CHROMA_ANONYMIZED_TELEMETRY", "False")
+
+    verbose = os.environ.get("Z_VERBOSE", "").strip().lower() in ("1", "true", "yes")
+    if not verbose:
+        for name in (
+            "chromadb.telemetry.product.posthog",
+            "chromadb.telemetry.product",
+            "chromadb.telemetry",
+        ):
+            log = logging.getLogger(name)
+            log.disabled = True
+            log.setLevel(logging.CRITICAL)
+
+    if _TELEMETRY_CONFIGURED:
+        return
+
+    try:
+        from chromadb.telemetry.product import posthog as chroma_posthog
+    except ImportError:
+        # chromadb not installed yet — env/loggers still applied; retry patch later
+        return
+    except Exception:
+        _TELEMETRY_CONFIGURED = True
+        return
+
+    try:
+        posthog_cls = getattr(chroma_posthog, "Posthog", None)
+        if posthog_cls is not None and not getattr(
+            posthog_cls, "_z_capture_noop", False
+        ):
+
+            def _noop_capture(self, event) -> None:  # noqa: ARG001
+                return None
+
+            posthog_cls.capture = _noop_capture  # type: ignore[method-assign]
+            posthog_cls._z_capture_noop = True
+    except Exception:
+        pass
+
+    _TELEMETRY_CONFIGURED = True
+
+
+def _chroma_client_settings():
+    """Settings with anonymized telemetry off when chromadb is available."""
+    try:
+        from chromadb.config import Settings
+
+        return Settings(anonymized_telemetry=False)
+    except Exception:
+        return None
 
 
 def _meta_to_chroma(skill: Skill) -> dict:
@@ -108,9 +177,17 @@ class SkillVectorIndex:
             raise RuntimeError(
                 "chromadb is not installed. Install with: pip install chromadb"
             )
+        configure_chroma_telemetry()
         import chromadb
 
-        self._client = chromadb.PersistentClient(path=str(self.persist_dir))
+        settings = _chroma_client_settings()
+        if settings is not None:
+            self._client = chromadb.PersistentClient(
+                path=str(self.persist_dir),
+                settings=settings,
+            )
+        else:
+            self._client = chromadb.PersistentClient(path=str(self.persist_dir))
         self._collection = self._client.get_or_create_collection(
             name=COLLECTION_NAME,
             metadata={"hnsw:space": "cosine"},
@@ -237,6 +314,7 @@ _INDEX: Optional[SkillVectorIndex] = None
 
 def get_skill_vector_index(persist_dir: Optional[Path] = None) -> SkillVectorIndex:
     global _INDEX
+    configure_chroma_telemetry()
     if persist_dir is not None:
         return SkillVectorIndex(persist_dir=persist_dir)
     if _INDEX is None:

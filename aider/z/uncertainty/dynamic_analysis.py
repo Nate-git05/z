@@ -24,6 +24,32 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 from aider.run_cmd import run_cmd
 
 
+def _env_bool(name: str, default: bool = True) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+    return str(raw).strip().lower() not in ("0", "false", "no", "off")
+
+
+def sanitizer_policy(*, non_interactive: Optional[bool] = None) -> str:
+    """
+    ``soft`` | ``hard`` — hard makes ``tool_missing`` block commits.
+
+    Default: hard when ``non_interactive=True`` (e.g. --yes-always) or when
+    ``Z_SANITIZER_POLICY=hard``; otherwise soft (interactive honesty without teeth).
+    """
+    raw = (os.environ.get("Z_SANITIZER_POLICY") or "").strip().lower()
+    if raw in ("soft", "hard"):
+        return raw
+    if non_interactive is True:
+        return "hard"
+    return "soft"
+
+
+def sanitizer_policy_is_hard(*, non_interactive: Optional[bool] = None) -> bool:
+    return sanitizer_policy(non_interactive=non_interactive) == "hard"
+
+
 # ---------------------------------------------------------------------------
 # Taxonomy rows
 # ---------------------------------------------------------------------------
@@ -603,6 +629,9 @@ class DynamicComparison:
     summary: str = ""
     issue_noun: str = "issue"
     node_type_value: str = "Dynamic Analysis"
+    # sanitizer-teeth: when True, tool_missing hard-blocks commit
+    hard_policy: bool = False
+    attempted_commands: List[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.concurrency_relevant:
@@ -620,11 +649,20 @@ class DynamicComparison:
 
     @property
     def blocks_commit(self) -> bool:
-        return self.outcome in ("no_improvement", "regression")
+        if self.outcome in ("no_improvement", "regression"):
+            return True
+        if self.outcome == "tool_missing":
+            if self.hard_policy or sanitizer_policy() == "hard":
+                return True
+        return False
 
     @property
     def soft_block(self) -> bool:
-        return self.outcome in ("reduced", "tool_missing", "after_only")
+        if self.outcome in ("reduced", "after_only"):
+            return True
+        if self.outcome == "tool_missing" and not self.blocks_commit:
+            return True
+        return False
 
     def to_dict(self) -> dict:
         return {
@@ -650,6 +688,10 @@ class DynamicComparison:
             "before_command": self.before.command if self.before else None,
             "after_command": self.after.command if self.after else None,
             "node_type_value": self.node_type_value,
+            "hard_policy": bool(self.hard_policy),
+            "attempted_commands": list(self.attempted_commands),
+            "blocks_commit": bool(self.blocks_commit),
+            "soft_block": bool(self.soft_block),
         }
 
 
@@ -866,7 +908,10 @@ def nodes_from_comparison(
     elif outcome == "tool_missing":
         title = f"{comparison.category_title} — sanitizer not run"
         summary = comparison.summary
-        risk = Tier.MEDIUM
+        if comparison.blocks_commit:
+            risk = Tier.HIGH
+        else:
+            risk = Tier.MEDIUM
         status = NodeStatus.NEEDS_HUMAN_REVIEW
     elif outcome == "reduced":
         title = f"{comparison.category_title} reduced but not cleared ({before_n}→{after_n})"
@@ -983,9 +1028,12 @@ def analyze_category(
     verbose: bool = False,
     error_print=None,
     skip_before: bool = False,
+    non_interactive: Optional[bool] = None,
+    recipe_text: str = "",
 ) -> DynamicComparison:
     """Full before/after pass for one taxonomy row."""
     tag = tag_category(category, diff, edited)
+    hard = sanitizer_policy_is_hard(non_interactive=non_interactive)
     cmp_ = DynamicComparison(
         category_id=category.category_id,
         category_title=category.title,
@@ -994,6 +1042,7 @@ def analyze_category(
         confidence_label=category.confidence_label,
         issue_noun=category.issue_noun,
         node_type_value=category.node_type_value,
+        hard_policy=hard,
     )
     if not tag.relevant:
         cmp_.outcome = "skipped"
@@ -1002,15 +1051,98 @@ def analyze_category(
 
     tools = discover_tools_for_category(root, category, edited)
     if not tools:
+        # Prefer executing concrete README/SPEC recipes before soft/hard miss
+        attempted: List[str] = []
+        if sanitizer_recipes_enabled_local():
+            try:
+                from .recipe_runner import (
+                    extract_sanitizer_recipes,
+                    gather_recipe_text,
+                    sanitizer_recipes_enabled,
+                    try_run_sanitizer_recipes,
+                )
+
+                if sanitizer_recipes_enabled():
+                    blob = recipe_text or gather_recipe_text(
+                        root, edited=edited, extra_texts=()
+                    )
+                    recipes = extract_sanitizer_recipes(blob)
+                    # Prefer recipes matching this category's sanitizer names
+                    names = tuple(n.lower() for n in category.sanitizer_names)
+                    ranked = sorted(
+                        recipes,
+                        key=lambda c: (
+                            0
+                            if any(n[:4] in c.lower() for n in names)
+                            else 1
+                        ),
+                    )
+                    if ranked:
+                        rr = try_run_sanitizer_recipes(
+                            root,
+                            ranked,
+                            verbose=verbose,
+                            error_print=error_print,
+                        )
+                        attempted = list(rr.attempted)
+                        cmp_.attempted_commands = attempted
+                        if rr.ran_ok and rr.last_command:
+                            # Recipe ran — treat as after-only evidence, not tool_missing
+                            from .dynamic_analysis import SanitizerRunResult  # noqa: F811
+
+                            cmp_.tool_available = True
+                            cmp_.tool = SanitizerTool(
+                                tool_id="recipe",
+                                title="sanitizer recipe",
+                                command=rr.last_command,
+                                language_hint="any",
+                                category_id=category.category_id,
+                            )
+                            cmp_.after = SanitizerRunResult(
+                                ran=True,
+                                command=rr.last_command,
+                                exit_code=rr.last_exit_code or 0,
+                                output_excerpt=rr.last_output,
+                                issue_count=parse_issue_count(
+                                    rr.last_output, category
+                                ),
+                                phase="after",
+                            )
+                            outcome, summary = classify_outcome(
+                                None, cmp_.after, issue_noun=category.issue_noun
+                            )
+                            # after-only path from classify when before is None
+                            cmp_.outcome = (
+                                outcome if outcome != "tool_missing" else "after_only"
+                            )
+                            cmp_.summary = (
+                                f"{summary} (via discovered recipe: {rr.last_command})"
+                            )
+                            return cmp_
+            except Exception:
+                pass
+
         cmp_.tool_available = False
         cmp_.outcome = "tool_missing"
+        cmp_.attempted_commands = attempted
         names = ", ".join(category.sanitizer_names)
         env_hint = category.env_cmd_keys[0] if category.env_cmd_keys else "Z_*_DETECT_CMD"
+        attempt_note = ""
+        if attempted:
+            attempt_note = (
+                " Attempted recipe(s): " + "; ".join(attempted[:3]) + "."
+            )
+        teeth = (
+            " Hard policy: commit blocked until a sanitizer runs or "
+            "Z_SANITIZER_POLICY=soft / Z_FORCE_COMMIT is used."
+            if hard
+            else ""
+        )
         cmp_.summary = (
             f"{category.title}: no sanitizer was discovered "
             f"({names}, Makefile target, script, or {env_hint}). "
             "Dynamic analysis did not run — treat as unverifiable for this "
-            "class of bug."
+            f"class of bug.{attempt_note}{teeth}"
         )
         return cmp_
 
@@ -1050,6 +1182,10 @@ def analyze_category(
     return cmp_
 
 
+def sanitizer_recipes_enabled_local() -> bool:
+    return _env_bool("Z_SANITIZER_RECIPES", True)
+
+
 def analyze_dynamic_risks(
     root: Path,
     *,
@@ -1059,6 +1195,8 @@ def analyze_dynamic_risks(
     error_print=None,
     skip_before: bool = False,
     categories: Optional[Sequence[str]] = None,
+    non_interactive: Optional[bool] = None,
+    recipe_text: str = "",
 ) -> List[DynamicComparison]:
     """
     Run every matching dynamic-risk category (or a filtered subset).
@@ -1083,6 +1221,8 @@ def analyze_dynamic_risks(
                 verbose=verbose,
                 error_print=error_print,
                 skip_before=skip_before,
+                non_interactive=non_interactive,
+                recipe_text=recipe_text,
             )
         )
     return results

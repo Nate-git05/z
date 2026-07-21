@@ -172,6 +172,7 @@ Control-flow and evidence phases:
 | [p2-benchmark.md](./p2-benchmark.md) | Behavior benchmark harness + scoring |
 | [coding-quality.md](./coding-quality.md) | Compact context, explore scout, plan interview, tool-output budget, thin tool-loop, live P2 |
 | [fault-plan-ni-verify-skills-gate.md](./fault-plan-ni-verify-skills-gate.md) | Spec: NI exit contract, cmake/verify honesty, sanitizer teeth, skill near-dup, gate UX |
+| [fault-impl-deep-dive.md](./fault-impl-deep-dive.md) | Repo evidence + extensive implementation plan for F1–F5 (file anchors, flags, tests, PR slices) |
 | [skill-retrieve-impl-plan.md](./skill-retrieve-impl-plan.md) | skill-retrieve: lexical fallback + near-dup capture merge (IMPLEMENTED) |
 
 P0 subsystems:
