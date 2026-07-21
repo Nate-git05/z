@@ -33,7 +33,8 @@ class PhaseSpinnerHelperTests(unittest.TestCase):
             self.assertIs(coder.waiting_spinner, fake)
 
             coder._phase_spinner_update("Planning — exploring `bus` (1/3)…")
-            fake.set_text.assert_called_with("Planning — exploring `bus` (1/3)…")
+            fake.set_text.assert_called()
+            self.assertIn("Ctrl+C", fake.set_text.call_args[0][0])
 
             coder._phase_spinner_stop()
             fake.stop.assert_called()

@@ -54,6 +54,17 @@ Revision rounds reprint the full plan (`plan.interactive_plan_confirm`).
 `run_one` runs skills → explore → checklist → plan before the first model token.  
 Even with phase spinners, completed milestones still print multiple lines.
 
+**Busy vs input (dogfood fix):** Input is *not* concurrent during planning (single-threaded
+loop), but leftover prompt_toolkit chrome + `\r` mascot spinner made it look like you could
+still type. Contract:
+
+1. Spinner label always includes `Ctrl+C to interrupt`.
+2. Spinner stops on KeyboardInterrupt and before every `get_input` / confirm / prompt_ask.
+3. Chat file paths print **above** the prompt (one per line), never inside the PromptSession
+   message — avoids glued paths and duplicate redraws.
+4. True Claude-Code-style “type while agent works” remains a larger follow-up (persistent
+   app + cancel token).
+
 ### 3.4 Mode discoverability
 
 - `/ask` with args ≠ sticky ASK; bare `/ask` only flips edit format  

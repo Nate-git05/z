@@ -47,6 +47,14 @@ _ERROR_RE = re.compile(r"(?i)(\d+)\s+errors?")
 _COLLECTION_ERR_RE = re.compile(
     r"(?i)(error\s+during\s+collection|collection\s+failed|ERROR\s+collecting)"
 )
+# ctest summary: "100% tests passed, 0 tests failed out of 1"
+_CTEST_SUMMARY_RE = re.compile(
+    r"(?i)(\d+)\s*%\s*tests?\s+passed,\s*(\d+)\s+tests?\s+failed\s+out\s+of\s+(\d+)"
+)
+# ctest per-test line: "1/1 Test #1: event_bus_test .... Passed"
+_CTEST_LINE_RESULT_RE = re.compile(
+    r"(?im)^\s*\d+/\d+\s+Test\s+#\d+:\s+\S+.+?\b(Passed|Failed|Not Run|Timeout)\b"
+)
 
 
 class VerifyState(str, enum.Enum):
@@ -378,7 +386,50 @@ def parse_counts(output: str) -> dict:
         total = (result["passed"] or 0) + (result["failed"] or 0) + (result["errors"] or 0)
         result["discovered"] = total
         result["zero"] = total == 0
+
+    # ctest: pytest-style "N passed" never appears; parse CMake/CTest formats.
+    ctest_sum = _CTEST_SUMMARY_RE.search(text)
+    if ctest_sum:
+        failed_n = int(ctest_sum.group(2))
+        total_n = int(ctest_sum.group(3))
+        result["failed"] = failed_n
+        result["passed"] = max(0, total_n - failed_n)
+        result["discovered"] = total_n
+        result["zero"] = total_n == 0
+    else:
+        line_hits = list(_CTEST_LINE_RESULT_RE.finditer(text))
+        if line_hits:
+            passed_n = sum(1 for m in line_hits if m.group(1).lower() == "passed")
+            failed_n = len(line_hits) - passed_n
+            result["passed"] = passed_n
+            result["failed"] = failed_n
+            result["discovered"] = len(line_hits)
+            result["zero"] = len(line_hits) == 0
+
     return result
+
+
+def reconcile_ctest_pass(record: "VerificationRecord") -> None:
+    """
+    After cmake discovery overlay, treat exit-0 ctest with discovered tests as pass.
+
+    ``parse_counts`` may leave passed/failed None when output is truncated; discovery
+    from ``ctest -N`` still proves the suite ran.
+    """
+    if record.exit_code != 0:
+        return
+    if record.zero_tests or (record.tests_discovered or 0) <= 0:
+        return
+    if record.tests_failed not in (None, 0):
+        return
+    record.passed = True
+    if record.tests_passed is None:
+        record.tests_passed = int(record.tests_discovered or 0)
+    if record.tests_failed is None:
+        record.tests_failed = 0
+    if "Could not confirm tests were discovered" in (record.error or ""):
+        record.error = ""
+    record.state = derive_verify_state(record)
 
 
 def parse_discovery_count(output: str) -> Tuple[Optional[int], bool]:
@@ -838,6 +889,7 @@ def verify_edits(
             suite.relevant_output_excerpt = record.relevant_output_excerpt
             if cmake_result is not None:
                 apply_cmake_result_to_record(suite, cmake_result)
+                reconcile_ctest_pass(suite)
             record = suite
             if (
                 not record.passed
@@ -861,6 +913,7 @@ def verify_edits(
         record.relevant_newly_written = list(newly_written)
         if cmake_result is not None:
             apply_cmake_result_to_record(record, cmake_result)
+            reconcile_ctest_pass(record)
 
         if (
             not record.passed
