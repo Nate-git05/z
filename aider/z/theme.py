@@ -1,29 +1,45 @@
 """Z color palette — black / white + burnt-orange accent (high contrast).
 
-No grey and no purple in the terminal UI: dim/muted channels use the orange
-accent so text stays readable on dark backgrounds; code highlighting is a
-custom white+orange pygments style (no monokai purple).
+Semantic tiers (P0 terminal UX):
+  - Status / routine tool output → off-white (readable, not a warning)
+  - Warnings + escalation borders → burnt orange
+  - Spinner / brand progress labels → orange (TEXT_DIM)
+  - No muddy mid-greys, no purple in code highlighting
 """
 
 from __future__ import annotations
 
+import os
+
 # Near-black background (hint for terminals that support it; most CLIs inherit bg)
 BACKGROUND = "#0A0A0A"
 
-# Primary readable text — pure light, never grey
+# Primary readable text — pure light
 TEXT = "#F5F5F5"
-# Former grey channels → terminal orange (visibility)
+# Branded progress (mascot spinner labels) — orange
 TEXT_DIM = "#C96A2B"
-TEXT_MUTED = "#C96A2B"
+# Secondary / panel subtitle — off-white status channel
+TEXT_MUTED = "#D8D8D8"
 
-# Single accent — brand, mascot, selection, uncertainty flags
+# Single accent — brand, warnings, escalation borders, uncertainty flags
 ACCENT = "#C96A2B"
 ACCENT_BRIGHT = "#E07830"  # slightly brighter for high-risk / active states
-ACCENT_DIM = "#C96A2B"  # same as accent — former dark orange read as muddy grey
+ACCENT_DIM = "#C96A2B"
+
+# Status channel — routine tool_output (not a warning)
+STATUS = "#D8D8D8"
+
+
+def _status_color() -> str:
+    raw = (os.environ.get("Z_STATUS_COLOR") or "").strip()
+    if len(raw) == 7 and raw.startswith("#"):
+        return raw.upper()
+    return STATUS
+
 
 # Semantic mapping onto Aider's existing color channels
 USER_INPUT = TEXT
-TOOL_OUTPUT = ACCENT  # was grey TEXT_DIM — unreadable on many dark terminals
+TOOL_OUTPUT = STATUS  # routine status — distinct from warnings
 TOOL_ERROR = TEXT  # stay in palette; no red — use reverse/bold for emphasis
 TOOL_WARNING = ACCENT
 ASSISTANT_OUTPUT = TEXT  # white — never purple/blue
@@ -38,6 +54,7 @@ Z_COLORS = {
     "text": TEXT,
     "text_dim": TEXT_DIM,
     "text_muted": TEXT_MUTED,
+    "status": STATUS,
     "accent": ACCENT,
     "accent_bright": ACCENT_BRIGHT,
     "accent_dim": ACCENT_DIM,
@@ -163,8 +180,9 @@ _register_z_terminal_style()
 def apply_z_palette(args):
     """Apply the Z palette onto an argparse namespace (mutates in place)."""
     _register_z_terminal_style()
+    status = _status_color()
     args.user_input_color = USER_INPUT
-    args.tool_output_color = TOOL_OUTPUT
+    args.tool_output_color = status
     args.tool_error_color = TOOL_ERROR
     args.tool_warning_color = TOOL_WARNING
     args.assistant_output_color = ASSISTANT_OUTPUT

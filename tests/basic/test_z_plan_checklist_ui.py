@@ -172,8 +172,16 @@ class BeginTaskConfirmTest(unittest.TestCase):
         printed = "\n".join(
             str(c.args[0]) for c in io.tool_output.call_args_list if c.args
         )
-        self.assertIn("Proposed approach", printed)
+        # P0: no checklist wall in scrollback — confirm panel carries the approach
+        self.assertNotIn("Proposed approach", printed)
         self.assertTrue(io.plan_confirm_ask.called)
+        # Subject passed to confirm should include steps
+        kwargs = io.plan_confirm_ask.call_args.kwargs
+        subject = kwargs.get("subject") or ""
+        self.assertTrue(
+            "Steps:" in subject or "Tracking:" in subject or len(subject) > 20,
+            subject,
+        )
         self.assertTrue(engine.ctx.checklist.confirmed_by_user)
 
 

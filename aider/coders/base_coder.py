@@ -1182,6 +1182,9 @@ class Coder:
 
             # Skills + overlapped explore, with continuous mascot/eyes updates.
             # Explore forks off the critical path while checklist/plan draft (T3).
+            from aider.z.ux_preamble import TurnPreamble, ux_verbose
+
+            self._turn_preamble = TurnPreamble(verbose=ux_verbose(coder=self))
             try:
                 self._phase_spinner_start("Planning — matching skills…")
                 self._maybe_pull_skills(user_text, checkpoint="turn")
@@ -1234,6 +1237,12 @@ class Coder:
 
             # Join explore before the model turn so findings still land in context
             self._finish_explore_pass(explore_fut)
+            try:
+                pre = getattr(self, "_turn_preamble", None)
+                if pre is not None:
+                    pre.flush(self.io)
+            except Exception:
+                pass
 
         while message:
             self.reflected_message = None
@@ -1581,16 +1590,30 @@ class Coder:
                 + "]"
                 for s in (skills or [])
             ) or "capability coverage (skills + native abilities)"
-            self.io.tool_output(f"{label}: {names}")
-            if getattr(self, "verbose", False):
-                self.io.tool_output(f"  why: {why}")
+
+            from aider.z.ux_preamble import ux_verbose
+
+            quiet = not ux_verbose(coder=self)
+            pre = getattr(self, "_turn_preamble", None)
+            if pre is not None:
+                pre.note_skills(
+                    [s.title for s in (skills or []) if getattr(s, "title", None)],
+                    capability_only=not bool(skills),
+                )
+                if cap_plan.coverage_gaps:
+                    pre.note_gaps(len(cap_plan.coverage_gaps))
+
+            if not quiet:
+                self.io.tool_output(f"{label}: {names}")
+                if getattr(self, "verbose", False):
+                    self.io.tool_output(f"  why: {why}")
             if cap_plan.coverage_gaps:
                 self.io.tool_warning(
                     f"Capability gaps ({len(cap_plan.coverage_gaps)}): "
                     "compensate with workflow — no skill ≠ skip verification."
                 )
                 # Gaps are informational — never a turn abort.
-                if not skills:
+                if not skills and not quiet:
                     self.io.tool_output(
                         "No matching skill — continuing with native plan / "
                         "verify workflow (not stopped)."
@@ -1630,7 +1653,10 @@ class Coder:
             # Quick eligibility checks on the main thread (cheap)
             if not self._explore_pass_eligible(user_message):
                 return None
-            self.io.tool_output("Exploring related files (background)…")
+            from aider.z.ux_preamble import ux_verbose
+
+            if ux_verbose(coder=self):
+                self.io.tool_output("Exploring related files (background)…")
             return submit_background(self._compute_explore_block, user_message)
         except Exception:
             self._maybe_explore_pass(user_message)
@@ -1703,14 +1729,32 @@ class Coder:
         if not block:
             return
         deep = "Explore scout" in block or "deep)" in block[:80]
+        n_files = 0
         try:
-            self.io.tool_output(
-                "Explore scout: candidate files + signatures (read-only)."
-                if deep
-                else "Explore pass: candidate files found (read-only)."
+            n_files = sum(
+                1
+                for line in block.splitlines()
+                if line.startswith("### `") or line.startswith("- `")
             )
         except Exception:
+            n_files = 0
+        try:
+            pre = getattr(self, "_turn_preamble", None)
+            if pre is not None:
+                pre.note_explore(n_files or 1)
+        except Exception:
             pass
+        from aider.z.ux_preamble import ux_verbose
+
+        if ux_verbose(coder=self):
+            try:
+                self.io.tool_output(
+                    "Explore scout: candidate files + signatures (read-only)."
+                    if deep
+                    else "Explore pass: candidate files found (read-only)."
+                )
+            except Exception:
+                pass
         self.cur_messages += [
             {"role": "user", "content": block},
             {
@@ -2106,26 +2150,33 @@ class Coder:
                 return
 
             self._phase_spinner_stop()
-            rendered = format_checklist_for_user(
-                checklist, plan=plan, thin=was_thin
-            )
-            self.io.tool_output("")
-            self.io.tool_output(rendered)
-            self.io.tool_output("")
-
-            # Thin / greenfield previews: Y/N/C confirm (Change revises specs).
+            # Thin / greenfield: compact panel only (no checklist wall).
+            # Verbose / Z_UX_FULL_PLAN_FIRST restores the scrollback dump.
             if was_thin and plan is not None:
                 from aider.z.uncertainty.plan import (
                     format_plan_for_context,
+                    format_plan_for_user,
+                    format_thin_confirm,
                     interactive_plan_confirm,
                 )
                 from aider.z.uncertainty.schema import RequirementItem
+                from aider.z.ux_preamble import ux_full_plan_first, ux_verbose
+
+                if ux_verbose(coder=self) or ux_full_plan_first():
+                    rendered = format_checklist_for_user(
+                        checklist, plan=plan, thin=was_thin
+                    )
+                    self.io.tool_output("")
+                    self.io.tool_output(rendered)
+                    self.io.tool_output("")
 
                 approved, plan = interactive_plan_confirm(
                     self.io,
                     plan,
                     question="Proceed with this approach?",
                     original_request=user_message,
+                    checklist=checklist,
+                    confirm_subject=format_thin_confirm(plan, checklist),
                 )
                 if not approved:
                     self.io.tool_warning(
@@ -2165,8 +2216,24 @@ class Coder:
                     "Approach noted — proceeding. Say what to change anytime "
                     "before edits if the specs are still wrong."
                 )
+                try:
+                    pre = getattr(self, "_turn_preamble", None)
+                    if pre is not None:
+                        pre.note_plan(gated=True, approved=True)
+                except Exception:
+                    pass
             elif checklist.items:
                 # Structured checklist already meaningful — mark seen
+                # Quiet mode: skip dumping the checklist wall into scrollback.
+                from aider.z.ux_preamble import ux_verbose
+
+                if ux_verbose(coder=self):
+                    rendered = format_checklist_for_user(
+                        checklist, plan=plan, thin=was_thin
+                    )
+                    self.io.tool_output("")
+                    self.io.tool_output(rendered)
+                    self.io.tool_output("")
                 checklist.confirmed_by_user = True
         except Exception:
             pass
@@ -2556,17 +2623,27 @@ class Coder:
             if plan is None:
                 return True
 
-            # Full plan in the scrollback for review
+            # Compact-first confirm (full plan via View / verbose / escape hatch)
             self._phase_spinner_stop()
-            rendered = format_plan_for_user(plan)
-            self.io.tool_output("")
-            self.io.tool_output(rendered)
-            self.io.tool_output("")
+            from aider.z.ux_preamble import ux_full_plan_first, ux_verbose
 
-            # Interactive: Yes / No / Change. Change revises specs from chat.
+            if ux_verbose(coder=self) or ux_full_plan_first():
+                rendered = format_plan_for_user(plan)
+                self.io.tool_output("")
+                self.io.tool_output(rendered)
+                self.io.tool_output("")
+
+            # Interactive: Yes / No / Change / View.
             approved = True
             if getattr(self.io, "yes", None) is not True:
                 from aider.z.uncertainty.plan import interactive_plan_confirm
+
+                try:
+                    pre = getattr(self, "_turn_preamble", None)
+                    if pre is not None:
+                        pre.note_plan(gated=True)
+                except Exception:
+                    pass
 
                 approved, plan = interactive_plan_confirm(
                     self.io,
@@ -2611,6 +2688,12 @@ class Coder:
                 },
             ]
             self.io.tool_output("Plan approved — proceeding with implementation.")
+            try:
+                pre = getattr(self, "_turn_preamble", None)
+                if pre is not None:
+                    pre.note_plan(gated=True, approved=True)
+            except Exception:
+                pass
             return True
         except Exception as err:
             # P1.3 — planning failures are not silently "success"

@@ -7,7 +7,7 @@ from rich.panel import Panel
 from rich.style import Style
 from rich.text import Text
 
-from .theme import ACCENT, ACCENT_BRIGHT, TEXT, TEXT_DIM, TEXT_MUTED
+from .theme import ACCENT, ACCENT_BRIGHT, TEXT, TEXT_MUTED
 
 
 def render_escalation(
@@ -22,7 +22,7 @@ def render_escalation(
     Render an escalation prompt as an orange-bordered box.
 
     Distinct from normal tool output so the user immediately sees that
-    attention is required.
+    attention is required. Plan/context body uses off-white, not warning orange.
     """
     console = console or Console()
 
@@ -46,7 +46,8 @@ def render_escalation(
     body.append(question.strip() + "\n", style=Style(color=TEXT))
     if context:
         body.append("\n", style=Style(color=TEXT))
-        body.append(context.strip() + "\n", style=Style(color=TEXT_DIM))
+        # Status/off-white — not accent (so the plan body is not a wall of orange)
+        body.append(context.strip() + "\n", style=Style(color=TEXT_MUTED))
     if options:
         body.append("\n", style=Style(color=TEXT))
         for opt in options:
