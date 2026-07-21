@@ -73,7 +73,8 @@ _TRIGGER = re.compile(
     r"(?i)\b("
     r"multiplayer|multi-?user|lobby|game|match|realtime|websocket|"
     r"shared\s+state|session|collaborat|api|backend|server|auth|"
-    r"database|persist|concurren|race"
+    r"database|persist|concurren|race|"
+    r"slack|discord|chatbot|chat\s*bot|\bbot\b"
     r")\b"
 )
 

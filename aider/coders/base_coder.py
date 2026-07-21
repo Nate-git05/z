@@ -1944,16 +1944,82 @@ class Coder:
         if engine.ctx.checklist and len(user_message) < 40:
             return
         try:
-            from aider.z.uncertainty.checklist import format_checklist_for_user
+            from aider.z.uncertainty.checklist import (
+                enrich_thin_checklist,
+                format_checklist_for_user,
+            )
 
             checklist = engine.begin_task(user_message)
             # New task → allow one drift confirm again
             self._drift_asked_this_task = False
             self._drift_reflection_log = []
-            if checklist.items:
-                self.io.tool_output("")
-                self.io.tool_output(format_checklist_for_user(checklist))
-                self.io.tool_output("")
+            checklist, plan, was_thin = enrich_thin_checklist(checklist, user_message)
+            engine.ctx.checklist = checklist
+            if not checklist.items and not plan:
+                return
+
+            rendered = format_checklist_for_user(
+                checklist, plan=plan, thin=was_thin
+            )
+            self.io.tool_output("")
+            self.io.tool_output(rendered)
+            self.io.tool_output("")
+
+            # Thin / greenfield previews: Y/N/C confirm (Change revises specs).
+            if was_thin and plan is not None:
+                from aider.z.uncertainty.plan import (
+                    format_plan_for_context,
+                    interactive_plan_confirm,
+                )
+                from aider.z.uncertainty.schema import RequirementItem
+
+                approved, plan = interactive_plan_confirm(
+                    self.io,
+                    plan,
+                    question="Proceed with this approach?",
+                    original_request=user_message,
+                )
+                if not approved:
+                    self.io.tool_warning(
+                        "Approach rejected — reply in chat with corrections "
+                        "(stack, Socket Mode vs webhook, commands, …)."
+                    )
+                    checklist.confirmed_by_user = False
+                    return
+                # Sync tracking checklist to the (possibly revised) plan
+                if plan and plan.steps:
+                    checklist.items = [
+                        RequirementItem(text=s, kind="product")
+                        for s in plan.steps[:7]
+                        if s and not str(s).lower().startswith("do:")
+                    ]
+                checklist.confirmed_by_user = True
+                try:
+                    engine.ctx.plan = plan
+                except Exception:
+                    pass
+                try:
+                    block = format_plan_for_context(plan)
+                    self.cur_messages += [
+                        {"role": "user", "content": block},
+                        {
+                            "role": "assistant",
+                            "content": (
+                                "I'll follow that approach and the tracking "
+                                "checklist. Tell me if you want further changes "
+                                "before I edit."
+                            ),
+                        },
+                    ]
+                except Exception:
+                    pass
+                self.io.tool_output(
+                    "Approach noted — proceeding. Say what to change anytime "
+                    "before edits if the specs are still wrong."
+                )
+            elif checklist.items:
+                # Structured checklist already meaningful — mark seen
+                checklist.confirmed_by_user = True
         except Exception:
             pass
 
@@ -2296,7 +2362,6 @@ class Coder:
         try:
             from aider.z.uncertainty.detectors import count_symbol_references
             from aider.z.uncertainty.plan import (
-                format_plan_for_confirm,
                 format_plan_for_context,
                 format_plan_for_user,
             )
@@ -2346,28 +2411,41 @@ class Coder:
             self.io.tool_output(rendered)
             self.io.tool_output("")
 
-            # Interactive: ask. Escalation panel must show approach+steps,
-            # NEVER the truncated raw user request as the "plan".
+            # Interactive: Yes / No / Change. Change revises specs from chat.
             approved = True
             if getattr(self.io, "yes", None) is not True:
-                approved = bool(
-                    self.io.confirm_ask(
-                        "Proceed with this implementation plan?",
-                        default="y",
-                        subject=format_plan_for_confirm(plan),
-                    )
+                from aider.z.uncertainty.plan import interactive_plan_confirm
+
+                approved, plan = interactive_plan_confirm(
+                    self.io,
+                    plan,
+                    question="Proceed with this implementation plan?",
+                    original_request=user_message,
                 )
             if not approved:
                 self.io.tool_warning(
-                    "Plan rejected — no edits will be written for this request."
+                    "Plan rejected — no edits will be written for this request. "
+                    "Reply with the specs you want changed, then ask again."
                 )
                 engine.record_user_decision(f"rejected plan: {plan.title}")
                 engine.ctx.plan_approved = False
                 engine.ctx.plan_required = True
+                engine.ctx.plan = plan
                 return False
 
             engine.approve_plan(plan)
             block = format_plan_for_context(plan)
+            revisions = [
+                a.resolution
+                for a in (plan.ambiguities or [])
+                if (a.ambiguity or "").lower().startswith("user revised")
+            ]
+            revision_note = ""
+            if revisions:
+                revision_note = (
+                    " Incorporating your plan revisions: "
+                    + "; ".join(revisions[-3:])
+                )
             self.cur_messages += [
                 {"role": "user", "content": block},
                 {
@@ -2376,6 +2454,7 @@ class Coder:
                         "I'll treat that plan as binding: validation contracts, "
                         "input domains, invariants, and ambiguity resolutions "
                         "before writing any diff."
+                        + revision_note
                     ),
                 },
             ]

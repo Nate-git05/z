@@ -278,6 +278,12 @@ def _clean_plan_title(planning_text: str, fallback: str = "Implementation plan")
         return "Multiplayer feature — implementation plan"
     if re.search(r"(?i)\b(web\s*app|next\.?js|react)\b", lower):
         return "Web app — implementation plan"
+    if re.search(
+        r"(?i)\b(slack|discord|teams)\b.*\b(bot|chatbot|app)\b|"
+        r"\b(chat\s*bot|chatbot|slack\s*bot|discord\s*bot)\b",
+        lower,
+    ):
+        return "Chatbot — implementation plan"
     if re.search(r"(?i)\b(api|endpoint|backend)\b", lower) and re.search(
         r"(?i)\b(add|create|implement|build|change)\b", lower
     ):
@@ -383,6 +389,33 @@ def _draft_approach_and_steps(
             "Wire auth/authorization if the surface is protected.",
             "Add integration tests for success and error paths.",
         ]
+    elif re.search(
+        r"(?i)\b(slack|discord|teams)\b.*\b(bot|chatbot|app)\b|"
+        r"\b(chat\s*bot|chatbot|slack\s*bot|discord\s*bot)\b|"
+        r"\bbot\b.*\b(slack|discord|teams)\b",
+        lower,
+    ) and not _prohibited("bot"):
+        approach = (
+            "Build a small workspace chatbot with config, authenticated "
+            "event handling, one real reply path, and a local smoke run — "
+            "not a vague “bot somewhere.”"
+        )
+        steps = [
+            "Scaffold project layout (entrypoint, config for tokens/secrets, README how to run).",
+            "Wire Slack/Discord client (Socket Mode or HTTP Events webhook).",
+            "Handle a core event (app_mention / message) with a deterministic reply.",
+            "Add routing for 1–2 useful commands beyond echo.",
+            "Validate requests (signing secret) and fail closed on bad auth.",
+            "Add unit tests for handlers; document test-workspace setup.",
+            "Smoke: start the bot and verify one end-to-end reply.",
+        ]
+        out_of_scope.extend(
+            [
+                "Marketplace / App Directory publish (unless you ask).",
+                "Multi-workspace SaaS billing or admin UI (unless you ask).",
+                "Heavy LLM agent features beyond a simple reply (unless you ask).",
+            ]
+        )
     elif re.search(r"(?i)\b(fix|bug|broken|error|failing)\b", lower):
         approach = (
             "Diagnose from the reported symptom, find the earliest unsupported "
@@ -396,9 +429,24 @@ def _draft_approach_and_steps(
             "Apply minimal fix; re-run the original verification.",
         ]
     else:
-        # Prefer echoing concrete requested actions as steps when present
+        # Prefer concrete requested actions as steps when they are specific.
+        # Never fall through to "Do: <entire vague request>" — that is what
+        # made the plan/checklist UI look like an echo of the user prompt.
         actions = list(getattr(intent, "requested_actions", None) or [])
-        if actions:
+        vague_build = bool(
+            actions
+            and len(actions) == 1
+            and len(actions[0]) < 90
+            and re.search(
+                r"(?i)\b(build|create|make|implement|write|scaffold)\b",
+                actions[0],
+            )
+            and not re.search(
+                r"(?i)\b(test|fix|bug|endpoint|route|function|class|file)\b",
+                actions[0],
+            )
+        )
+        if actions and not vague_build:
             approach = (
                 "Implement the requested actions incrementally with tests, "
                 "respecting explicit exclusions."
@@ -412,11 +460,11 @@ def _draft_approach_and_steps(
                 "claiming completion."
             )
             steps = [
-                "Clarify deliverables from the request (what “done” looks like).",
-                "Sketch module boundaries / files to touch.",
-                "Implement core behavior first; keep side features for later.",
-                "Add focused tests for the main paths and error cases.",
-                "Run project checks (typecheck/tests) and a manual smoke of the main path.",
+                "Name what “done” looks like (user-visible path + how to run it).",
+                "Scaffold project layout / entrypoint and config.",
+                "Implement the core happy path first; defer extras.",
+                "Add focused tests for the main path and one failure case.",
+                "Run project checks and a manual smoke of the primary path.",
             ]
 
     # Fold checklist product items — but never prohibited topics
@@ -978,3 +1026,209 @@ def plan_invariant_texts(plan: Optional[PlanningArtifact]) -> List[str]:
     if not plan or plan.skipped or not plan.approved:
         return []
     return [i for i in plan.invariants if i and i.strip()]
+
+
+def _apply_feedback_patches(plan: PlanningArtifact, feedback: str) -> None:
+    """Keyword patches on top of a re-drafted plan (mutates ``plan``)."""
+    low = (feedback or "").lower()
+    if not low.strip():
+        return
+
+    def _upsert_step(text: str, *, near: str = "") -> None:
+        key = text.lower()
+        if any(key[:40] in (s or "").lower() for s in plan.steps):
+            return
+        if near:
+            for i, s in enumerate(plan.steps):
+                if near in (s or "").lower():
+                    plan.steps[i] = text
+                    return
+        plan.steps.insert(min(2, len(plan.steps)), text)
+
+    def _drop_steps_matching(*needles: str) -> None:
+        plan.steps = [
+            s
+            for s in plan.steps
+            if not any(n in (s or "").lower() for n in needles)
+        ]
+
+    def _ensure_oos(text: str) -> None:
+        if any(text.lower() in (o or "").lower() for o in plan.out_of_scope):
+            return
+        plan.out_of_scope.append(text)
+
+    if re.search(r"(?i)\bsocket\s*mode\b", low):
+        _upsert_step(
+            "Use Slack Socket Mode (no public HTTP webhook required).",
+            near="socket",
+        )
+        plan.approach = re.sub(
+            r"(?i)socket mode or http events webhook",
+            "Socket Mode",
+            plan.approach or "",
+        ) or plan.approach
+    if re.search(r"(?i)\b(webhook|events\s*api|http\s*endpoint)\b", low) and not re.search(
+        r"(?i)\bsocket\s*mode\b", low
+    ):
+        _upsert_step(
+            "Expose an HTTP Events API webhook with signing-secret verification.",
+            near="webhook",
+        )
+    if re.search(r"(?i)\b(python|typescript|node\.?js|go)\b", low):
+        m = re.search(r"(?i)\b(python|typescript|node\.?js|go)\b", low)
+        lang = (m.group(1) if m else "Python").replace("node.js", "Node.js")
+        _upsert_step(f"Implement in {lang} (per user revision).")
+        plan.approach = (
+            f"{(plan.approach or '').rstrip()} Prefer {lang}."
+        ).strip()
+    if re.search(r"(?i)\b(no\s+llm|without\s+llm|dont\s+use\s+llm|don't\s+use\s+llm)\b", low):
+        _ensure_oos("LLM / generative replies (user forbade).")
+        _drop_steps_matching("llm")
+    if re.search(r"(?i)\b(slash\s*command|/\w+)\b", low):
+        _upsert_step("Register and handle slash command(s) named by the user.")
+    if re.search(r"(?i)\b(no\s+tests?|skip\s+tests?|without\s+tests?)\b", low):
+        _drop_steps_matching("unit test", "add unit", "add focused test")
+        _ensure_oos("Automated tests deferred per user revision (verify manually).")
+    if re.search(r"(?i)\b(bolt|block\s*kit)\b", low):
+        _upsert_step("Use Bolt/Block Kit for interactive messages where useful.")
+
+
+def revise_plan_with_feedback(
+    plan: PlanningArtifact,
+    feedback: str,
+    *,
+    original_request: str = "",
+) -> PlanningArtifact:
+    """
+    Revise an implementation plan from natural-language user feedback.
+
+    Re-drafts from ``original_request + revisions``, then applies keyword
+    patches and records the feedback as an ambiguity resolution.
+    """
+    feedback = (feedback or "").strip()
+    if not feedback or plan is None:
+        return plan
+
+    combined = (original_request or plan.title or "").strip()
+    if combined:
+        combined = f"{combined}\n\nUser plan revisions:\n{feedback}"
+    else:
+        combined = f"User plan revisions:\n{feedback}"
+
+    revised = draft_plan_from_request(
+        combined,
+        title=plan.title or "",
+        reason=(plan.reason or "") + ";user_revise",
+    )
+    revised.task_id = plan.task_id or revised.task_id
+    # Carry forward prior resolutions + this feedback
+    revised.ambiguities = list(plan.ambiguities or []) + [
+        AmbiguityResolution(
+            ambiguity="User revised the implementation plan",
+            resolution=feedback,
+        )
+    ]
+    # Keep established solutions / architecture if re-draft dropped them
+    if plan.established_solutions and not revised.established_solutions:
+        revised.established_solutions = list(plan.established_solutions)
+    if plan.architecture and not revised.architecture:
+        revised.architecture = plan.architecture
+    if plan.capability_plan and not revised.capability_plan:
+        revised.capability_plan = plan.capability_plan
+    if plan.validation_contracts and not revised.validation_contracts:
+        revised.validation_contracts = list(plan.validation_contracts)
+    if plan.invariants and not revised.invariants:
+        revised.invariants = list(plan.invariants)
+
+    _apply_feedback_patches(revised, feedback)
+    revised.approved = False
+    return revised
+
+
+def interactive_plan_confirm(
+    io,
+    plan: PlanningArtifact,
+    *,
+    question: str = "Proceed with this implementation plan?",
+    original_request: str = "",
+    max_rounds: int = 4,
+) -> tuple:
+    """
+    Y/N/C confirm loop for an implementation plan.
+
+    Returns ``(approved: bool, plan)``. On Change, collects free-text
+    revisions (or uses typed free-text from the confirm prompt), revises
+    the plan, and re-asks.
+    """
+    if plan is None:
+        return False, plan
+
+    # Non-interactive / yes-always: approve as-is
+    if getattr(io, "yes", None) is True:
+        return True, plan
+    if getattr(io, "yes", None) is False:
+        return False, plan
+
+    current = plan
+    ask = getattr(io, "plan_confirm_ask", None)
+    for _round in range(max(1, max_rounds)):
+        subject = format_plan_for_confirm(current)
+        if ask:
+            choice = ask(question, subject=subject, default="y")
+        else:
+            # Fallback for test doubles without plan_confirm_ask
+            ok = bool(io.confirm_ask(question, default="y", subject=subject))
+            choice = "yes" if ok else "no"
+
+        if choice == "yes":
+            return True, current
+        if choice == "no":
+            return False, current
+
+        # change
+        pending = getattr(io, "_pending_plan_change", None)
+        if pending:
+            feedback = str(pending).strip()
+            try:
+                io._pending_plan_change = None
+            except Exception:
+                pass
+        else:
+            feedback = ""
+            prompt_ask = getattr(io, "prompt_ask", None)
+            if prompt_ask:
+                io.tool_output(
+                    "Tell Z what to change (stack, Socket Mode vs webhook, "
+                    "commands, out-of-scope, language, …)."
+                )
+                feedback = (prompt_ask("Plan changes:") or "").strip()
+        if not feedback:
+            io.tool_warning("No changes given — keeping the current plan.")
+            continue
+        try:
+            io.tool_output(f"Revising plan from: {feedback[:200]}")
+        except Exception:
+            pass
+        current = revise_plan_with_feedback(
+            current,
+            feedback,
+            original_request=original_request,
+        )
+        try:
+            io.tool_output("")
+            io.tool_output(format_plan_for_user(current))
+            io.tool_output("")
+        except Exception:
+            pass
+    # Exhausted rounds — last chance yes/no only
+    io.tool_warning(
+        "Change limit reached — Yes to proceed with the latest plan, No to abort."
+    )
+    ok = bool(
+        io.confirm_ask(
+            question,
+            default="y",
+            subject=format_plan_for_confirm(current),
+        )
+    )
+    return ok, current
