@@ -315,14 +315,30 @@ class RememberedModeTest(unittest.TestCase):
         router_model.assert_not_called()
 
     def test_byok_missing_keys_reprompts_setup(self):
-        io = FakeIO()
+        io = FakeIO(answers=["sk-ant-test"])
         with patch("aider.z.auth.current_session", return_value=_creds()), patch(
             "aider.z.onboarding.load_config",
             return_value=OnboardingConfig(
                 auth_mode="byok", selected_model="claude-sonnet-5"
             ),
         ), patch(
-            "aider.z.cli._model_missing_keys", return_value=["ANTHROPIC_API_KEY"]
+            "aider.z.cli._model_missing_keys",
+            side_effect=[["ANTHROPIC_API_KEY"], []],
+        ), patch(
+            "aider.z.onboarding.save_byok_key"
+        ) as save_key, patch(
+            "aider.z.auth.prompt_byok_setup"
+        ) as byok:
+            ok = ensure_agent_session(io)
+        self.assertTrue(ok)
+        byok.assert_not_called()
+        save_key.assert_called_once_with("ANTHROPIC_API_KEY", "sk-ant-test")
+
+    def test_byok_missing_keys_without_saved_model_opens_catalog(self):
+        io = FakeIO()
+        with patch("aider.z.auth.current_session", return_value=_creds()), patch(
+            "aider.z.onboarding.load_config",
+            return_value=OnboardingConfig(auth_mode="byok", selected_model=None),
         ), patch(
             "aider.z.auth.prompt_byok_setup", return_value=True
         ) as byok:
