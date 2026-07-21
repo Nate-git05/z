@@ -1180,8 +1180,8 @@ class Coder:
                 eng0.ctx.task_intent = intent
                 eng0.ctx.task_mode = mode.value if hasattr(mode, "value") else str(mode)
 
-            # Skills → explore → checklist → plan, with continuous mascot/eyes
-            # status updates (same animation as model waits).
+            # Skills + overlapped explore, with continuous mascot/eyes updates.
+            # Explore forks off the critical path while checklist/plan draft (T3).
             try:
                 self._phase_spinner_start("Planning — matching skills…")
                 self._maybe_pull_skills(user_text, checkpoint="turn")
@@ -1196,7 +1196,7 @@ class Coder:
                             )
                     except Exception:
                         pass
-                self._maybe_explore_pass(user_text)
+                explore_fut = self._start_explore_pass_async(user_text)
 
                 # House instructions (AGENTS.md) — once per session
                 self._maybe_inject_house_instructions()
@@ -1220,6 +1220,7 @@ class Coder:
                         "Planning — drafting implementation plan…"
                     )
                     if not self._maybe_require_implementation_plan(user_text):
+                        self._cancel_explore_pass(explore_fut)
                         return
                 else:
                     # Ensure no stale plan from a prior turn leaks into this message
@@ -1230,6 +1231,9 @@ class Coder:
                         eng.ctx.plan_approved = True
             finally:
                 self._phase_spinner_stop()
+
+            # Join explore before the model turn so findings still land in context
+            self._finish_explore_pass(explore_fut)
 
         while message:
             self.reflected_message = None
@@ -1607,56 +1611,116 @@ class Coder:
                 self.io.tool_warning(f"Skill/capability pull skipped: {err}")
 
     def _maybe_explore_pass(self, user_message: str) -> None:
-        """Inject compact read-only findings when the chat is thin."""
-        if not user_message or len(user_message.strip()) < 8:
+        """Inject compact read-only findings when the chat is thin (sync)."""
+        block = self._compute_explore_block(user_message)
+        self._inject_explore_block(block)
+
+    def _start_explore_pass_async(self, user_message: str):
+        """
+        Start explore in the background so checklist/plan can run in parallel.
+
+        Returns a Future[str|None] or None when overlap is disabled / skipped.
+        """
+        try:
+            from aider.z.latency import latency_overlap_enabled, submit_background
+
+            if not latency_overlap_enabled():
+                self._maybe_explore_pass(user_message)
+                return None
+            # Quick eligibility checks on the main thread (cheap)
+            if not self._explore_pass_eligible(user_message):
+                return None
+            self.io.tool_output("Exploring related files (background)…")
+            return submit_background(self._compute_explore_block, user_message)
+        except Exception:
+            self._maybe_explore_pass(user_message)
+            return None
+
+    def _finish_explore_pass(self, fut) -> None:
+        """Join background explore and inject findings before the model turn."""
+        if fut is None:
             return
         try:
-            from aider.z.explore import explore_pass_enabled, run_explore_pass
+            from aider.z.latency import join_future
+
+            block = join_future(fut, timeout=12.0)
+            self._inject_explore_block(block)
+        except Exception:
+            pass
+
+    def _cancel_explore_pass(self, fut) -> None:
+        if fut is None:
+            return
+        try:
+            fut.cancel()
+        except Exception:
+            pass
+
+    def _explore_pass_eligible(self, user_message: str) -> bool:
+        if not user_message or len(user_message.strip()) < 8:
+            return False
+        try:
+            from aider.z.explore import explore_pass_enabled
             from aider.z.task_mode import TaskMode
 
             if not explore_pass_enabled():
-                return
+                return False
             mode = getattr(self, "task_mode", None)
             if mode is not None and not getattr(mode, "allows_explore_pass", False):
-                return
+                return False
             if mode is TaskMode.ASK:
-                return
-            n_chat = len(getattr(self, "abs_fnames", None) or [])
-            if n_chat >= 3:
-                return
+                return False
+            if len(getattr(self, "abs_fnames", None) or []) >= 3:
+                return False
+            return True
+        except Exception:
+            return False
+
+    def _compute_explore_block(self, user_message: str) -> str:
+        """Pure compute for explore — safe to run on a worker thread."""
+        if not self._explore_pass_eligible(user_message):
+            return ""
+        try:
+            from aider.z.explore import run_explore_pass
+
             already = []
             try:
                 already = list(self.get_inchat_relative_files() or [])
             except Exception:
                 already = []
-            block = run_explore_pass(
-                user_message,
-                root=getattr(self, "root", None) or ".",
-                already_in_chat=already,
-                on_progress=self._phase_spinner_update,
+            return (
+                run_explore_pass(
+                    user_message,
+                    root=getattr(self, "root", None) or ".",
+                    already_in_chat=already,
+                )
+                or ""
             )
-            if not block:
-                return
-            self._phase_spinner_stop()
-            deep = "Explore scout" in block or "deep)" in block[:80]
+        except Exception:
+            return ""
+
+    def _inject_explore_block(self, block: str) -> None:
+        if not block:
+            return
+        deep = "Explore scout" in block or "deep)" in block[:80]
+        try:
             self.io.tool_output(
                 "Explore scout: candidate files + signatures (read-only)."
                 if deep
                 else "Explore pass: candidate files found (read-only)."
             )
-            self.cur_messages += [
-                {"role": "user", "content": block},
-                {
-                    "role": "assistant",
-                    "content": (
-                        "I'll use those explore findings as investigation targets "
-                        "and ask to /add files before editing them."
-                    ),
-                },
-            ]
-        except Exception as err:
-            if getattr(self, "verbose", False):
-                self.io.tool_warning(f"Explore pass skipped: {err}")
+        except Exception:
+            pass
+        self.cur_messages += [
+            {"role": "user", "content": block},
+            {
+                "role": "assistant",
+                "content": (
+                    "I'll use those explore findings as investigation targets "
+                    "and ask to /add files before editing them."
+                ),
+            },
+        ]
 
     def _maybe_inject_house_instructions(self) -> None:
         if getattr(self, "_house_instructions_injected", False):

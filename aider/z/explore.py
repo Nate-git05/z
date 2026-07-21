@@ -292,7 +292,7 @@ def _rank_candidates(
     in_chat = {str(x).replace("\\", "/") for x in (already_in_chat or [])}
     file_hits: Dict[str, List[str]] = {}
     use_rg = _rg_available()
-    # Whole-pass budget — prevents silent multi-minute stalls after skill lines.
+    # Whole-pass budget — explore must not dominate turn latency.
     pass_deadline = time.monotonic() + 12.0
     total = len(keywords)
 
