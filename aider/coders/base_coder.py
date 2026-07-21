@@ -815,22 +815,26 @@ class Coder:
         self._stop_waiting_spinner()
         if not text:
             return
+        from aider.z.ux_preamble import public_busy_label
+
+        # Quiet default: one "Working…" line; verbose keeps phase detail.
+        public = public_busy_label(text, coder=self)
         orch = None
         try:
             orch = self.io.ensure_turn_ux()
-            orch.enter_busy(text)
+            orch.enter_busy(public)
         except Exception:
             orch = getattr(self.io, "turn_orchestrator", None)
-        label = text
+        label = public
         if orch is not None:
             try:
-                orch.set_phase(text)
-                label = orch.status_label(text)
+                orch.set_phase(public)
+                label = orch.status_label(public)
             except Exception:
                 if "Ctrl+C" not in label:
-                    label = f"{text}  · Ctrl+C to interrupt"
+                    label = f"{public}  · Ctrl+C to interrupt"
         elif "Ctrl+C" not in label:
-            label = f"{text}  · Ctrl+C to interrupt"
+            label = f"{public}  · Ctrl+C to interrupt"
         try:
             if not self.show_pretty():
                 # Non-pretty / dumb terminals: still print a static breadcrumb
@@ -870,17 +874,20 @@ class Coder:
         """Update spinner status text without stopping the eyes animation."""
         if not text:
             return
+        from aider.z.ux_preamble import public_busy_label
+
+        public = public_busy_label(text, coder=self)
         orch = getattr(self.io, "turn_orchestrator", None)
         if orch is not None:
             try:
-                orch.set_phase(text)
-                label = orch.status_label(text)
+                orch.set_phase(public)
+                label = orch.status_label(public)
             except Exception:
-                label = text
+                label = public
         else:
-            label = text
+            label = public
             if "Ctrl+C" not in label:
-                label = f"{text}  · Ctrl+C to interrupt"
+                label = f"{public}  · Ctrl+C to interrupt"
         spinner = getattr(self, "waiting_spinner", None)
         if spinner is None:
             self._phase_spinner_start(text)
@@ -1257,7 +1264,9 @@ class Coder:
         spinner = getattr(self, "waiting_spinner", None)
         if orch is None or spinner is None:
             return
-        base = orch.phase or "Working"
+        from aider.z.ux_preamble import DEFAULT_BUSY_LABEL
+
+        base = orch.phase or DEFAULT_BUSY_LABEL
         label = orch.status_label(base)
         try:
             if hasattr(spinner, "set_text"):
@@ -1646,15 +1655,13 @@ class Coder:
                 checkpoint=checkpoint,
             )
             self._phase_spinner_update("Planning — building capability plan…")
-            # Retrieve trace: verbose, --yes-always / NI, or Z_SKILL_RETRIEVE_LOG
+            # Retrieve trace: verbose or Z_SKILL_RETRIEVE_LOG (quiet by default)
             try:
                 import os
 
                 from aider.z.skills.near_dup import get_last_retrieve_trace
 
                 log_retrieve = bool(getattr(self, "verbose", False))
-                if getattr(self.io, "yes", None) is True:
-                    log_retrieve = True
                 if os.environ.get("Z_SKILL_RETRIEVE_LOG", "").strip().lower() in (
                     "1",
                     "true",
@@ -1670,9 +1677,6 @@ class Coder:
                 pass
             if getattr(self, "verbose", False) and skip_reasons:
                 for reason in skip_reasons[:6]:
-                    self.io.tool_output(f"Skill skip — {reason}")
-            elif skip_reasons and getattr(self.io, "yes", None) is True:
-                for reason in skip_reasons[:4]:
                     self.io.tool_output(f"Skill skip — {reason}")
 
             skill_caps = [s.capability for s in (skills or []) if getattr(s, "capability", None)]
@@ -1758,13 +1762,14 @@ class Coder:
                 self.io.tool_output(f"{label}: {names}")
                 if getattr(self, "verbose", False):
                     self.io.tool_output(f"  why: {why}")
-            if cap_plan.coverage_gaps:
+            # Gaps stay in context for the model; don't narrate unless verbose.
+            if cap_plan.coverage_gaps and not quiet:
                 self.io.tool_warning(
                     f"Capability gaps ({len(cap_plan.coverage_gaps)}): "
                     "compensate with workflow — no skill ≠ skip verification."
                 )
                 # Gaps are informational — never a turn abort.
-                if not skills and not quiet:
+                if not skills:
                     self.io.tool_output(
                         "No matching skill — continuing with native plan / "
                         "verify workflow (not stopped)."
@@ -3420,7 +3425,10 @@ class Coder:
 
         self.multi_response_content = ""
         if self.show_pretty():
-            base = "Waiting for " + self.main_model.name
+            from aider.z.ux_preamble import public_busy_label
+
+            detailed = "Waiting for " + self.main_model.name
+            base = public_busy_label(detailed, coder=self, waiting_model=True)
             try:
                 orch = self.io.ensure_turn_ux()
                 orch.enter_busy(base)
@@ -4501,9 +4509,16 @@ class Coder:
             if self._blocks_dependency_fabrication(path, full_path):
                 return
 
-            if not self.io.confirm_ask("Create new file?", subject=path):
-                self.io.tool_output(f"Skipping edits to {path}")
-                return
+            # Default: auto-create new project files (Claude/OpenCode feel).
+            # Escape: Z_CONFIRM_NEW_FILES=1 restores per-file Y/N.
+            from aider.z.ux_preamble import confirm_new_files_enabled, ux_verbose
+
+            if confirm_new_files_enabled():
+                if not self.io.confirm_ask("Create new file?", subject=path):
+                    self.io.tool_output(f"Skipping edits to {path}")
+                    return
+            elif ux_verbose(coder=self):
+                self.io.tool_output(f"Creating {path}")
 
             if not self.dry_run:
                 if not utils.touch_file(full_path):

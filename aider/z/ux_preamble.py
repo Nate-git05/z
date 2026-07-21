@@ -1,7 +1,8 @@
-"""Quiet turn preamble — P0 terminal UX.
+"""Quiet turn preamble — P0 / quiet-turn terminal UX.
 
-Collects control-plane facts during planning and flushes ≤2 status lines
-instead of a wall of skill/explore chatter. Verbose restores the old trail.
+Collects control-plane facts during planning. By default the turn stays
+silent (one busy spinner only). Verbose / Z_UX_VERBOSE restores the old
+status trail; Z_UX_PREAMBLE restores the compact Planning line.
 """
 
 from __future__ import annotations
@@ -9,6 +10,9 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from typing import List, Optional, Sequence
+
+DEFAULT_BUSY_LABEL = "Working…"
+DEFAULT_WAITING_MODEL_LABEL = "Waiting for model…"
 
 
 def ux_verbose(*, coder=None, io=None) -> bool:
@@ -30,6 +34,42 @@ def ux_full_plan_first() -> bool:
         "yes",
         "on",
     )
+
+
+def ux_preamble_enabled() -> bool:
+    """Escape: restore the compact one-line Planning · … preamble flush."""
+    return os.environ.get("Z_UX_PREAMBLE", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def confirm_new_files_enabled() -> bool:
+    """Escape: ask before creating each new file (legacy draggy path)."""
+    return os.environ.get("Z_CONFIRM_NEW_FILES", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def public_busy_label(
+    detailed: Optional[str] = None,
+    *,
+    coder=None,
+    io=None,
+    waiting_model: bool = False,
+) -> str:
+    """User-facing busy spinner text — one quiet line unless verbose."""
+    if ux_verbose(coder=coder, io=io):
+        text = (detailed or "").strip()
+        if text:
+            return text
+        return DEFAULT_WAITING_MODEL_LABEL if waiting_model else DEFAULT_BUSY_LABEL
+    return DEFAULT_WAITING_MODEL_LABEL if waiting_model else DEFAULT_BUSY_LABEL
 
 
 @dataclass
@@ -94,6 +134,10 @@ class TurnPreamble:
         if self._flushed or self.verbose:
             return
         self._flushed = True
+        # Quiet by default: skills/explore/plan are not narrated.
+        # Opt back in with Z_UX_PREAMBLE=1 for the compact Planning line.
+        if not ux_preamble_enabled():
+            return
         if io is None:
             return
         for line in self.format_lines():

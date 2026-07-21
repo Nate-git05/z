@@ -195,7 +195,7 @@ class GoldenImplementTurnTests(unittest.TestCase):
         pre.note_skills([], capability_only=True)
         pre.note_explore(2)
         pre.note_plan(gated=True, approved=True)
-        pre.flush(io)
+        pre.flush(io)  # quiet default: no Planning / skills / explore narration
 
         # Compact confirm path leaves no full-plan wall (nothing recorded here)
         print_summary_line(io, [_node("a", "High"), _node("b", "Medium")])
@@ -220,12 +220,10 @@ class GoldenImplementTurnTests(unittest.TestCase):
         Coder.show_usage_report(coder)
         self.assertFalse(show_usage_enabled(coder=coder, io=io))
 
-        # Budget: ≤2 preamble status lines before summary; +1 summary
-        # preamble flush is 1 line; summary is 1 line
-        self.assertLessEqual(len(status), 3)
-        self.assertGreaterEqual(len(status), 2)
-        self.assertTrue(any(s.startswith("Uncertainty ·") for s in status))
-        self.assertTrue(any("Planning" in s or "explore" in s for s in status))
+        # Quiet turn: no skills/explore preamble; summary line only
+        self.assertEqual(len(status), 1)
+        self.assertTrue(status[0].startswith("Uncertainty ·"))
+        self.assertFalse(any("Planning" in s or "explore" in s for s in status))
 
         joined = "\n".join(status + warnings)
         for bad in self.DENYLIST:
