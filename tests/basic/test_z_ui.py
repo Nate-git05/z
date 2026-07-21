@@ -19,7 +19,7 @@ from aider.z.theme import ACCENT, TEXT, Z_COLORS, apply_z_palette
 from aider.z.uncertainty_ui import (
     UncertaintyNote,
     UncertaintyStore,
-    UncertaintyTier,
+    UncertaintyTiers,
     render_note_detail,
     render_uncertainty_tree,
 )
@@ -153,7 +153,7 @@ class TestZUncertainty(unittest.TestCase):
             UncertaintyNote(
                 id="u1",
                 title="Risky change",
-                tier=UncertaintyTier.HIGH_RISK,
+                tier=UncertaintyTiers.HIGH_RISK,
                 summary="Might break auth",
                 files=["auth.py"],
                 functions=["login"],
@@ -164,7 +164,7 @@ class TestZUncertainty(unittest.TestCase):
             UncertaintyNote(
                 id="u2",
                 title="Minor style",
-                tier=UncertaintyTier.CONFIDENT,
+                tier=UncertaintyTiers.CONFIDENT,
                 summary="Naming only",
             )
         )
@@ -193,6 +193,43 @@ class TestZUncertainty(unittest.TestCase):
         self.assertIn("Might break auth", detail)
         self.assertIn("Suggested fix", detail)
         self.assertIn("fix", detail.lower())
+
+
+class TestZUncertaintyProduction(unittest.TestCase):
+    """P2: production uncertainty/ui Rich path (real UncertaintyNode store)."""
+
+    def test_render_tree_and_detail_production(self):
+        from aider.z.uncertainty.schema import Area, NodeType, Tier, UncertaintyNode
+        from aider.z.uncertainty.store import UncertaintyStore
+        from aider.z.uncertainty.ui import render_detail_rich, render_tree_rich
+
+        store = UncertaintyStore(repo_key=f"p2-ui-{id(self)}")
+        store.add(
+            UncertaintyNode(
+                title="Risky change",
+                type=NodeType.EDGE_CASE,
+                confidence_tier=Tier.MEDIUM,
+                risk_tier=Tier.HIGH,
+                summary="Might break auth",
+                files_affected=["auth.py"],
+                symbols_affected=["login"],
+                suggested_fix="Add guard clause",
+                area=Area.BACKEND,
+            )
+        )
+        buf = io.StringIO()
+        console = Console(file=buf, force_terminal=True, color_system="truecolor", width=80)
+        render_tree_rich(store, console, mode="risk")
+        out = buf.getvalue()
+        self.assertIn("Risky change", out)
+        self.assertIn("High", out)
+
+        buf2 = io.StringIO()
+        console2 = Console(file=buf2, force_terminal=True, color_system="truecolor", width=80)
+        render_detail_rich(store.list()[0], console2)
+        detail = buf2.getvalue()
+        self.assertIn("Might break auth", detail)
+        self.assertIn("Suggested fix", detail)
 
 
 class TestZEscalation(unittest.TestCase):

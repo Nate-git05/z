@@ -1,4 +1,9 @@
-"""Uncertainty tree and note detail views for Z."""
+"""DEPRECATED — demo-only uncertainty note UI.
+
+Product `/uncertainties` uses ``aider.z.uncertainty.ui`` with the real
+``UncertaintyStore`` / ``UncertaintyNode`` tree (P2). This module remains only
+so older imports in theme/sandbox tests do not break; do not wire commands here.
+"""
 
 from __future__ import annotations
 
@@ -14,7 +19,7 @@ from rich.text import Text
 from .theme import ACCENT, ACCENT_BRIGHT, TEXT, TEXT_DIM, TEXT_MUTED
 
 
-class UncertaintyTier(str, Enum):
+class UncertaintyTiers(str, Enum):
     """Simple confidence tiers — avoid fake-precise percentages."""
 
     CONFIDENT = "confident"
@@ -22,17 +27,16 @@ class UncertaintyTier(str, Enum):
     HIGH_RISK = "high risk"
 
 
-# Marker intensifies with risk; orange accent reserved for flagged notes
 TIER_MARKER = {
-    UncertaintyTier.CONFIDENT: ("·", TEXT_MUTED),
-    UncertaintyTier.NEEDS_REVIEW: ("▸", ACCENT),
-    UncertaintyTier.HIGH_RISK: ("‼", ACCENT_BRIGHT),
+    UncertaintyTiers.CONFIDENT: ("·", TEXT_MUTED),
+    UncertaintyTiers.NEEDS_REVIEW: ("▸", ACCENT),
+    UncertaintyTiers.HIGH_RISK: ("‼", ACCENT_BRIGHT),
 }
 
 TIER_ORDER = [
-    UncertaintyTier.HIGH_RISK,
-    UncertaintyTier.NEEDS_REVIEW,
-    UncertaintyTier.CONFIDENT,
+    UncertaintyTiers.HIGH_RISK,
+    UncertaintyTiers.NEEDS_REVIEW,
+    UncertaintyTiers.CONFIDENT,
 ]
 
 
@@ -40,7 +44,7 @@ TIER_ORDER = [
 class UncertaintyNote:
     id: str
     title: str
-    tier: UncertaintyTier
+    tier: UncertaintyTiers
     summary: str = ""
     files: list[str] = field(default_factory=list)
     functions: list[str] = field(default_factory=list)
@@ -53,7 +57,7 @@ class UncertaintyNote:
 
 @dataclass
 class UncertaintyStore:
-    """In-session store of uncertainty notes (browsable via /uncertainties)."""
+    """Demo in-session store — not used by ``/uncertainties``."""
 
     notes: list[UncertaintyNote] = field(default_factory=list)
 
@@ -64,7 +68,6 @@ class UncertaintyStore:
         for note in self.notes:
             if note.id == note_id or note.id.startswith(note_id):
                 return note
-        # Also allow 1-based index selection: "1", "2", ...
         if note_id.isdigit():
             idx = int(note_id) - 1
             active = self.active_notes()
@@ -75,8 +78,8 @@ class UncertaintyStore:
     def active_notes(self) -> list[UncertaintyNote]:
         return [n for n in self.notes if not n.resolved]
 
-    def by_tier(self) -> dict[UncertaintyTier, list[UncertaintyNote]]:
-        grouped: dict[UncertaintyTier, list[UncertaintyNote]] = {t: [] for t in TIER_ORDER}
+    def by_tier(self) -> dict[UncertaintyTiers, list[UncertaintyNote]]:
+        grouped: dict[UncertaintyTiers, list[UncertaintyNote]] = {t: [] for t in TIER_ORDER}
         for note in self.active_notes():
             grouped.setdefault(note.tier, []).append(note)
         return grouped
@@ -95,7 +98,7 @@ def render_uncertainty_tree(
     *,
     pretty: bool = True,
 ) -> None:
-    """Print a browsable tree of uncertainty notes grouped by tier."""
+    """Demo Rich tree — prefer ``aider.z.uncertainty.ui.render_tree_rich``."""
     console = console or Console()
     notes = store.active_notes()
 
@@ -139,10 +142,9 @@ def render_uncertainty_tree(
         for note in tier_notes:
             row = Text()
             row.append(f"  [{index}] ", style=Style(color=TEXT_MUTED))
-            # Orange bracket flag for review / high-risk; muted for confident
-            if tier == UncertaintyTier.CONFIDENT:
+            if tier == UncertaintyTiers.CONFIDENT:
                 row.append("· ", style=Style(color=TEXT_MUTED))
-            elif tier == UncertaintyTier.NEEDS_REVIEW:
+            elif tier == UncertaintyTiers.NEEDS_REVIEW:
                 row.append("[!] ", style=Style(color=ACCENT))
             else:
                 row.append("[!!] ", style=Style(color=ACCENT_BRIGHT, bold=True))
@@ -171,11 +173,7 @@ def render_note_detail(
     *,
     pretty: bool = True,
 ) -> None:
-    """
-    Expand a selected note into a detail pane.
-
-    Body text in white/gray; action prompts in orange accent.
-    """
+    """Demo detail pane — prefer ``aider.z.uncertainty.ui.render_detail_rich``."""
     console = console or Console()
     marker, tier_color = TIER_MARKER[note.tier]
 
@@ -219,9 +217,8 @@ def render_note_detail(
         body.append(f"  /uncertainties {note.id} {key}", style=Style(color=ACCENT, bold=True))
         body.append(f"  — {label}\n", style=Style(color=TEXT_DIM))
 
-    # Orange-bordered panel for flagged notes (needs review / high risk)
-    border = ACCENT_BRIGHT if note.tier == UncertaintyTier.HIGH_RISK else ACCENT
-    if note.tier == UncertaintyTier.CONFIDENT:
+    border = ACCENT_BRIGHT if note.tier == UncertaintyTiers.HIGH_RISK else ACCENT
+    if note.tier == UncertaintyTiers.CONFIDENT:
         border = TEXT_MUTED
 
     console.print(
@@ -243,16 +240,11 @@ def prompt_note_action(
     on_explain: Callable[[UncertaintyNote], None] | None = None,
     on_resolve: Callable[[UncertaintyNote], None] | None = None,
 ) -> str | None:
-    """
-    Ask the user which action to take on a note (Aider-style prompt).
-
-    Returns the action key, or None if skipped.
-    """
+    """Demo action prompt — product path uses ``apply_action``."""
     question = (
         f"Action for note [{note.id}] "
         "(F)ix / (T)est / (E)xplain / (R)esolve / (S)kip?"
     )
-    # Highlight the prompt itself via tool_warning so it uses the orange accent
     if hasattr(io, "tool_warning"):
         io.tool_warning(question)
 
