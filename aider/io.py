@@ -1469,7 +1469,10 @@ class InputOutput:
         if self.pretty:
             if self.tool_output_color:
                 style["color"] = ensure_hash_prefix(self.tool_output_color)
-            style["reverse"] = bold
+            # Bold = brighter weight only. Never reverse/invert — that reads as a
+            # yellow highlight bar instead of orange text.
+            if bold:
+                style["bold"] = True
 
         style = RichStyle(**style)
         self.console.print(*messages, style=style)

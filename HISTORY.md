@@ -3,6 +3,7 @@
 ### main branch
 
 - Hard-stop Planning/Busy spinner before any confirm so "Create new file?" never shares a line with `Ctrl+C to interrupt`.
+- Status/spinner chrome is orange text only (no reverse/highlight bar); `tool_output(bold=)` uses bold weight, not invert.
 - Plan View no longer flashes away: full plan shows in an orange panel and waits for Enter; after Change the updated plan is shown the same way. Y/N/C/V option labels use orange.
 - Implemented P3 turn flow: Idle / Busy / WaitingInput orchestrator with message queue while Busy (see `docs/uncertainty/terminal-ux-p3-plan.md`).
 - Documented P3 terminal UX plan: unified turn flow (Idle / Busy / WaitingInput / message queue) — see `docs/uncertainty/terminal-ux-p3-plan.md`.

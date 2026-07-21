@@ -73,7 +73,6 @@ def _ansi_color(hex_color: str) -> str:
 
 
 _ANSI_RESET = "\033[0m"
-_ANSI_DIM = "\033[38;2;201;106;43m"  # accent orange — grey was unreadable
 
 
 class MascotSpinner:
@@ -82,6 +81,7 @@ class MascotSpinner:
 
     Drop-in replacement for WaitingSpinner: start()/stop() and context manager.
     Used by ``waiting_display`` for model waits; drop-in for WaitingSpinner.
+    Plain orange foreground only — no reverse/highlight background.
     """
 
     def __init__(self, text: str = "Working", delay: float = 0.18):
@@ -133,10 +133,8 @@ class MascotSpinner:
                 plain = frame[:max_width]
 
         padding = " " * max(0, self.last_display_len - len(plain))
-        colored = (
-            f"{self._accent}{frame}{_ANSI_RESET}"
-            f"{_ANSI_DIM}{plain[len(frame):]}{_ANSI_RESET}"
-        )
+        # Entire status line = orange FG only (no reverse / no bgcolor).
+        colored = f"{self._accent}{plain}{_ANSI_RESET}"
         sys.stdout.write(f"\r{colored}{padding}")
         sys.stdout.flush()
         self.last_display_len = len(plain)

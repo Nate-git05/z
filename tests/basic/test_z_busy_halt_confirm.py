@@ -87,5 +87,43 @@ class MascotStopClearsLineTests(unittest.TestCase):
         self.assertIn("\r", blob)
 
 
+class NoReverseHighlightTests(unittest.TestCase):
+    def test_tool_output_bold_is_not_reverse(self):
+        from aider.io import InputOutput
+
+        with patch("aider.io.is_dumb_terminal", return_value=False):
+            io = InputOutput(pretty=True, fancy_input=False, z_theme=True)
+        io.pretty = True
+        with patch.object(io, "console") as console:
+            io.tool_output("hello", bold=True, mirror_history=False)
+        style = console.print.call_args.kwargs.get("style")
+        if style is None and console.print.call_args.args:
+            # printed as style= in kwargs only
+            pass
+        self.assertIsNotNone(style)
+        self.assertFalse(bool(getattr(style, "reverse", False)))
+        # bold may be None/False on some Rich versions when only color set — reverse is the ban
+        self.assertNotEqual(getattr(style, "reverse", None), True)
+
+    def test_mascot_step_orange_fg_only(self):
+        from aider.z.mascot import MascotSpinner
+
+        sp = MascotSpinner("Planning — building capability plan…")
+        sp.is_tty = True
+        sp.visible = True
+        sp.start_time = 0
+        writes = []
+        with patch("aider.z.mascot.sys.stdout") as out:
+            out.write.side_effect = lambda s: writes.append(s)
+            out.flush = MagicMock()
+            sp.console = MagicMock()
+            sp.console.width = 120
+            sp.step()
+        blob = "".join(writes)
+        self.assertNotIn("\033[7m", blob)  # no reverse
+        self.assertIn("\033[38;2;", blob)  # orange FG
+        self.assertIn("Planning", blob)
+
+
 if __name__ == "__main__":
     unittest.main()
