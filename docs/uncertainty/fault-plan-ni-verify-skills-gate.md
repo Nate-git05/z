@@ -1,10 +1,15 @@
 # Spec: Non-interactive continuity, verify honesty, skill retrieval, gate UX
 
-**Status:** planning (no implementation in this doc’s first commit)  
+**Status:** planning — **runtime not implemented** (flags/`ni_contract`/cmake reconfigure
+exist only in docs; confirmed by repo grep on `main`)  
+**Deep dive + feature plan:** [fault-impl-deep-dive.md](./fault-impl-deep-dive.md)  
 **Triggered by:** Claude Code writeup of live faults on `miniregex` / `minilfu`  
 **Thesis (confirmed in code):** The model can write correct C++; the **orchestration /
 product layer** is where false-completion-shaped silence, wrong-suite “verify,”
 soft-blocked sanitizers, skill non-retrieval, and undiscoverable gate exits live.
+
+> **Not the coding-quality stack.** Compact skills, explore, plan interview, tool-loop,
+> and live P2 **are** on `main`. This fault set is a **separate** implement pass.
 
 ---
 
@@ -275,7 +280,7 @@ explicit_yes interaction. Tests: `tests/basic/test_z_gate_ni_ux.py`.
 
 ---
 
-### P2 — Chroma telemetry silence (`chroma-telemetry`)
+### P2 — Chroma telemetry silence (`chroma-telemetry`) — **IMPLEMENTED**
 
 **Goals**
 
@@ -284,12 +289,10 @@ explicit_yes interaction. Tests: `tests/basic/test_z_gate_ni_ux.py`.
 - Swallow/ignore product telemetry errors; never print to coding session
   unless `Z_VERBOSE=1`.
 
-**Acceptance**
-
-- Fresh session with skills/Chroma: no `ClientStartEvent` / `capture()` TypeError
-  lines on stderr.
-
-**Files:** `skills/vector.py`, maybe `main.py` early env.
+**Shipped:** `aider/z/skills/vector.py` (`configure_chroma_telemetry`), early call from
+`aider/z/cli.py`, tests in `tests/basic/test_z_chroma_telemetry.py`. Also no-ops
+Chroma’s broken 3-arg `Posthog.capture` (posthog SDK arity mismatch) so
+`ClientStartEvent` TypeErrors cannot spam stderr even when Chroma still invokes capture.
 
 ---
 
@@ -331,7 +334,7 @@ explicit_yes interaction. Tests: `tests/basic/test_z_gate_ni_ux.py`.
 
 ## Suggested PR slice order
 
-1. **chroma-telemetry** — tiny, confidence win (separate PR)  
+1. **chroma-telemetry** — ✅ shipped (`configure_chroma_telemetry`)  
 2. **gate-ni-ux** — ✅ shipped (block message + `Z_NI_GATE`)  
 3. **ni-contract** — exit codes + auto-seed  
 4. **verify-cmake** — stale build  
