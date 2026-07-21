@@ -1280,6 +1280,9 @@ class Coder:
         Skill-router checkpoint: retrieve candidates, route apply/skip, inject
         only skills needed for *this* workflow step.
 
+        Also builds a capability plan above named skills — gaps are compensated
+        with explicit workflows even when no skill matches.
+
         Called at turn start and again on each reflection so skills can be
         injected progressively (not one-and-done).
         """
@@ -1291,6 +1294,10 @@ class Coder:
                 get_session_skill_index,
                 load_skills_for_session,
                 pull_skills_for_checkpoint,
+            )
+            from aider.z.uncertainty.capabilities import (
+                build_capability_plan,
+                format_capability_plan,
             )
 
             if not get_session_skill_index():
@@ -1305,41 +1312,71 @@ class Coder:
             if getattr(self, "verbose", False) and skip_reasons:
                 for reason in skip_reasons[:6]:
                     self.io.tool_output(f"Skill skip — {reason}")
-            if not skills:
+
+            skill_caps = [s.capability for s in (skills or []) if getattr(s, "capability", None)]
+            skill_ids = [s.id for s in (skills or []) if getattr(s, "id", None)]
+            cap_plan = build_capability_plan(
+                user_message,
+                skill_capabilities=skill_caps,
+                skill_ids=skill_ids,
+            )
+            eng = getattr(self, "uncertainty_engine", None)
+            if eng is not None:
+                eng.ctx.capability_plan = cap_plan
+                eng.ctx._skill_capabilities = skill_caps
+                eng.ctx._skill_ids = skill_ids
+
+            blocks = []
+            if skills:
+                skill_block = format_skills_for_context(skills, checkpoint=checkpoint)
+                if skill_block:
+                    blocks.append(skill_block)
+            # Always surface capability gaps when specialized verification is needed
+            if cap_plan.required and (
+                cap_plan.coverage_gaps or checkpoint == "turn"
+            ):
+                blocks.append(format_capability_plan(cap_plan))
+
+            if not blocks:
                 return
-            block = format_skills_for_context(skills, checkpoint=checkpoint)
-            if not block:
-                return
-            names = ", ".join(s.title for s in skills)
-            has_bug = any((s.kind or "") == "bug_pattern" for s in skills)
-            if has_bug and all((s.kind or "") == "bug_pattern" for s in skills):
+
+            block = "\n\n".join(blocks)
+            names = ", ".join(s.title for s in skills) if skills else "(capability plan only)"
+            has_bug = any((s.kind or "") == "bug_pattern" for s in (skills or []))
+            if has_bug and skills and all((s.kind or "") == "bug_pattern" for s in skills):
                 label = "Bug-pattern hypothesis"
             elif checkpoint == "turn":
-                label = "Applying skill(s)"
+                label = "Applying skill(s)" if skills else "Capability plan"
             else:
-                label = "Injecting skill(s) for this step"
+                label = "Injecting skill(s) for this step" if skills else "Capability plan"
             why = "; ".join(
                 f"{s.title} [{s.kind or 'playbook'}"
                 + (f"/{','.join(s.languages)}" if s.languages else "")
                 + "]"
-                for s in skills
-            )
+                for s in (skills or [])
+            ) or "capability coverage (skills + native abilities)"
             self.io.tool_output(f"{label}: {names}")
-            self.io.tool_output(f"  why: {why}")
-            if skip_reasons and not getattr(self, "verbose", False):
-                # Always show a short skip sample so bad retrieval is visible
-                for reason in skip_reasons[:3]:
-                    self.io.tool_output(f"  skipped — {reason}")
+            if getattr(self, "verbose", False):
+                self.io.tool_output(f"  why: {why}")
+            if cap_plan.coverage_gaps:
+                self.io.tool_warning(
+                    f"Capability gaps ({len(cap_plan.coverage_gaps)}): "
+                    "compensate with workflow — no skill ≠ skip verification."
+                )
             self.cur_messages += [
                 {"role": "user", "content": block},
                 {
                     "role": "assistant",
-                    "content": "I'll follow those skills for this step where they apply.",
+                    "content": (
+                        "I'll follow the matched skills where relevant and "
+                        "explicitly compensate for any capability coverage gaps "
+                        "before claiming completion."
+                    ),
                 },
             ]
-        except Exception:
+        except Exception as err:
             if getattr(self, "verbose", False):
-                pass
+                self.io.tool_warning(f"Skill/capability pull skipped: {err}")
 
     def _skill_capture_skip(self, reason: str) -> None:
         """Visible skip reason — silence here is how capture looked 'broken'."""
