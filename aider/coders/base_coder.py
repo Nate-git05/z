@@ -3136,6 +3136,24 @@ class Coder:
             content = ""
 
         if not interrupted:
+            # Claude eval Finding 1: "Plan approved" then "please add these
+            # files…" must not stall — auto-add existing paths and reflect
+            # into implementation (interactive and --yes-always).
+            try:
+                from aider.z.ni_contract import (
+                    detect_add_files_miss,
+                    maybe_auto_seed_reflect,
+                )
+
+                if detect_add_files_miss(content) and maybe_auto_seed_reflect(
+                    self,
+                    user_message=getattr(self, "_z_ni_user_message", None) or "",
+                    assistant_text=content,
+                ):
+                    return
+            except Exception:
+                pass
+
             add_rel_files_message = self.check_for_file_mentions(content)
             if add_rel_files_message:
                 if self.reflected_message:
@@ -3174,8 +3192,7 @@ class Coder:
         if self.reflected_message:
             return
 
-        # Non-interactive: model asked to /add files (or empty chat + path
-        # mentions) with zero edits — auto-seed and reflect once.
+        # Fallback auto-seed (path mentions / NI) when no edits landed
         if not edited:
             try:
                 from aider.z.ni_contract import maybe_auto_seed_reflect
@@ -3534,12 +3551,30 @@ class Coder:
         if not new_mentions:
             return
 
+        # After plan approve / add-files miss: don't ask — just add
+        auto_add = False
+        try:
+            from aider.z.ni_contract import detect_add_files_miss
+
+            if detect_add_files_miss(content or ""):
+                auto_add = True
+            eng = getattr(self, "uncertainty_engine", None)
+            if eng is not None and getattr(
+                getattr(eng, "ctx", None), "plan_approved", False
+            ):
+                auto_add = True
+        except Exception:
+            pass
+        if getattr(self.io, "yes", None) is True:
+            auto_add = True
+
         added_fnames = []
         group = ConfirmGroup(new_mentions)
         for rel_fname in sorted(new_mentions):
-            if self.io.confirm_ask(
+            ok = auto_add or self.io.confirm_ask(
                 "Add file to the chat?", subject=rel_fname, group=group, allow_never=True
-            ):
+            )
+            if ok:
                 self.add_rel_fname(rel_fname)
                 added_fnames.append(rel_fname)
             else:
