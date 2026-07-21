@@ -142,17 +142,24 @@ class MascotSpinner:
         self.last_display_len = len(plain)
 
     def end(self) -> None:
-        if self.visible and self.is_tty:
-            sys.stdout.write("\r" + " " * self.last_display_len + "\r")
+        if self.is_tty:
+            # Always clear the status row — even if visible was False mid-race —
+            # so confirm prompts never share a line with a stale Planning frame.
+            clear_len = max(self.last_display_len, 80)
+            sys.stdout.write("\r" + " " * clear_len + "\r\n")
             sys.stdout.flush()
-            self.console.show_cursor(True)
+            try:
+                self.console.show_cursor(True)
+            except Exception:
+                pass
         self.visible = False
+        self.last_display_len = 0
 
     def _spin(self):
         while not self._stop_event.is_set():
             self.step()
             time.sleep(self.delay)
-        self.end()
+        # end() is called from stop() after join — avoid double-clear here
 
     def start(self):
         if self._thread is not None and self._thread.is_alive():
@@ -165,8 +172,10 @@ class MascotSpinner:
     def stop(self):
         self._stop_event.set()
         if self._thread is not None and self._thread.is_alive():
-            self._thread.join(timeout=self.delay * 2)
+            # Join long enough that a mid-frame write cannot land after clear
+            self._thread.join(timeout=max(1.0, self.delay * 6))
         self.end()
+        self._thread = None
 
     def __enter__(self):
         self.start()

@@ -801,6 +801,15 @@ class Coder:
         finally:
             self.waiting_spinner = None
 
+    def _busy_spinner_active(self) -> bool:
+        spinner = getattr(self, "waiting_spinner", None)
+        if spinner is None:
+            return False
+        thread = getattr(spinner, "_thread", None)
+        if thread is not None and getattr(thread, "is_alive", lambda: False)():
+            return True
+        return bool(getattr(spinner, "visible", False))
+
     def _phase_spinner_start(self, text: str) -> None:
         """Start (or restart) the mascot/eyes spinner for a planning step."""
         self._stop_waiting_spinner()
@@ -1182,6 +1191,7 @@ class Coder:
             self.io.ensure_turn_ux()
             self.io._refresh_busy_status = self._refresh_busy_status
             self.io._stop_agent_busy = self._phase_spinner_stop
+            self.io._busy_spinner_active = self._busy_spinner_active
             if with_message:
                 self.io.user_input(with_message)
                 self._begin_turn_busy("planning")
@@ -3504,8 +3514,19 @@ class Coder:
                 self.live_incremental_response(True)
                 self.mdstream = None
 
-            # Ensure any waiting spinner is stopped
+            # Ensure any waiting spinner is stopped before apply/confirms
             self._stop_waiting_spinner()
+            try:
+                self.io.stop_busy_queue_reader()
+            except Exception:
+                pass
+            # Don't keep a stale "Planning…" phase over Create-file confirms
+            orch = getattr(self.io, "turn_orchestrator", None)
+            if orch is not None:
+                try:
+                    orch.set_phase("applying edits")
+                except Exception:
+                    pass
 
             self.partial_response_content = self.get_multi_response_content_in_progress(True)
             self.remove_reasoning_content()
