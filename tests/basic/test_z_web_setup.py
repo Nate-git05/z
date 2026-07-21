@@ -369,6 +369,57 @@ def test_explicit_z_login_uses_web_login():
     terminal.assert_not_called()
 
 
+def test_open_web_login_asks_google_vs_z_then_opens_method_url():
+    from aider.z.auth import open_web_login
+
+    io = FakeIO()
+    opened = {}
+
+    def capture_open(url):
+        opened["url"] = url
+        parsed = urlparse(url)
+        qs = parse_qs(parsed.query)
+        redirect = qs["redirect_uri"][0]
+        state = qs["state"][0]
+
+        def post_ok():
+            import time
+
+            time.sleep(0.05)
+            body = {
+                "state": state,
+                "data": {
+                    "access_token": "tok-web",
+                    "refresh_token": "ref",
+                    "user": {"email": "a@b.com", "provider": "google"},
+                    "workspace": {"id": "ws1", "name": "Personal", "role": "owner"},
+                },
+            }
+            req = urllib.request.Request(
+                redirect,
+                data=json.dumps(body).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            urllib.request.urlopen(req, timeout=2)
+
+        threading.Thread(target=post_ok, daemon=True).start()
+        return True
+
+    with patch.object(z_auth, "auth_dev_mode", return_value=False), patch.object(
+        z_auth, "get_auth_base_url", return_value="https://auth.example.test"
+    ), patch.object(z_auth, "AUTH_TIMEOUT_SECONDS", 3), patch(
+        "aider.z.login_screen.prompt_web_login_choice", return_value="google"
+    ), patch.object(z_auth.webbrowser, "open", side_effect=capture_open), patch(
+        "aider.z.auth.save_credentials"
+    ), patch("aider.z.auth.apply_credentials_to_env"):
+        creds = open_web_login(io)
+
+    assert creds is not None
+    assert "auth.example.test/app/login" in opened["url"]
+    assert "method=google" in opened["url"]
+
+
 def test_auth_switch_uses_web_login_and_byok_skip_login():
     from aider.z import cli as z_cli
 

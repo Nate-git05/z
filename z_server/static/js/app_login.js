@@ -49,14 +49,26 @@
     }
   }
 
+  function showSuccessAndClose() {
+    if (formRoot) formRoot.hidden = true;
+    if (successEl) successEl.hidden = false;
+    // Browsers only allow close for script-opened tabs; try anyway after a beat.
+    setTimeout(function () {
+      try {
+        window.close();
+      } catch (_) {
+        /* ignore */
+      }
+    }, 1200);
+  }
+
   async function finish(session) {
     if (!session || !session.access_token) {
       showError("Sign-in did not return a session.");
       return;
     }
     await notifyCli(session);
-    if (formRoot) formRoot.hidden = true;
-    if (successEl) successEl.hidden = false;
+    showSuccessAndClose();
   }
 
   // Server-rendered Google success path
@@ -68,7 +80,9 @@
       session = null;
     }
     if (session) {
-      notifyCli(session);
+      notifyCli(session).then(showSuccessAndClose);
+    } else {
+      showSuccessAndClose();
     }
     return;
   }

@@ -154,13 +154,11 @@ def _skip_account_gate() -> bool:
 def ensure_agent_session(io) -> bool:
     """First-run / session gate for the coding agent.
 
-    Order: login first (if not already signed in) via the web page, THEN
-    choose BYOK vs router in the terminal, THEN (BYOK only) finish model/key
-    setup via a second, skip_login web trip.
+    Order: if not signed in, ask Google vs Z in the terminal, open the matching
+    web login page, THEN choose BYOK vs router in the terminal, THEN (BYOK only)
+    finish model/key setup via a second, skip_login web trip.
 
-    ``z login`` / ``z auth switch`` also use the web login page — never the
-    in-terminal Google/Email/Phone picker. Only BYOK-vs-router mode choice
-    stays in the terminal.
+    ``z login`` / ``z auth switch`` use the same Google-vs-Z → web login path.
 
     Set Z_SKIP_ACCOUNT=1 to bypass (automation / tests).
     """

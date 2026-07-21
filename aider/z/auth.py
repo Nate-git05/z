@@ -693,20 +693,47 @@ def _persist_session_credentials(io, creds: Credentials, *, analytics=None) -> C
     return creds
 
 
-def open_web_login(io, analytics=None) -> Credentials | None:
-    """Open the web app's /app/login page for signup/login, then return to the CLI.
+def open_web_login(io, analytics=None, *, method: str | None = None) -> Credentials | None:
+    """Terminal asks Google vs Z, then opens the matching web login page.
 
-    Same local POST-callback pattern as open_web_setup / Google OAuth.
-    In auth_dev_mode(), falls back to the in-terminal login flow.
+    ``method``: ``\"google\"`` | ``\"z\"``. When omitted, prompts in the terminal.
+    After the browser finishes, the page tells the user to return to the terminal
+    and attempts to close the tab. In auth_dev_mode(), falls back to local flows.
     """
-    if auth_dev_mode():
-        return run_login_flow(io, analytics=analytics)
+    from .login_screen import prompt_web_login_choice
 
+    if method not in ("google", "z"):
+        method = prompt_web_login_choice(io)
+    if method not in ("google", "z"):
+        io.tool_output("Login cancelled.")
+        return None
+
+    if auth_dev_mode():
+        # No real auth host — keep a local path for each choice.
+        try:
+            if method == "google":
+                result = login_with_google(io)
+            else:
+                result = login_with_email(io)
+        except AuthError as err:
+            io.tool_error(str(err))
+            return None
+        if not result.ok or not result.credentials:
+            io.tool_error(result.message or "Authentication failed.")
+            return None
+        return _persist_session_credentials(
+            io, result.credentials, analytics=analytics
+        )
+
+    label = "Google" if method == "google" else "Z"
     data = _open_web_page_for_post_callback(
         io,
         path="/app/login",
-        opening_message="Opening browser to sign in to Z…",
-        success_html="Signed in to Z. You can close this tab and return to the terminal.",
+        extra_params={"method": method},
+        opening_message=f"Opening browser to sign in with {label}…",
+        success_html=(
+            "Signed in to Z. Return to your terminal — this tab can close."
+        ),
         timeout_message="Timed out waiting for sign-in to complete in the browser.",
         failure_label="Login",
     )

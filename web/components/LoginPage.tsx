@@ -1,20 +1,26 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { postJson } from "@/lib/api";
 import { saveSession, type ZSession } from "@/lib/auth";
 
 type Props = {
   redirectUri?: string;
   callbackState?: string;
+  method?: string;
 };
 
 type ZChannel = "email" | "phone";
 type Step = "choose" | "code" | "done";
 
-export function LoginPage({ redirectUri = "", callbackState = "" }: Props) {
-  const [zOpen, setZOpen] = useState(false);
+export function LoginPage({
+  redirectUri = "",
+  callbackState = "",
+  method = "",
+}: Props) {
+  const initialMethod = method === "google" || method === "z" ? method : "";
+  const [zOpen, setZOpen] = useState(initialMethod === "z");
   const [channel, setChannel] = useState<ZChannel>("email");
   const [step, setStep] = useState<Step>("choose");
   const [email, setEmail] = useState("");
@@ -135,6 +141,25 @@ export function LoginPage({ redirectUri = "", callbackState = "" }: Props) {
     return q ? `/app/login/google/start?${q}` : "/app/login/google/start";
   })();
 
+  useEffect(() => {
+    if (initialMethod === "google" && typeof window !== "undefined") {
+      window.location.replace(googleHref);
+    }
+  }, [initialMethod, googleHref]);
+
+  useEffect(() => {
+    if (step === "done") {
+      const t = setTimeout(() => {
+        try {
+          window.close();
+        } catch {
+          /* ignore */
+        }
+      }, 1200);
+      return () => clearTimeout(t);
+    }
+  }, [step]);
+
   return (
     <div className="auth-shell">
       <div className="auth-mark" aria-hidden="true">
@@ -145,7 +170,7 @@ export function LoginPage({ redirectUri = "", callbackState = "" }: Props) {
           <div className="auth-success">
             <p className="auth-title">Signed in.</p>
             <p className="auth-sub">
-              You can close this tab and return to your terminal.
+              Return to your terminal — this tab will close.
             </p>
             {!redirectUri ? (
               <p className="auth-sub" style={{ marginTop: "1rem" }}>
@@ -157,8 +182,14 @@ export function LoginPage({ redirectUri = "", callbackState = "" }: Props) {
           </div>
         ) : (
           <>
-            <h1 className="auth-title">Sign in to Z</h1>
-            <p className="auth-sub">How would you like to sign in?</p>
+            <h1 className="auth-title">
+              {initialMethod === "z" ? "Sign in with Z" : "Sign in to Z"}
+            </h1>
+            <p className="auth-sub">
+              {initialMethod === "z"
+                ? "Use email or phone to continue."
+                : "How would you like to sign in?"}
+            </p>
 
             {error ? (
               <div className="auth-error" role="alert">
@@ -166,16 +197,20 @@ export function LoginPage({ redirectUri = "", callbackState = "" }: Props) {
               </div>
             ) : null}
 
-            <a className="auth-btn" href={googleHref}>
-              Continue with Google
-            </a>
-            <button
-              type="button"
-              className="auth-btn"
-              onClick={() => setZOpen((v) => !v)}
-            >
-              Continue with Z
-            </button>
+            {initialMethod !== "z" ? (
+              <>
+                <a className="auth-btn" href={googleHref}>
+                  Continue with Google
+                </a>
+                <button
+                  type="button"
+                  className="auth-btn"
+                  onClick={() => setZOpen((v) => !v)}
+                >
+                  Continue with Z
+                </button>
+              </>
+            ) : null}
 
             {zOpen ? (
               <div className="auth-z-panel">

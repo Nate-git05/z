@@ -66,6 +66,35 @@ class AppLoginPageTest(unittest.TestCase):
         self.assertIn("Terms of Service", body)
         self.assertIn("Privacy Notice", body)
 
+    def test_app_login_method_google_redirects_to_oauth_start(self):
+        resp = self.client.get(
+            "/app/login",
+            params={
+                "method": "google",
+                "redirect_uri": "http://127.0.0.1:8765/callback",
+                "state": "abc",
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(resp.status_code, 302)
+        loc = resp.headers.get("location", "")
+        self.assertTrue(loc.startswith("/app/login/google/start"))
+        self.assertIn("redirect_uri=", loc)
+        self.assertIn("state=abc", loc)
+
+    def test_app_login_method_z_opens_z_panel(self):
+        resp = self.client.get(
+            "/app/login",
+            params={"method": "z", "state": "xyz"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        body = resp.text
+        self.assertIn("Sign in with Z", body)
+        self.assertIn('data-method="z"', body)
+        self.assertIn('id="z-panel"', body)
+        # Choice buttons hidden when CLI already picked Z
+        self.assertIn('id="auth-choice-buttons" hidden', body)
+
     def test_app_login_static_assets(self):
         css = self.client.get("/static/css/app_login.css")
         self.assertEqual(css.status_code, 200)
