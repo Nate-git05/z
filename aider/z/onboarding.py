@@ -76,3 +76,37 @@ def save_byok_key(env_var: str, api_key: str) -> None:
     except OSError:
         pass
     os.environ[env_var] = api_key
+
+
+def clear_setup(*, clear_keys: bool = True) -> None:
+    """Forget BYOK/router mode + selected model (keep account login).
+
+    Used by ``z reset`` / ``z auth switch`` so reinstalls don't trap you in
+    an old model choice — account tokens stay in ~/.z/credentials.
+    """
+    ensure_z_home()
+    path = config_path()
+    data: dict = {}
+    if path.exists():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                data = loaded
+        except (OSError, json.JSONDecodeError):
+            data = {}
+    data.pop("auth_mode", None)
+    data.pop("selected_model", None)
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+    if clear_keys:
+        keys_path = byok_env_path()
+        if keys_path.exists():
+            try:
+                # Drop known provider keys from the process env too.
+                for line in keys_path.read_text(encoding="utf-8").splitlines():
+                    if "=" in line and not line.lstrip().startswith("#"):
+                        k, _, _ = line.partition("=")
+                        os.environ.pop(k.strip(), None)
+                keys_path.unlink()
+            except OSError:
+                pass

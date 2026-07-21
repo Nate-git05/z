@@ -85,6 +85,19 @@ class ConfigMergeTest(unittest.TestCase):
         self.assertFalse(creds_env.exists())
         self.assertEqual(os.environ.get("ANTHROPIC_API_KEY"), "sk-test-key")
 
+    def test_clear_setup_forgets_mode_and_keys(self):
+        from aider.z.onboarding import clear_setup
+
+        save_auth_mode("byok")
+        save_selected_model("claude-sonnet-5")
+        save_byok_key("ANTHROPIC_API_KEY", "sk-test-key")
+        clear_setup(clear_keys=True)
+        cfg = load_config()
+        self.assertIsNone(cfg.auth_mode)
+        self.assertIsNone(cfg.selected_model)
+        self.assertFalse((self._dir / "byok.env").exists())
+        self.assertIsNone(os.environ.get("ANTHROPIC_API_KEY"))
+
 
 class EnsureSessionOrderTest(unittest.TestCase):
     def test_login_happens_before_mode_choice_on_fresh_config(self):
@@ -124,6 +137,37 @@ class EnsureSessionOrderTest(unittest.TestCase):
                                     ok = ensure_agent_session(io)
         self.assertTrue(ok)
         self.assertEqual(order, ["login", "mode", "byok"])
+
+
+class ResetSetupTest(unittest.TestCase):
+    def test_cmd_reset_clears_and_reprompts_mode(self):
+        from aider.z.cli import cmd_reset
+
+        io = FakeIO()
+        with patch("aider.z.onboarding.clear_setup") as clear, patch(
+            "aider.z.auth.current_session", return_value=_creds()
+        ), patch(
+            "aider.z.login_screen.prompt_auth_mode_choice", return_value="byok"
+        ), patch("aider.z.cli._complete_mode_setup", return_value=True) as complete:
+            code = cmd_reset(io)
+        self.assertEqual(code, 0)
+        clear.assert_called_once_with(clear_keys=True)
+        complete.assert_called_once()
+
+    def test_cmd_reset_logout_signs_out(self):
+        from aider.z.cli import cmd_reset
+
+        io = FakeIO()
+        with patch("aider.z.auth.logout") as logout, patch(
+            "aider.z.onboarding.clear_setup"
+        ) as clear, patch(
+            "aider.z.login_screen.prompt_auth_mode_choice"
+        ) as mode:
+            code = cmd_reset(io, logout=True)
+        self.assertEqual(code, 0)
+        logout.assert_called_once()
+        clear.assert_called_once_with(clear_keys=True)
+        mode.assert_not_called()
 
 
 class ByokSetupTest(unittest.TestCase):

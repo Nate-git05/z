@@ -189,7 +189,8 @@ main() {
   ok "Z installed: $(command -v z)"
   info "Next:  cd your-project && z"
   info "Flow:  Google/Z sign-in → BYOK or router → paste API key if needed"
-  info "Keys:  saved to ~/.z/byok.env (or export ANTHROPIC_API_KEY / OPENAI_API_KEY)"
+  info "Redo:  z reset     # change BYOK/router/model (keeps login)"
+  info "Keys:  ~/.z/byok.env (or export ANTHROPIC_API_KEY / OPENAI_API_KEY)"
   echo
 }
 
