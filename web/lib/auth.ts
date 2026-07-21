@@ -1,11 +1,14 @@
 "use client";
 
+import { postJson } from "@/lib/api";
+
 const TOKEN_KEY = "z_access_token";
 const CREDS_KEY = "z_session";
 
 export type ZSession = {
   access_token: string;
   refresh_token?: string | null;
+  expires_at?: number | null;
   user?: {
     id?: string;
     email?: string | null;
@@ -44,6 +47,35 @@ export function clearSession(): void {
   localStorage.removeItem(TOKEN_KEY);
 }
 
+function isExpired(session: ZSession, skewSeconds = 60): boolean {
+  if (!session.expires_at) return false;
+  return Date.now() / 1000 >= session.expires_at - skewSeconds;
+}
+
+/** Load session, refreshing the access token when expired. */
+export async function ensureSession(): Promise<ZSession | null> {
+  const session = loadSession();
+  if (!session?.access_token) return null;
+  if (!isExpired(session)) return session;
+  if (!session.refresh_token) {
+    clearSession();
+    return null;
+  }
+  const result = await postJson<ZSession & { detail?: string }>(
+    "/v1/auth/refresh",
+    { refresh_token: session.refresh_token }
+  );
+  if (!result.ok || !result.data?.access_token) {
+    clearSession();
+    return null;
+  }
+  saveSession(result.data);
+  return result.data;
+}
+
 export function isSignedIn(): boolean {
-  return Boolean(loadSession()?.access_token);
+  const session = loadSession();
+  if (!session?.access_token) return false;
+  if (isExpired(session) && !session.refresh_token) return false;
+  return true;
 }

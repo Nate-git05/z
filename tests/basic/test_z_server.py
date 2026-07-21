@@ -78,6 +78,30 @@ class ZServerTestCase(unittest.TestCase):
         self.assertEqual(me.status_code, 200)
         self.assertEqual(me.json()["user"]["name"], "Ada")
 
+        # Refresh rotates tokens; old refresh no longer works.
+        self.assertIn("refresh_token", data)
+        refreshed = self.client.post(
+            "/v1/auth/refresh",
+            json={"refresh_token": data["refresh_token"]},
+        )
+        self.assertEqual(refreshed.status_code, 200, refreshed.text)
+        new = refreshed.json()
+        self.assertIn("access_token", new)
+        self.assertNotEqual(new["access_token"], data["access_token"])
+        self.assertNotEqual(new["refresh_token"], data["refresh_token"])
+
+        me2 = self.client.get(
+            "/v1/auth/me",
+            headers={"Authorization": f"Bearer {new['access_token']}"},
+        )
+        self.assertEqual(me2.status_code, 200)
+
+        stale = self.client.post(
+            "/v1/auth/refresh",
+            json={"refresh_token": data["refresh_token"]},
+        )
+        self.assertEqual(stale.status_code, 401)
+
     def test_phone_verify_dev(self):
         start = self.client.post("/v1/auth/phone/start", json={"phone": "+15551234567"})
         self.assertEqual(start.status_code, 200, start.text)

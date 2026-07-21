@@ -31,6 +31,38 @@ def hash_token(token: str) -> str:
     ).hexdigest()
 
 
+def _session_payload(
+    *,
+    access: str,
+    refresh: str,
+    expires_at: datetime,
+    user: User,
+    provider: AuthProvider,
+    membership: WorkspaceMembership | None,
+) -> dict:
+    settings = get_settings()
+    workspace = membership.workspace if membership else None
+    return {
+        "access_token": access,
+        "refresh_token": refresh,
+        "token_type": "Bearer",
+        "expires_in": settings.access_token_ttl_seconds,
+        "expires_at": expires_at.timestamp(),
+        "user": {
+            "id": str(user.id),
+            "email": user.email,
+            "name": user.name,
+            "phone": user.phone,
+            "provider": provider.value,
+        },
+        "workspace": {
+            "id": str(workspace.id) if workspace else None,
+            "name": workspace.name if workspace else None,
+            "role": membership.role.value if membership else None,
+        },
+    }
+
+
 def issue_session(
     db: Session,
     user: User,
@@ -62,27 +94,53 @@ def issue_session(
         .where(WorkspaceMembership.user_id == user.id)
         .order_by(WorkspaceMembership.created_at.asc())
     ).scalars().first()
-    workspace = membership.workspace if membership else None
 
-    return {
-        "access_token": access,
-        "refresh_token": refresh,
-        "token_type": "Bearer",
-        "expires_in": settings.access_token_ttl_seconds,
-        "expires_at": expires_at.timestamp(),
-        "user": {
-            "id": str(user.id),
-            "email": user.email,
-            "name": user.name,
-            "phone": user.phone,
-            "provider": provider.value,
-        },
-        "workspace": {
-            "id": str(workspace.id) if workspace else None,
-            "name": workspace.name if workspace else None,
-            "role": membership.role.value if membership else None,
-        },
-    }
+    return _session_payload(
+        access=access,
+        refresh=refresh,
+        expires_at=expires_at,
+        user=user,
+        provider=provider,
+        membership=membership,
+    )
+
+
+def refresh_session(
+    db: Session,
+    refresh_token: str,
+    *,
+    user_agent: str | None = None,
+    ip_address: str | None = None,
+) -> dict | None:
+    """Rotate tokens using a refresh token. Returns a new payload or None if invalid.
+
+    Access expiry does not block refresh — only revocation / missing hash does.
+    The old session row is revoked and a new one is issued (token rotation).
+    """
+    token = (refresh_token or "").strip()
+    if not token:
+        return None
+    row = (
+        db.execute(
+            select(AuthSession).where(
+                AuthSession.refresh_token_hash == hash_token(token),
+                AuthSession.revoked_at.is_(None),
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if not row or not row.user or not row.user.is_active:
+        return None
+
+    row.revoked_at = datetime.now(timezone.utc)
+    return issue_session(
+        db,
+        row.user,
+        row.provider,
+        user_agent=user_agent or row.user_agent,
+        ip_address=ip_address or row.ip_address,
+    )
 
 
 def get_or_create_personal_workspace(db: Session, user: User) -> Workspace:

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Sign in — Z</title>
+  <title>{% if auth_intent == "signup" %}Sign up{% else %}Sign in{% endif %} — Z</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Source+Sans+3:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -15,23 +15,24 @@
   data-signed-in="{{ '1' if signed_in else '0' }}"
   data-session="{{ session_json|e }}"
   data-method="{{ login_method }}"
+  data-intent="{{ auth_intent }}"
 >
   <div class="auth-shell">
     <div class="auth-mark" aria-hidden="true">Z</div>
     <div class="auth-card" id="auth-card">
       {% if signed_in %}
       <div class="auth-success" id="auth-success">
-        <p class="auth-title">Signed in.</p>
+        <p class="auth-title">{% if auth_intent == "signup" %}Account created.{% else %}Signed in.{% endif %}</p>
         <p class="auth-sub">Return to your terminal — this tab will close.</p>
       </div>
       {% else %}
       <div id="auth-form">
         {% if login_method == "z" %}
-        <h1 class="auth-title">Sign in with Z</h1>
+        <h1 class="auth-title">{% if auth_intent == "signup" %}Create your Z account{% else %}Sign in with Z{% endif %}</h1>
         <p class="auth-sub">Use email or phone to continue.</p>
         {% else %}
-        <h1 class="auth-title">Sign in to Z</h1>
-        <p class="auth-sub">How would you like to sign in?</p>
+        <h1 class="auth-title">{% if auth_intent == "signup" %}Create your Z account{% else %}Sign in to Z{% endif %}</h1>
+        <p class="auth-sub">{% if auth_intent == "signup" %}How would you like to sign up?{% else %}How would you like to sign in?{% endif %}</p>
         {% endif %}
 
         {% if error %}
@@ -78,13 +79,20 @@
         </div>
 
         <p class="auth-legal">
-          By continuing you agree to the
+          {% if auth_intent == "signup" %}
+          Already have an account?
+          <a href="/app/login">Sign in</a>
+          {% else %}
+          New here?
+          <a href="/app/signup">Create an account</a>
+          {% endif %}
+          · By continuing you agree to the
           <a href="/#">Terms of Service</a> and
           <a href="/#">Privacy Notice</a>.
         </p>
       </div>
       <div class="auth-success" id="auth-success" hidden>
-        <p class="auth-title">Signed in.</p>
+        <p class="auth-title">{% if auth_intent == "signup" %}Account created.{% else %}Signed in.{% endif %}</p>
         <p class="auth-sub">Return to your terminal — this tab will close.</p>
       </div>
       {% endif %}

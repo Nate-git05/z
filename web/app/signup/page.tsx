@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import { LoginPage } from "@/components/LoginPage";
 
 export const metadata: Metadata = {
-  title: "Sign in — Z",
-  description: "Sign in or create your Z account.",
+  title: "Sign up — Z",
+  description: "Create your Z account.",
 };
 
 type Props = {
@@ -21,7 +21,7 @@ export default async function Page({ searchParams }: Props) {
       redirectUri={sp.redirect_uri || ""}
       callbackState={sp.state || ""}
       method={sp.method || ""}
-      intent="signin"
+      intent="signup"
     />
   );
 }

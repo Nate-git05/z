@@ -41,10 +41,15 @@ LOGIN_OPTIONS = [
     ("phone", "Continue with Phone"),
 ]
 
-# Terminal choice before opening the browser (CLI → web login).
+# Terminal choices before opening the browser (CLI → web auth).
+AUTH_INTENT_OPTIONS = [
+    ("signin", "Sign in"),
+    ("signup", "Sign up"),
+]
+
 WEB_LOGIN_OPTIONS = [
-    ("google", "Sign up / sign in with Google"),
-    ("z", "Sign up / sign in with Z"),
+    ("google", "Continue with Google"),
+    ("z", "Continue with Z"),
 ]
 
 AUTH_MODE_OPTIONS = [
@@ -405,18 +410,18 @@ def prompt_auth_mode_choice(
     return prompt_auth_mode_choice_plain(io)
 
 
-def prompt_web_login_choice_plain(io) -> str | None:
+def prompt_auth_intent_choice_plain(io) -> str | None:
     return _plain_choice_menu(
         io,
-        title="Sign in to Z",
-        options=WEB_LOGIN_OPTIONS,
+        title="Z account",
+        options=AUTH_INTENT_OPTIONS,
     )
 
 
-def prompt_web_login_choice(
+def prompt_auth_intent_choice(
     io, *, version: str = "", status_message: str = ""
 ) -> str | None:
-    """Ask Google vs Z, then the CLI opens the matching web login page."""
+    """Ask Sign in vs Sign up before opening the browser."""
     pretty = bool(getattr(io, "pretty", False))
     is_tty = sys.stdin.isatty() and sys.stdout.isatty()
 
@@ -427,9 +432,45 @@ def prompt_web_login_choice(
                 console,
                 version=version,
                 status_message=status_message,
-                options=WEB_LOGIN_OPTIONS,
-                prompt_text="How would you like to sign in?",
+                options=AUTH_INTENT_OPTIONS,
+                prompt_text="Do you want to sign in or sign up?",
             )
         except Exception:
-            return prompt_web_login_choice_plain(io)
-    return prompt_web_login_choice_plain(io)
+            return prompt_auth_intent_choice_plain(io)
+    return prompt_auth_intent_choice_plain(io)
+
+
+def prompt_web_login_choice_plain(io, *, intent: str = "signin") -> str | None:
+    title = "Sign up for Z" if intent == "signup" else "Sign in to Z"
+    return _plain_choice_menu(
+        io,
+        title=title,
+        options=WEB_LOGIN_OPTIONS,
+    )
+
+
+def prompt_web_login_choice(
+    io, *, version: str = "", status_message: str = "", intent: str = "signin"
+) -> str | None:
+    """Ask Google vs Z, then the CLI opens the matching web auth page."""
+    pretty = bool(getattr(io, "pretty", False))
+    is_tty = sys.stdin.isatty() and sys.stdout.isatty()
+    prompt = (
+        "How would you like to create your account?"
+        if intent == "signup"
+        else "How would you like to sign in?"
+    )
+
+    if pretty and is_tty:
+        console = Console(force_terminal=True, color_system="auto", soft_wrap=False)
+        try:
+            return interactive_login_select(
+                console,
+                version=version,
+                status_message=status_message,
+                options=WEB_LOGIN_OPTIONS,
+                prompt_text=prompt,
+            )
+        except Exception:
+            return prompt_web_login_choice_plain(io, intent=intent)
+    return prompt_web_login_choice_plain(io, intent=intent)

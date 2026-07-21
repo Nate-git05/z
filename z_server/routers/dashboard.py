@@ -162,6 +162,7 @@ def _app_login_response(
     error: str | None = None,
     session_payload: dict | None = None,
     method: str | None = None,
+    intent: str | None = None,
 ):
     params = {}
     if redirect_uri:
@@ -172,6 +173,9 @@ def _app_login_response(
     if params:
         google_start = f"{google_start}?{urlencode(params)}"
     method_norm = (method or "").strip().lower()
+    intent_norm = (intent or "signin").strip().lower()
+    if intent_norm not in ("signin", "signup"):
+        intent_norm = "signin"
     return templates.TemplateResponse(
         request,
         "app_login.html",
@@ -185,22 +189,19 @@ def _app_login_response(
             signed_in=bool(session_payload),
             google_start_url=google_start,
             login_method=method_norm,
+            auth_intent=intent_norm,
         ),
     )
 
 
-@router.get("/app/login", response_class=HTMLResponse)
-def app_login_page(
+def _app_auth_page(
     request: Request,
-    redirect_uri: str | None = Query(None),
-    state: str | None = Query(None),
-    method: str | None = Query(None),
+    *,
+    redirect_uri: str | None,
+    state: str | None,
+    method: str | None,
+    intent: str,
 ):
-    """CLI / browser sign-in page.
-
-    ``method=google`` immediately starts Google OAuth.
-    ``method=z`` opens the Continue-with-Z (email/phone) panel.
-    """
     method_norm = (method or "").strip().lower()
     if method_norm == "google":
         qs = {}
@@ -217,6 +218,42 @@ def app_login_page(
         redirect_uri=redirect_uri,
         state=state,
         method=method_norm,
+        intent=intent,
+    )
+
+
+@router.get("/app/login", response_class=HTMLResponse)
+def app_login_page(
+    request: Request,
+    redirect_uri: str | None = Query(None),
+    state: str | None = Query(None),
+    method: str | None = Query(None),
+    intent: str | None = Query(None),
+):
+    """CLI / browser sign-in page."""
+    return _app_auth_page(
+        request,
+        redirect_uri=redirect_uri,
+        state=state,
+        method=method,
+        intent=(intent or "signin"),
+    )
+
+
+@router.get("/app/signup", response_class=HTMLResponse)
+def app_signup_page(
+    request: Request,
+    redirect_uri: str | None = Query(None),
+    state: str | None = Query(None),
+    method: str | None = Query(None),
+):
+    """CLI / browser sign-up page (same providers as login, signup copy)."""
+    return _app_auth_page(
+        request,
+        redirect_uri=redirect_uri,
+        state=state,
+        method=method,
+        intent="signup",
     )
 
 
