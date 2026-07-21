@@ -773,13 +773,13 @@ class Coder:
         if not spinner:
             return
         try:
-            # Agent Runner: decelerate → settle → resolve, then clear
+            # Spiral wait: collapse inward, then clear
             if hasattr(spinner, "notifyFinish") and hasattr(spinner, "onEndComplete"):
                 done = threading.Event()
                 spinner.onEndComplete(done.set)
                 spinner.notifyFinish()
-                # Spec: ~0.9–1.2s ending; don't block the agent forever
-                if not done.wait(timeout=2.0):
+                # Soft end ~0.5s; don't block the agent forever
+                if not done.wait(timeout=1.5):
                     spinner.stop()
             else:
                 spinner.stop()
