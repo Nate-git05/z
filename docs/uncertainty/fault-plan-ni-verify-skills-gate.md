@@ -146,7 +146,7 @@ pin/suppress Chroma product telemetry.
 
 ## Workstreams (implementation order)
 
-### P0 — Non-interactive run contract (`ni-contract`)
+### P0 — Non-interactive run contract (`ni-contract`) — **IMPLEMENTED**
 
 **Goals**
 
@@ -162,15 +162,11 @@ pin/suppress Chroma product telemetry.
   a **structured miss** → auto `/add` candidates or create-new-file path,
   not silent success.
 
-**Acceptance**
-
-- Fixture: empty CMake project + SPEC requiring new `src/foo.c`; NI run must
-  create files or exit nonzero.
-- Exit 0 only if `len(aider_edited_files) > 0` or classified non-edit mode
-  completed with an artifact (diagnosis text / review findings).
-
-**Files (expected):** `aider/main.py`, `aider/coders/base_coder.py`,
-new `aider/z/ni_contract.py`, tests under `tests/basic/test_z_ni_contract.py`.
+**Shipped:** `aider/z/ni_contract.py`; `aider/main.py` one-shot paths call
+`apply_ni_reflection_floor` + `finish_ni_run` (exit code + outcome line);
+`base_coder` calls `maybe_auto_seed_reflect` after empty applies.
+Flags: `Z_NI_REQUIRE_EDITS` (default on), `Z_NI_AUTO_SEED` (default on),
+`Z_NI_MIN_REFLECTIONS` (default 5). Tests: `tests/basic/test_z_ni_contract.py`.
 
 ---
 
@@ -334,9 +330,15 @@ Chroma’s broken 3-arg `Posthog.capture` (posthog SDK arity mismatch) so
 
 ## Suggested PR slice order
 
+<<<<<<< HEAD
+1. **chroma-telemetry** — tiny, confidence win (separate PR)  
+2. **gate-ni-ux** — block message + `Z_NI_GATE` (separate PR)  
+3. **ni-contract** — ✅ shipped (exit codes + auto-seed + outcome line)  
+=======
 1. **chroma-telemetry** — ✅ shipped (`configure_chroma_telemetry`)  
 2. **gate-ni-ux** — ✅ shipped (block message + `Z_NI_GATE`)  
 3. **ni-contract** — exit codes + auto-seed  
+>>>>>>> origin/main
 4. **verify-cmake** — stale build  
 5. **sanitizer-teeth** — policy  
 6. **skill-retrieve** — lexical fallback + near-dup  
