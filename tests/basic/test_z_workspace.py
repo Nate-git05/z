@@ -84,6 +84,10 @@ class TestWorkspaceIdThreading(unittest.TestCase):
                 summary="s",
             )
             engine.ctx.store.add(node)
+            # P0.4: remote sync is async — flush the outbox for the assertion
+            from aider.z.uncertainty.sync_outbox import get_outbox
+
+            get_outbox().shutdown(timeout=1.0)
 
         self.assertEqual(len(fetch_calls), 1)
         self.assertEqual(fetch_calls[0]["workspace_id"], "ws-scoped")

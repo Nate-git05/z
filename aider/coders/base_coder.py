@@ -121,6 +121,10 @@ class Coder:
     chat_language = None
     commit_language = None
     file_watcher = None
+    task_mode = None  # aider.z.task_mode.TaskMode — per-message, not sticky
+    forced_task_mode = None  # set only by explicit /ask|/context command path
+    task_intent = None  # aider.z.uncertainty.intent.TaskIntent
+    _shell_class_approvals = None  # session: risk_class → bool
 
     @classmethod
     def create(
@@ -1113,14 +1117,34 @@ class Coder:
         else:
             message = user_message
 
-        # Start-of-task: checklist + first skill-router checkpoint
+        # Start-of-task: mode + intent, then gated pipelines (P0.1 / P0.2)
         if message and not (isinstance(message, str) and message.startswith("/")):
             user_text = user_message if isinstance(user_message, str) else message
+            mode, intent = self._resolve_task_mode_and_intent(user_text)
+            self.task_mode = mode
+            self.task_intent = intent
+            eng0 = getattr(self, "uncertainty_engine", None)
+            if eng0 is not None and getattr(eng0, "ctx", None) is not None:
+                eng0.ctx.task_intent = intent
+                eng0.ctx.task_mode = mode.value if hasattr(mode, "value") else str(mode)
+
+            # Skills always may run (read-only flagged for non-implement modes)
             self._maybe_pull_skills(user_text, checkpoint="turn")
-            self._maybe_begin_uncertainty_task(user_text)
-            # High-stakes / blast-radius → human-reviewable plan before any diff
-            if not self._maybe_require_implementation_plan(user_text):
-                return
+
+            if mode.allows_requirement_decomposition:
+                self._maybe_begin_uncertainty_task(user_text)
+
+            # Planning only in IMPLEMENT (P0.1) — never for /ask or investigate
+            if mode.allows_planning:
+                if not self._maybe_require_implementation_plan(user_text):
+                    return
+            else:
+                # Ensure no stale plan from a prior turn leaks into this message
+                eng = getattr(self, "uncertainty_engine", None)
+                if eng is not None and getattr(eng, "ctx", None) is not None:
+                    eng.ctx.plan = None
+                    eng.ctx.plan_required = False
+                    eng.ctx.plan_approved = True
 
         while message:
             self.reflected_message = None
@@ -1276,6 +1300,49 @@ class Coder:
                 pass
             self._maybe_suggest_skill(user_message)
 
+    def _resolve_task_mode_and_intent(self, user_message: str):
+        """Per-message TaskMode + TaskIntent (P0.1 / P0.2)."""
+        from aider.z.task_mode import TaskMode, classify_task_mode
+        from aider.z.uncertainty.intent import extract_intent
+
+        # Explicit /ask or /context — hard mapping (not sticky across turns)
+        forced_mode_str = None
+        explicit = getattr(self, "forced_task_mode", None)
+        if isinstance(explicit, TaskMode):
+            forced_mode_str = explicit.value
+        elif self.edit_format in ("ask", "context"):
+            forced_mode_str = "ask"
+
+        recent = []
+        try:
+            for msg in (self.done_messages or [])[-6:]:
+                if isinstance(msg, dict) and msg.get("role") == "user":
+                    content = msg.get("content") or ""
+                    if isinstance(content, str) and content.strip():
+                        recent.append(content.strip()[:500])
+        except Exception:
+            recent = []
+
+        intent = extract_intent(
+            user_message or "",
+            recent_messages=recent,
+            forced_mode=forced_mode_str,
+        )
+        mode = classify_task_mode(
+            self.edit_format,
+            user_message or "",
+            intent_mode=intent.mode,
+        )
+        # Explicit /ask|/context always stay non-edit modes
+        if self.edit_format in ("ask", "context") and mode is TaskMode.IMPLEMENT:
+            mode = (
+                TaskMode.INVESTIGATE
+                if intent.mode == "investigate"
+                else TaskMode.ASK
+            )
+            intent.mode = mode.value
+        return mode, intent
+
     def _maybe_pull_skills(self, user_message: str, *, checkpoint: str = "turn"):
         """
         Skill-router checkpoint: retrieve candidates, route apply/skip, inject
@@ -1296,6 +1363,7 @@ class Coder:
                 load_skills_for_session,
                 pull_skills_for_checkpoint,
             )
+            from aider.z.task_mode import TaskMode
             from aider.z.uncertainty.capabilities import (
                 build_capability_plan,
                 format_capability_plan,
@@ -1316,11 +1384,20 @@ class Coder:
 
             skill_caps = [s.capability for s in (skills or []) if getattr(s, "capability", None)]
             skill_ids = [s.id for s in (skills or []) if getattr(s, "id", None)]
-            cap_plan = build_capability_plan(
-                user_message,
-                skill_capabilities=skill_caps,
-                skill_ids=skill_ids,
-            )
+            mode = getattr(self, "task_mode", None)
+            intent = getattr(self, "task_intent", None)
+            if mode is not None and not getattr(mode, "allows_capability_inference", True):
+                # ASK/INVESTIGATE/… — skills may still inject; skip capability plan
+                cap_plan = build_capability_plan(intent=None, skill_capabilities=[], skill_ids=[])
+                cap_plan.required = []
+                cap_plan.coverage_gaps = []
+                cap_plan.compensation = []
+            else:
+                cap_plan = build_capability_plan(
+                    intent=intent,
+                    skill_capabilities=skill_caps,
+                    skill_ids=skill_ids,
+                )
             eng = getattr(self, "uncertainty_engine", None)
             if eng is not None:
                 eng.ctx.capability_plan = cap_plan
@@ -3747,45 +3824,81 @@ class Coder:
             c for c in commands if c.strip() and not c.strip().startswith("#")
         )
 
-        # Narrow safe-list only: pip/npm install of packages already declared in
-        # the project's own manifests. Reuses collect_declared_dependencies —
-        # do NOT blanket-approve shell under --yes-always (security).
+        # P0.5 — risk-class policy (structural argv parse). Does NOT weaken
+        # --yes-always for arbitrary commands; only auto-approves narrow classes.
+        from aider.z.shell_risk import (
+            CommandRiskClass,
+            classify_command,
+            policy_ask_once_per_class,
+            policy_auto_approves,
+        )
+
+        root = Path(getattr(self, "root", None) or ".")
+        real_commands = [
+            c.strip() for c in commands if c.strip() and not c.strip().startswith("#")
+        ]
+        classified = [classify_command(c, root=root) for c in real_commands]
         auto_approved = False
-        try:
-            from aider.z.deps import commands_are_safe_declared_installs
+        pending_token = None
 
-            root = Path(getattr(self, "root", None) or ".")
-            if commands_are_safe_declared_installs(commands, root):
-                auto_approved = True
-                self.io.tool_output(
-                    "Auto-approving install of declared project dependencies "
-                    "(no new packages; fulfilling an existing manifest entry)."
+        if classified and all(policy_auto_approves(c.risk_class) for c in classified):
+            auto_approved = True
+            for c in classified:
+                if c.notice:
+                    self.io.tool_output(c.notice)
+        else:
+            # Session-scoped ask-once for local mutation classes
+            if self._shell_class_approvals is None:
+                self._shell_class_approvals = {}
+            if (
+                classified
+                and all(policy_ask_once_per_class(c.risk_class) for c in classified)
+                and all(
+                    self._shell_class_approvals.get(c.risk_class.value) for c in classified
                 )
-        except Exception:
-            auto_approved = False
-
-        if not auto_approved and not self.io.confirm_ask(
-            prompt,
-            subject="\n".join(commands),
-            explicit_yes_required=True,
-            group=group,
-            allow_never=True,
-        ):
-            msg = (
-                f"blocked: needs human approval to run:\n{skipped}\n"
-                "Installs of packages already listed in the project's "
-                "requirements/package.json are auto-approved; all other shell "
-                "commands require an interactive Yes."
-            )
-            self.io.tool_error(msg)
-            engine = getattr(self, "uncertainty_engine", None)
-            if engine is not None:
-                try:
-                    engine.record_execution(msg)
-                    self._emit_shell_approval_block_node(skipped)
-                except Exception:
-                    pass
-            return
+            ):
+                auto_approved = True
+            else:
+                # Bind approval to exact pending command token (P0.5)
+                pending_token = (
+                    classified[0].approval_token if len(classified) == 1 else None
+                )
+                subject = "\n".join(commands)
+                if pending_token:
+                    subject = f"{subject}\n\n[approval-token: {pending_token}]"
+                approved = self.io.confirm_ask(
+                    prompt,
+                    subject=subject,
+                    explicit_yes_required=True,
+                    group=group,
+                    allow_never=True,
+                )
+                if not approved:
+                    msg = (
+                        f"blocked: needs human approval to run:\n{skipped}\n"
+                        "Read-only repo commands, declared project checks, and "
+                        "declared dependency restores are auto-approved; all other "
+                        "shell commands require an interactive Yes."
+                    )
+                    self.io.tool_error(msg)
+                    engine = getattr(self, "uncertainty_engine", None)
+                    if engine is not None:
+                        try:
+                            engine.record_execution(msg)
+                            self._emit_shell_approval_block_node(skipped)
+                        except Exception:
+                            pass
+                    return
+                # Remember local-mutation class approvals for this session
+                for c in classified:
+                    if policy_ask_once_per_class(c.risk_class):
+                        self._shell_class_approvals[c.risk_class.value] = True
+                # Token check: if a single command was shown, the subject carried
+                # the token; free-form yes is accepted only for that confirm_ask.
+                if pending_token and classified:
+                    # confirm_ask already returned True for this exact prompt;
+                    # stash token as satisfied for audit
+                    self._last_shell_approval_token = pending_token
 
         accumulated_output = ""
         for command in commands:
@@ -3813,8 +3926,7 @@ class Coder:
             if output:
                 accumulated_output += f"Output from {command}\n{output}\n"
 
-        # Auto-approved declared installs: always fold output into chat so the
-        # recovery path can continue without a second unanswerable prompt.
+        # Auto-approved declared installs/checks: always fold output into chat
         add_output = bool(accumulated_output.strip()) and (
             auto_approved
             or self.io.confirm_ask("Add command output to the chat?", allow_never=True)

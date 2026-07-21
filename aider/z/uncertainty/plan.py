@@ -262,14 +262,13 @@ def _default_domain(name: str) -> str:
     return "documented non-empty domain; reject invalid immediately"
 
 
-def _clean_plan_title(user_message: str, fallback: str = "Implementation plan") -> str:
-    """Short human title — never dump the raw truncated request into the confirm UI."""
-    text = (user_message or "").strip()
+def _clean_plan_title(planning_text: str, fallback: str = "Implementation plan") -> str:
+    """Short human title from intent planning text — never the raw request dump."""
+    text = (planning_text or "").strip()
     text = re.sub(r"(?i)^(hi|hello|hey|please|can you|could you)\b[\s,!.]*", "", text)
     text = re.sub(r"\s+", " ", text).strip(" .")
     if not text:
         return fallback
-    # Prefer a noun-ish summary
     lower = text.lower()
     if re.search(r"(?i)\b(rpg|text\s*adventure|adventure\s*game)\b", lower):
         return "Text RPG — implementation plan"
@@ -279,9 +278,10 @@ def _clean_plan_title(user_message: str, fallback: str = "Implementation plan") 
         return "Multiplayer feature — implementation plan"
     if re.search(r"(?i)\b(web\s*app|next\.?js|react)\b", lower):
         return "Web app — implementation plan"
-    if re.search(r"(?i)\b(api|endpoint|backend)\b", lower):
+    if re.search(r"(?i)\b(api|endpoint|backend)\b", lower) and re.search(
+        r"(?i)\b(add|create|implement|build|change)\b", lower
+    ):
         return "API/backend — implementation plan"
-    # First ~8 words, cleaned
     words = text.split()
     summary = " ".join(words[:8])
     if len(words) > 8:
@@ -292,24 +292,45 @@ def _clean_plan_title(user_message: str, fallback: str = "Implementation plan") 
 
 
 def _draft_approach_and_steps(
-    user_message: str,
+    intent,
     *,
     checklist: Optional[TaskChecklist] = None,
 ) -> Tuple[str, List[str], List[str]]:
     """
-    Produce a concrete approach + ordered steps the human can actually review.
+    Produce approach + steps from TaskIntent only.
 
-    This is what the confirm UI must show — not the raw request and not only
-    boilerplate invariants.
+    Template selection reads ``intent.requested_actions`` /
+    ``intent.acceptance_criteria`` — never the raw user prompt.
     """
-    text = (user_message or "").strip()
+    text = (getattr(intent, "planning_text", None) or "").strip()
     lower = text.lower()
+    mode = (getattr(intent, "mode", None) or "implement").lower()
+    prohibited = [p.lower() for p in (getattr(intent, "prohibited_actions", None) or [])]
     steps: List[str] = []
-    out_of_scope: List[str] = []
+    out_of_scope: List[str] = list(getattr(intent, "prohibited_actions", None) or [])
 
-    if re.search(r"(?i)\b(rpg|text\s*adventure|adventure)\b", lower) or (
-        "game" in lower and re.search(r"(?i)\b(text|cli|terminal|woods|forest)\b", lower)
-    ):
+    # Defense in depth: non-implement modes never get implementation templates
+    if mode != "implement":
+        approach = (
+            "Investigate and report findings only — no implementation steps. "
+            "Do not create endpoints, UI, or auth changes unless the user "
+            "explicitly asks in a follow-up."
+        )
+        steps = [
+            "Inspect the relevant files/symbols named in the request.",
+            "Reproduce or localize the reported symptom with read-only checks.",
+            "Summarize root cause hypotheses with evidence (paths, lines, commands).",
+        ]
+        return approach, steps, out_of_scope
+
+    def _prohibited(topic: str) -> bool:
+        t = topic.lower()
+        return any(t in p for p in prohibited)
+
+    if (
+        re.search(r"(?i)\b(rpg|text\s*adventure|adventure)\b", lower)
+        or ("game" in lower and re.search(r"(?i)\b(text|cli|terminal|woods|forest)\b", lower))
+    ) and not _prohibited("game"):
         approach = (
             "Build a small text RPG as a runnable CLI: rooms/locations, player "
             "state, commands (look/go/inventory/…), and a short starter area "
@@ -324,12 +345,16 @@ def _draft_approach_and_steps(
             "Add unit tests for movement, inventory, and invalid commands.",
             "Verify: run the game once end-to-end from a clean start.",
         ]
-        out_of_scope = [
-            "Graphics / GUI (text-only unless you ask).",
-            "Multiplayer / networking.",
-            "Save-game persistence across sessions (unless you ask).",
-        ]
-    elif re.search(r"(?i)\b(multiplayer|two\s+players?|lobby)\b", lower):
+        out_of_scope.extend(
+            [
+                "Graphics / GUI (text-only unless you ask).",
+                "Multiplayer / networking.",
+                "Save-game persistence across sessions (unless you ask).",
+            ]
+        )
+    elif re.search(r"(?i)\b(multiplayer|two\s+players?|lobby)\b", lower) and not _prohibited(
+        "multiplayer"
+    ):
         approach = (
             "Implement shared server state with clear UI ↔ API ↔ service ↔ "
             "repository boundaries; prove the two-user journey with the right "
@@ -342,7 +367,12 @@ def _draft_approach_and_steps(
             "UI states for lobby / challenge / match / results.",
             "Unit + integration tests; plan multi-session E2E evidence.",
         ]
-    elif re.search(r"(?i)\b(api|endpoint|backend|server)\b", lower):
+    elif (
+        re.search(r"(?i)\b(add|create|implement|build|change|update)\b", lower)
+        and re.search(r"(?i)\b(api|endpoint|backend|server)\b", lower)
+        and not _prohibited("api")
+        and not _prohibited("endpoint")
+    ):
         approach = (
             "Add or change backend endpoints with explicit schemas, validation, "
             "and tests against the real state layer."
@@ -366,31 +396,55 @@ def _draft_approach_and_steps(
             "Apply minimal fix; re-run the original verification.",
         ]
     else:
-        approach = (
-            "Break the request into concrete deliverables, implement "
-            "incrementally with tests, and verify the primary user path before "
-            "claiming completion."
-        )
-        steps = [
-            "Clarify deliverables from the request (what “done” looks like).",
-            "Sketch module boundaries / files to touch.",
-            "Implement core behavior first; keep side features for later.",
-            "Add focused tests for the main paths and error cases.",
-            "Run project checks (typecheck/tests) and a manual smoke of the main path.",
-        ]
+        # Prefer echoing concrete requested actions as steps when present
+        actions = list(getattr(intent, "requested_actions", None) or [])
+        if actions:
+            approach = (
+                "Implement the requested actions incrementally with tests, "
+                "respecting explicit exclusions."
+            )
+            steps = [f"Do: {a}" for a in actions[:8]]
+            steps.append("Run project checks and smoke the primary path.")
+        else:
+            approach = (
+                "Break the request into concrete deliverables, implement "
+                "incrementally with tests, and verify the primary user path before "
+                "claiming completion."
+            )
+            steps = [
+                "Clarify deliverables from the request (what “done” looks like).",
+                "Sketch module boundaries / files to touch.",
+                "Implement core behavior first; keep side features for later.",
+                "Add focused tests for the main paths and error cases.",
+                "Run project checks (typecheck/tests) and a manual smoke of the main path.",
+            ]
 
-    # Fold checklist product items in as extra steps when present
+    # Fold checklist product items — but never prohibited topics
     if checklist:
         for item in checklist.items[:6]:
             kind = getattr(item, "kind", "product") or "product"
             if kind in ("product", "quality") and item.text.strip():
                 candidate = item.text.strip()
+                if any(p and p in candidate.lower() for p in prohibited):
+                    continue
                 if candidate.lower() not in {s.lower() for s in steps}:
-                    # Don't re-add the entire raw request as a step
                     if len(candidate) < 120 and candidate.lower()[:40] not in lower[:40]:
                         steps.append(f"Cover requirement: {candidate}")
 
-    return approach, steps[:10], out_of_scope
+    # Strip any step that names a prohibited topic
+    filtered = []
+    for s in steps:
+        sl = s.lower()
+        if any(
+            t in sl
+            for t in ("auth", "authentication", "ui", "concurrency", "production")
+            if _prohibited(t)
+        ):
+            continue
+        filtered.append(s)
+    steps = filtered or steps[:1]
+
+    return approach, steps[:10], out_of_scope[:12]
 
 
 def draft_plan_from_request(
@@ -402,21 +456,45 @@ def draft_plan_from_request(
     files: Sequence[str] = (),
     skill_capabilities: Sequence[str] = (),
     skill_ids: Sequence[str] = (),
+    intent=None,
 ) -> PlanningArtifact:
     """
-    Build a mechanical planning skeleton from the request + checklist.
+    Build a mechanical planning skeleton from structured TaskIntent.
 
-    No LLM required — humans review/correct before diffs are written.
-    Includes capability plan, architecture checkpoint, and critical journeys.
+    Template selection and steps come from intent fields only — never from
+    raw-prompt keyword scans in this module.
     """
+    from .intent import extract_intent
+
+    if intent is None:
+        intent = extract_intent(user_message or "")
+
+    # Defense in depth: non-implement → no implementation plan artifact steps
+    if (getattr(intent, "mode", None) or "").lower() != "implement":
+        task_id = (checklist.task_id if checklist else None) or str(uuid.uuid4())
+        approach, steps, out_of_scope = _draft_approach_and_steps(
+            intent, checklist=checklist
+        )
+        return PlanningArtifact(
+            task_id=task_id,
+            title="Investigation — no implementation plan",
+            reason=reason or f"intent.mode={intent.mode}",
+            approach=approach,
+            steps=steps,
+            out_of_scope=out_of_scope,
+            approved=False,
+            skipped=True,
+        )
+
     task_id = (checklist.task_id if checklist else None) or str(uuid.uuid4())
     raw_title = title or (checklist.title if checklist else "") or ""
-    # Prefer a clean human title over dumping the raw user request
-    title = _clean_plan_title(user_message or raw_title, fallback=raw_title[:60] or "Task plan")
-    inputs = _extract_public_inputs(user_message, checklist)
+    planning_text = intent.planning_text or ""
+    title = _clean_plan_title(planning_text or raw_title, fallback=raw_title[:60] or "Task plan")
+    # Public inputs: only from requested actions / acceptance (not observations)
+    inputs = _extract_public_inputs(planning_text, checklist)
 
     approach, steps, out_of_scope = _draft_approach_and_steps(
-        user_message, checklist=checklist
+        intent, checklist=checklist
     )
 
     contracts = [
@@ -458,7 +536,7 @@ def draft_plan_from_request(
             invariants.append(b)
 
     ambiguities: List[AmbiguityResolution] = []
-    for m in _AMBIGUOUS_RE.finditer(user_message or ""):
+    for m in _AMBIGUOUS_RE.finditer(planning_text or ""):
         phrase = m.group(0)
         ambiguities.append(
             AmbiguityResolution(
@@ -467,6 +545,14 @@ def draft_plan_from_request(
                     "Treat as requiring an explicit, testable behavior; "
                     "prefer fail-loud over silent fallback."
                 ),
+            )
+        )
+    # Surface prohibitions as binding resolutions
+    for proh in getattr(intent, "prohibited_actions", None) or []:
+        ambiguities.append(
+            AmbiguityResolution(
+                ambiguity=f"User prohibited: {proh}",
+                resolution="Do not plan or implement this; treat as out of scope.",
             )
         )
     if files:
@@ -489,7 +575,7 @@ def draft_plan_from_request(
 
     from .established_solutions import considerations_from_text
 
-    blob_for_est = user_message or ""
+    blob_for_est = planning_text or ""
     if checklist:
         blob_for_est += "\n" + "\n".join(i.text for i in checklist.items)
     established = considerations_from_text(blob_for_est)
@@ -525,9 +611,11 @@ def draft_plan_from_request(
     from .journeys import infer_critical_journeys
     from .ux_states import draft_ux_model
 
-    req_blob = blob_for_est or user_message or ""
+    # Architecture / journeys still need descriptive context; capabilities
+    # must come from classified intent only (P0.3).
+    req_blob = planning_text or blob_for_est or ""
     cap_plan = build_capability_plan(
-        req_blob,
+        intent=intent,
         skill_capabilities=skill_capabilities,
         skill_ids=skill_ids,
     )

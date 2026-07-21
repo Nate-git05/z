@@ -102,6 +102,9 @@ class SessionContext:
     last_backtrack: Optional[object] = None
     cleanroom_result: Optional[object] = None
     multi_session_result: Optional[object] = None
+    # P0 control-flow: structured intent + mode for this user turn
+    task_intent: Optional[object] = None
+    task_mode: Optional[str] = None
 
 
 class UncertaintyEngine:
@@ -154,6 +157,15 @@ class UncertaintyEngine:
 
         files = list(files or [])
         symbols = list(symbols or [])
+
+        # P0.2 defense-in-depth: never plan outside implement intent
+        intent = getattr(self.ctx, "task_intent", None)
+        if intent is not None and (getattr(intent, "mode", None) or "").lower() != "implement":
+            self.ctx.plan = None
+            self.ctx.plan_required = False
+            self.ctx.plan_approved = True
+            return None
+
         required, reason, _signals = triage_for_planning(
             files,
             symbols=symbols,
@@ -183,6 +195,7 @@ class UncertaintyEngine:
                 getattr(self.ctx, "_skill_capabilities", None) or []
             ),
             skill_ids=list(getattr(self.ctx, "_skill_ids", None) or []),
+            intent=intent,
         )
         self.ctx.plan = plan
         self.ctx.plan_required = True
@@ -848,13 +861,15 @@ def attach_engine_to_coder(coder, *, user_label: Optional[str] = None) -> Uncert
     creds = current_session()
     workspace_id = creds.workspace.id if creds and creds.workspace else None
 
-    def _remote_sync(node: UncertaintyNode):
+    def _remote_sync(node: UncertaintyNode) -> bool:
         try:
             from .remote import sync_node
 
-            sync_node(node, repo_key=str(root), workspace_id=workspace_id)
+            return bool(
+                sync_node(node, repo_key=str(root), workspace_id=workspace_id)
+            )
         except Exception:
-            pass
+            return False
 
     store = UncertaintyStore(
         root=root,
