@@ -1,8 +1,8 @@
 {
   "name": "z-editor",
   "displayName": "Z",
-  "description": "Z coding agent — agent-first chat, uncertainty tree, commit gate",
-  "version": "0.5.0",
+  "description": "Z coding agent — agent-first chat, uncertainty chain, skills, commit gate",
+  "version": "0.6.0",
   "publisher": "z",
   "engines": {
     "vscode": "^1.85.0"
@@ -38,6 +38,11 @@
           "type": "webview"
         },
         {
+          "id": "z.skills",
+          "name": "Skills",
+          "type": "webview"
+        },
+        {
           "id": "z.profile",
           "name": "Profile",
           "type": "webview"
@@ -63,6 +68,10 @@
       {
         "command": "z.focusCommitGate",
         "title": "Z: Focus Commit Gate"
+      },
+      {
+        "command": "z.focusSkills",
+        "title": "Z: Focus Skills"
       },
       {
         "command": "z.startAppServer",

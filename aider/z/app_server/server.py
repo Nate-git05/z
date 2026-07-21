@@ -114,6 +114,10 @@ async def _handle_connection(websocket) -> None:
                         json.dumps(make_error(req_id, -32000, f"Internal error: {err}"))
                     )
     finally:
+        try:
+            session.dispose()
+        except Exception:
+            logger.debug("session dispose failed", exc_info=True)
         sender_task.cancel()
         try:
             await sender_task

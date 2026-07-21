@@ -14,6 +14,31 @@ from .schema import NodeStatus, Tier, UncertaintyNode, TIER_RANK
 
 logger = logging.getLogger(__name__)
 
+# Phase 6 — live subscribe: process-wide listeners for store mutations.
+# Signature: (node, event) where event is "upsert" | "update"
+StoreListener = Callable[[UncertaintyNode, str], None]
+_STORE_LISTENERS: List[StoreListener] = []
+
+
+def add_store_listener(callback: StoreListener) -> None:
+    if callback not in _STORE_LISTENERS:
+        _STORE_LISTENERS.append(callback)
+
+
+def remove_store_listener(callback: StoreListener) -> None:
+    try:
+        _STORE_LISTENERS.remove(callback)
+    except ValueError:
+        pass
+
+
+def _emit_store_event(node: UncertaintyNode, event: str) -> None:
+    for cb in list(_STORE_LISTENERS):
+        try:
+            cb(node, event)
+        except Exception:
+            logger.debug("uncertainty store listener failed", exc_info=True)
+
 
 def local_store_filename(repo_key: str) -> str:
     """
@@ -78,6 +103,10 @@ class UncertaintyStore:
                 record_node_created(node, repo_key=self.repo_key)
             except Exception:
                 pass
+        try:
+            _emit_store_event(node, "upsert" if is_new else "update")
+        except Exception:
+            pass
         if sync and self.remote_sync:
             self._enqueue_remote(node)
         return node

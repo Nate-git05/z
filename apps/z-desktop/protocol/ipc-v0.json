@@ -63,22 +63,52 @@
     },
     "uncertainty/list": {
       "params": {
-        "sort": { "enum": ["risk", "age", "type"], "default": "risk" }
+        "sort": { "enum": ["risk", "age", "type", "status"], "default": "risk" },
+        "includeResolved": { "type": "boolean", "default": false },
+        "status": { "optional": true }
       },
-      "result": { "nodes": "UncertaintyNode[]" }
+      "result": {
+        "nodes": "UncertaintyNode[] (with resolution_contract)",
+        "subscribed": "boolean"
+      },
+      "notes": "Phase 6 — chain view payload includes ResolutionContract."
+    },
+    "uncertainty/subscribe": {
+      "params": {},
+      "result": { "ok": true, "subscribed": true },
+      "notes": "Phase 6 — live uncertainty/upsert on store mutations."
+    },
+    "uncertainty/unsubscribe": {
+      "params": {},
+      "result": { "ok": true, "subscribed": false }
     },
     "skills/list": {
       "params": {
         "kind": { "optional": true },
         "quality_state": { "optional": true },
+        "needs_review": { "optional": true },
         "query": { "optional": true }
       },
       "result": { "skills": "SkillSummary[]" }
     },
+    "skills/get": {
+      "params": { "id": "string" },
+      "result": { "skill": "Skill" }
+    },
     "skills/create": {
-      "params": { "skill": "SkillDraft" },
-      "result": { "skill": "Skill" },
-      "notes": "Always draft / needs_review (D8)."
+      "params": {
+        "skill": "SkillDraft",
+        "force": { "optional": true },
+        "merge": { "optional": true }
+      },
+      "result": {
+        "created": "boolean",
+        "merged": "boolean",
+        "skill": "Skill|null",
+        "near_dup": { "optional": true },
+        "draft": { "optional": true }
+      },
+      "notes": "Phase 7 — always draft / needs_review (D8); near-dup blocks unless force|merge."
     },
     "commit_blocks/list": {
       "params": {},

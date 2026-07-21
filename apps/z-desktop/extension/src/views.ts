@@ -1,9 +1,8 @@
 /**
  * Agent-first layout:
  * - Center: Main Chat panel (editor area)
- * - Left: Uncertainty Tree
+ * - Left: Uncertainty Tree + Skills + Profile
  * - Right: Commit Gate
- * Profile remains a small utility view under Uncertainty.
  */
 
 import * as vscode from "vscode";
@@ -12,6 +11,7 @@ import { AuthStatus } from "./appServerClient";
 import { MainChatPanel } from "./chatPanel";
 import { UncertaintyTreeProvider } from "./uncertaintyView";
 import { CommitGateProvider } from "./commitGateView";
+import { SkillsViewProvider } from "./skillsView";
 
 export function registerViews(
   context: vscode.ExtensionContext,
@@ -23,12 +23,16 @@ export function registerViews(
 } {
   const chat = new MainChatPanel(context, manager);
   const uncertainty = new UncertaintyTreeProvider(manager);
+  const skills = new SkillsViewProvider(manager);
   const commitGate = new CommitGateProvider(manager);
   const profile = new ProfileViewProvider(manager);
 
   context.subscriptions.push(
     { dispose: () => chat.dispose() },
     vscode.window.registerWebviewViewProvider("z.uncertainty", uncertainty, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
+    vscode.window.registerWebviewViewProvider("z.skills", skills, {
       webviewOptions: { retainContextWhenHidden: true },
     }),
     vscode.window.registerWebviewViewProvider("z.commitGate", commitGate, {
@@ -42,6 +46,14 @@ export function registerViews(
     vscode.commands.registerCommand("z.focusUncertainty", async () => {
       await vscode.commands.executeCommand("workbench.view.extension.z-left");
       await vscode.commands.executeCommand("z.uncertainty.focus");
+    }),
+    vscode.commands.registerCommand("z.focusSkills", async () => {
+      await vscode.commands.executeCommand("workbench.view.extension.z-left");
+      try {
+        await vscode.commands.executeCommand("z.skills.focus");
+      } catch {
+        /* ignore */
+      }
     }),
     vscode.commands.registerCommand("z.focusCommitGate", async () => {
       try {

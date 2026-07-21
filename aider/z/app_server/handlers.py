@@ -20,6 +20,8 @@ class AppServerSession:
         self.workspace_root: Optional[str] = None
         self._notify: NotifyFn = notify or (lambda _m, _p: None)
         self._turns = None  # lazy TurnManager
+        self._uncertainty_subscribed = False
+        self._uncertainty_listener = None
 
     def _turn_manager(self):
         if self._turns is None:
@@ -30,6 +32,10 @@ class AppServerSession:
                 notify=self._notify,
             )
         return self._turns
+
+    def dispose(self) -> None:
+        """Drop live uncertainty subscription when the WS session ends."""
+        self._uncertainty_unsubscribe()
 
     def handle(self, method: str, params: Optional[dict]) -> Any:
         params = params or {}
@@ -46,8 +52,14 @@ class AppServerSession:
             return self._workspace_info(params)
         if method == "uncertainty/list":
             return self._uncertainty_list(params)
+        if method == "uncertainty/subscribe":
+            return self._uncertainty_subscribe(params)
+        if method == "uncertainty/unsubscribe":
+            return self._uncertainty_unsubscribe(params)
         if method == "skills/list":
             return self._skills_list(params)
+        if method == "skills/get":
+            return self._skills_get(params)
         if method == "skills/create":
             return self._skills_create(params)
         if method == "commit_blocks/list":
@@ -90,6 +102,7 @@ class AppServerSession:
             "zHome": z_home,
             "capabilities": [
                 "uncertainty",
+                "uncertainty_subscribe",
                 "skills",
                 "commit_blocks",
                 "mcp",
@@ -133,19 +146,60 @@ class AppServerSession:
             "name": Path(root).name if root else None,
         }
 
+    @staticmethod
+    def _node_payload(node) -> dict:
+        """Serialize node + flatten ResolutionContract for the chain UI."""
+        d = node.to_dict()
+        signals = dict(getattr(node, "signals", None) or {})
+        contract = signals.get("resolution_contract")
+        if not isinstance(contract, dict):
+            try:
+                from aider.z.uncertainty.resolution import contract_for_node
+
+                contract = contract_for_node(node).to_dict()
+            except Exception:
+                contract = None
+        d["resolution_contract"] = contract
+        if contract:
+            d["expires_after_task"] = bool(contract.get("expires_after_task"))
+        return d
+
     def _uncertainty_list(self, params: dict) -> dict:
         sort = (params.get("sort") or "risk").strip().lower()
+        include_resolved = bool(params.get("includeResolved") or params.get("include_resolved"))
+        status_filter = (params.get("status") or "").strip() or None
         nodes: list[dict] = []
         try:
             from aider.z.uncertainty.store import UncertaintyStore
-            from aider.z.uncertainty.schema import TIER_RANK
+            from aider.z.uncertainty.schema import NodeStatus, TIER_RANK
 
             store = UncertaintyStore(root=self.workspace_root)
             items = list(store.nodes.values())
+            if not include_resolved:
+                items = [
+                    n
+                    for n in items
+                    if n.status
+                    not in (NodeStatus.RESOLVED, NodeStatus.IGNORED)
+                ]
+            if status_filter:
+                items = [
+                    n
+                    for n in items
+                    if (n.status.value if hasattr(n.status, "value") else str(n.status))
+                    == status_filter
+                ]
             if sort == "age":
                 items.sort(key=lambda n: n.created_at or "", reverse=True)
             elif sort == "type":
                 items.sort(key=lambda n: (n.type.value, n.title or ""))
+            elif sort == "status":
+                items.sort(
+                    key=lambda n: (
+                        n.status.value if hasattr(n.status, "value") else str(n.status),
+                        TIER_RANK.get(n.risk_tier, 99),
+                    )
+                )
             else:
                 items.sort(
                     key=lambda n: (
@@ -153,15 +207,63 @@ class AppServerSession:
                         n.created_at or "",
                     )
                 )
-            nodes = [n.to_dict() for n in items]
+            nodes = [self._node_payload(n) for n in items]
         except Exception as err:
             raise HandlerError(-32010, f"uncertainty/list failed: {err}") from err
-        return {"nodes": nodes, "sort": sort}
+        return {
+            "nodes": nodes,
+            "sort": sort,
+            "subscribed": self._uncertainty_subscribed,
+            "includeResolved": include_resolved,
+        }
+
+    def _uncertainty_subscribe(self, params: dict) -> dict:
+        del params
+        if self._uncertainty_subscribed and self._uncertainty_listener is not None:
+            return {"ok": True, "subscribed": True}
+        from aider.z.uncertainty.store import add_store_listener
+
+        def _on_mutate(node, event: str) -> None:
+            # Only forward nodes for this workspace when repo_key matches.
+            try:
+                payload = self._node_payload(node)
+            except Exception:
+                payload = node.to_dict() if hasattr(node, "to_dict") else {}
+            self._notify(
+                "uncertainty/upsert",
+                {
+                    "node": payload,
+                    "event": event,
+                    "workspaceRoot": self.workspace_root,
+                },
+            )
+            self._notify(
+                "uncertainty/changed",
+                {"reason": f"store_{event}", "nodeId": getattr(node, "id", None)},
+            )
+
+        self._uncertainty_listener = _on_mutate
+        add_store_listener(_on_mutate)
+        self._uncertainty_subscribed = True
+        return {"ok": True, "subscribed": True}
+
+    def _uncertainty_unsubscribe(self, params: Optional[dict] = None) -> dict:
+        del params
+        if self._uncertainty_listener is not None:
+            from aider.z.uncertainty.store import remove_store_listener
+
+            remove_store_listener(self._uncertainty_listener)
+            self._uncertainty_listener = None
+        self._uncertainty_subscribed = False
+        return {"ok": True, "subscribed": False}
 
     def _skills_list(self, params: dict) -> dict:
         kind = (params.get("kind") or "").strip() or None
         quality = (params.get("quality_state") or "").strip() or None
         query = (params.get("query") or "").strip().lower() or None
+        needs_review = params.get("needs_review")
+        if needs_review is None:
+            needs_review = params.get("needsReview")
         skills: list[dict] = []
         try:
             from aider.z.skills.store import LocalSkillStore
@@ -171,57 +273,151 @@ class AppServerSession:
                     continue
                 if quality and (getattr(s, "quality_state", None) or "") != quality:
                     continue
+                if needs_review is not None:
+                    want = bool(needs_review)
+                    if bool(getattr(s, "needs_review", False)) != want:
+                        continue
                 blob = " ".join(
                     [
                         getattr(s, "title", "") or "",
                         getattr(s, "description", "") or "",
                         " ".join(getattr(s, "triggers", None) or []),
                         getattr(s, "capability", "") or "",
+                        getattr(s, "symptom_description", "") or "",
                     ]
                 ).lower()
                 if query and query not in blob:
                     continue
-                skills.append(
-                    {
-                        "id": getattr(s, "id", None),
-                        "title": getattr(s, "title", None),
-                        "kind": getattr(s, "kind", None),
-                        "description": getattr(s, "description", None),
-                        "triggers": list(getattr(s, "triggers", None) or []),
-                        "capability": getattr(s, "capability", None),
-                        "quality_state": getattr(s, "quality_state", None),
-                        "needs_review": bool(getattr(s, "needs_review", False)),
-                        "source": getattr(s, "source", None),
-                    }
-                )
+                skills.append(self._skill_summary(s))
         except Exception as err:
             raise HandlerError(-32011, f"skills/list failed: {err}") from err
         return {"skills": skills}
+
+    @staticmethod
+    def _skill_summary(s) -> dict:
+        return {
+            "id": getattr(s, "id", None),
+            "title": getattr(s, "title", None),
+            "kind": getattr(s, "kind", None),
+            "description": getattr(s, "description", None),
+            "triggers": list(getattr(s, "triggers", None) or []),
+            "capability": getattr(s, "capability", None),
+            "quality_state": getattr(s, "quality_state", None),
+            "needs_review": bool(getattr(s, "needs_review", False)),
+            "source": getattr(s, "source", None),
+            "updated_at": getattr(s, "updated_at", None),
+            "symptom_description": getattr(s, "symptom_description", None) or "",
+            "root_cause_category": getattr(s, "root_cause_category", None) or "",
+        }
+
+    def _skills_get(self, params: dict) -> dict:
+        skill_id = (params.get("id") or params.get("skillId") or "").strip()
+        if not skill_id:
+            raise HandlerError(-32602, "skills/get requires id")
+        try:
+            from aider.z.skills.store import LocalSkillStore
+
+            store = LocalSkillStore()
+            for s in store.list_skills():
+                if getattr(s, "id", None) == skill_id:
+                    return {"skill": s.to_dict()}
+                # Allow short id prefix
+                if (getattr(s, "id", None) or "").startswith(skill_id) and len(skill_id) >= 8:
+                    return {"skill": s.to_dict()}
+            raise HandlerError(-32025, f"Skill not found: {skill_id}")
+        except HandlerError:
+            raise
+        except Exception as err:
+            raise HandlerError(-32011, f"skills/get failed: {err}") from err
 
     def _skills_create(self, params: dict) -> dict:
         draft = params.get("skill") or {}
         if not isinstance(draft, dict):
             raise HandlerError(-32602, "skills/create requires skill object")
+        force = bool(params.get("force"))
+        merge = bool(params.get("merge"))
         try:
-            from aider.z.skills.schema import Skill
+            from aider.z.skills.schema import Skill, VALID_SKILL_KINDS
             from aider.z.skills.store import LocalSkillStore
+            from aider.z.skills.near_dup import (
+                find_near_dup,
+                merge_into_existing,
+                near_dup_enabled,
+            )
 
             title = (draft.get("title") or draft.get("name") or "").strip()
             if not title:
                 raise HandlerError(-32602, "skill.title is required")
+            kind = (draft.get("kind") or "playbook").strip() or "playbook"
+            if kind not in VALID_SKILL_KINDS:
+                raise HandlerError(
+                    -32602,
+                    f"skill.kind must be one of {sorted(VALID_SKILL_KINDS)}",
+                )
+            triggers = draft.get("triggers") or []
+            if isinstance(triggers, str):
+                triggers = [t.strip() for t in triggers.split(",") if t.strip()]
             skill = Skill(
                 title=title,
                 description=(draft.get("description") or "").strip(),
                 content=(draft.get("content") or draft.get("body") or "").strip(),
-                kind=(draft.get("kind") or "playbook").strip() or "playbook",
-                triggers=list(draft.get("triggers") or []),
+                kind=kind,
+                triggers=list(triggers),
                 capability=(draft.get("capability") or "").strip(),
+                symptom_description=(draft.get("symptom_description") or "").strip(),
+                root_cause_category=(draft.get("root_cause_category") or "").strip(),
                 source="manual",
                 quality_state="draft",
                 needs_review=True,
             )
-            LocalSkillStore().save(skill)
-            return {"skill": skill.to_dict()}
+            store = LocalSkillStore()
+            near = None
+            if near_dup_enabled():
+                existing = list(store.list_skills())
+                hit = find_near_dup(skill, existing)
+                if hit is not None:
+                    near = {
+                        "id": hit.skill.id,
+                        "title": hit.skill.title,
+                        "kind": hit.skill.kind,
+                        "quality_state": hit.skill.quality_state,
+                        "score": hit.score,
+                        "reason": hit.reason,
+                    }
+                    if merge:
+                        merged = merge_into_existing(
+                            hit.skill,
+                            skill,
+                            grounding_note=f"Manual author merge ({hit.reason}).",
+                        )
+                        merged.needs_review = True
+                        merged.quality_state = "draft"
+                        store.save(merged)
+                        return {
+                            "created": True,
+                            "merged": True,
+                            "skill": merged.to_dict(),
+                            "near_dup": near,
+                        }
+                    if not force:
+                        return {
+                            "created": False,
+                            "merged": False,
+                            "skill": None,
+                            "draft": skill.to_dict(),
+                            "near_dup": near,
+                            "message": (
+                                "Near-duplicate skill found. Pass merge=true to "
+                                "update it, or force=true to create anyway."
+                            ),
+                        }
+            store.save(skill)
+            return {
+                "created": True,
+                "merged": False,
+                "skill": skill.to_dict(),
+                "near_dup": near,
+            }
         except HandlerError:
             raise
         except Exception as err:

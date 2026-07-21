@@ -1,6 +1,6 @@
 # Z Desktop (app shell)
 
-**Status:** Phase 0–5 — IPC, gateway **TaskMode routing**, shell lifecycle, auth, agent-first Chat.
+**Status:** Phase 0–7 — agent-first Chat, gateway TaskMode routing, Uncertainty chain, Skills author.
 
 **Read first:** [`docs/app/z-editor-v1-implementation-plan.md`](../../docs/app/z-editor-v1-implementation-plan.md)
 
@@ -70,8 +70,21 @@ Flow:
 3. Notifications: `turn/busy`, `item/agentMessage/delta`, `turn/waiting_input`, `uncertainty/changed`, `gate/commit_blocked`, `turn/completed`
 4. Approvals / plan confirm answered via Chat buttons → `turn/respond`
 
-## Next (Phase 6+)
+## Phase 6 — Uncertainty chain
 
-1. Skills / MCP in-app surfaces; finer live uncertainty upserts
+- Sort: risk / age / type / status; optional resolved nodes
+- Expand card → ResolutionContract (acceptable evidence, contradictions)
+- `uncertainty/subscribe` → live `uncertainty/upsert` on store mutations
+
+## Phase 7 — Skills viewer + author
+
+- Filters: kind, quality_state, needs_review, text search
+- Detail via `skills/get`
+- Create form → always `draft` / `needs_review`; near-dup offers **Merge** or **Create anyway** (`force`)
+
+## Next (Phase 8+)
+
+1. Commit-gate override UX
 2. Profile usage charts from `gateway_requests`
-3. Apply `product.z.json` when building from `vendor/vscode`
+3. In-app MCP connect/test
+4. Apply `product.z.json` when building from `vendor/vscode`
