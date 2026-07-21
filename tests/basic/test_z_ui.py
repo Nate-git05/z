@@ -45,7 +45,8 @@ class TestZMascot(unittest.TestCase):
     def test_idle_mascot_lines(self):
         lines = idle_mascot_lines(unicode_ok=False)
         self.assertEqual(lines, IDLE_MASCOT_ASCII)
-        self.assertTrue(any("o-o" in line for line in lines))
+        self.assertTrue(any("o o" in line or "o.o" in line for line in lines))
+        self.assertTrue(any("[|" in line or "|[" in line or "[o" in line for line in lines))
 
     def test_working_frames_cycle(self):
         frames = [working_mascot_frame(i, unicode_ok=False) for i in range(8)]
@@ -59,6 +60,31 @@ class TestZMascot(unittest.TestCase):
         spinner.is_tty = False  # avoid writing to real stdout
         spinner.start()
         spinner.stop()
+
+    def test_waiting_game_fallback_without_tty(self):
+        from aider.z.waiting_game import MascotRunnerGame, waiting_display
+
+        game = MascotRunnerGame("waiting")
+        game.is_tty = False
+        game.start()
+        game.stop()
+        disp = waiting_display("x", interactive=False)
+        self.assertIsInstance(disp, MascotSpinner)
+        disp.is_tty = False
+        disp.start()
+        disp.stop()
+
+    def test_waiting_game_physics_jump(self):
+        from aider.z.waiting_game import MascotRunnerGame
+
+        game = MascotRunnerGame("waiting", delay=0.01)
+        game.is_tty = False
+        game._interactive = True  # exercise physics without drawing
+        game._jump()
+        self.assertGreater(game.state.vel_y, 0)
+        for _ in range(5):
+            game._tick_physics()
+        self.assertGreaterEqual(game.state.score, 5)
 
 
 class TestZBanner(unittest.TestCase):

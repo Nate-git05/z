@@ -22,7 +22,7 @@ from aider import prompts, utils
 
 from .dump import dump  # noqa: F401
 from .waiting import WaitingSpinner
-from .z.mascot import MascotSpinner
+from .z.waiting_game import waiting_display
 
 ANY_GIT_ERROR += [
     OSError,
@@ -342,7 +342,11 @@ class GitRepo:
         commit_message = None
         for model in self.models:
             spinner_text = f"Generating commit message with {model.name}"
-            spinner_cls = MascotSpinner if getattr(self.io, "z_theme", True) else WaitingSpinner
+            spinner_cls = (
+                (lambda t: waiting_display(t))
+                if getattr(self.io, "z_theme", True)
+                else WaitingSpinner
+            )
             with spinner_cls(spinner_text):
                 if model.system_prompt_prefix:
                     current_system_content = model.system_prompt_prefix + "\n" + system_content

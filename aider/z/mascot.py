@@ -1,4 +1,9 @@
-"""Z mascot — a small original dinosaur glyph that animates while Z is working."""
+"""Z mascot — pixel scientist glyph + waiting animation helpers.
+
+Idle pose is used on the startup / login banner (static, ASCII-stable).
+Working frames feed the compact spinner; the interactive runner game uses
+the taller sprites in ``waiting_game.py``.
+"""
 
 from __future__ import annotations
 
@@ -10,25 +15,25 @@ from rich.console import Console
 
 from .theme import ACCENT
 
-# Multi-line idle pose for the startup banner / login screen.
-# Keep to plain ASCII so terminal fonts never mis-measure rare glyphs (e.g. ᴗ)
-# and shatter the side-by-side logo layout.
+# Multi-line idle pose: yellow scientist with glasses + lab coat vibe.
+# Pure ASCII — macOS Terminal mis-measures rare glyphs and shreds layouts.
 IDLE_MASCOT = [
-    r"   __n_  ",
-    r"  (o-o ) ",
-    r"  /| |\  ",
-    r" (_/ \_) ",
+    r"    /^\   ",
+    r"   |###|  ",
+    r"  [|o o|] ",
+    r"   | = |  ",
+    r"   /| |\  ",
 ]
 
 IDLE_MASCOT_ASCII = list(IDLE_MASCOT)
 
-# Compact single-line working frames (bounce / jump cycle).
+# Compact single-line working frames (run / jump cycle).
 # Same width every frame so the status line does not jitter.
 WORKING_FRAMES = [
-    r"(o-o)  ",  # idle stance
-    r"(o-o)/ ",  # crouch / wind-up
-    r"(o-o)^ ",  # jump
-    r"(o-o)\ ",  # land
+    r"[o.o]  ",  # run A
+    r"[o.o]- ",  # run B
+    r"[o^o]  ",  # jump
+    r"[o.o]_ ",  # land
 ]
 
 WORKING_FRAMES_ASCII = list(WORKING_FRAMES)
@@ -76,7 +81,8 @@ class MascotSpinner:
     Lightweight frame-cycling mascot spinner for active Z work.
 
     Drop-in replacement for WaitingSpinner: start()/stop() and context manager.
-    Renders the mascot in the orange accent so it reads as brand, not decoration.
+    Prefer ``MascotRunnerGame`` (waiting_game) when an interactive TTY wait is
+    wanted; this class stays as the safe non-interactive fallback.
     """
 
     def __init__(self, text: str = "Working", delay: float = 0.18):
@@ -118,14 +124,12 @@ class MascotSpinner:
         plain = f"{frame} {self.text}"
         if len(plain) > max_width:
             plain = plain[:max_width]
-            # Keep frame intact when truncating
             if len(frame) < max_width:
                 plain = frame + (" " + self.text)[: max_width - len(frame)]
             else:
                 plain = frame[:max_width]
 
         padding = " " * max(0, self.last_display_len - len(plain))
-        # Color only the mascot glyph; status text stays dim gray
         colored = (
             f"{self._accent}{frame}{_ANSI_RESET}"
             f"{_ANSI_DIM}{plain[len(frame):]}{_ANSI_RESET}"
