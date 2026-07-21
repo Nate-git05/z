@@ -73,7 +73,7 @@ def _ansi_color(hex_color: str) -> str:
 
 
 _ANSI_RESET = "\033[0m"
-_ANSI_DIM = "\033[38;2;160;160;160m"
+_ANSI_DIM = "\033[38;2;201;106;43m"  # accent orange — grey was unreadable
 
 
 class MascotSpinner:

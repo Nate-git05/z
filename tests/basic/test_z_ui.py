@@ -36,9 +36,48 @@ class TestZTheme(unittest.TestCase):
         apply_z_palette(args)
         self.assertEqual(args.user_input_color, "#F5F5F5")
         self.assertEqual(args.tool_warning_color, "#C96A2B")
+        self.assertEqual(args.tool_output_color, "#C96A2B")
         self.assertEqual(args.assistant_output_color, "#F5F5F5")
-        self.assertEqual(args.code_theme, "monokai")
+        self.assertEqual(args.code_theme, "z-terminal")
         self.assertEqual(args.completion_menu_current_bg_color, "#C96A2B")
+
+    def test_no_grey_in_palette(self):
+        greys = {"#A0A0A0", "#6B6B6B", "#8F4A1F", "#808080", "#888888"}
+        for key, value in Z_COLORS.items():
+            if not isinstance(value, str) or not value.startswith("#"):
+                continue
+            self.assertNotIn(
+                value.upper(),
+                {g.upper() for g in greys},
+                f"{key} still uses a grey tone: {value}",
+            )
+        from aider.z.theme import TEXT_DIM, TEXT_MUTED, TOOL_OUTPUT
+
+        self.assertEqual(TEXT_DIM, ACCENT)
+        self.assertEqual(TEXT_MUTED, ACCENT)
+        self.assertEqual(TOOL_OUTPUT, ACCENT)
+
+    def test_z_terminal_code_style_has_no_purple(self):
+        from pygments.styles import get_style_by_name
+
+        from aider.z.theme import _register_z_terminal_style
+
+        _register_z_terminal_style()
+        style = get_style_by_name("z-terminal")
+        # Spot-check tokens that are purple in monokai
+        styles_map = style.styles
+        from pygments.token import Keyword, Name
+
+        for tok in (Keyword, Name.Constant):
+            color = styles_map.get(tok, "")
+            self.assertNotIn("ae81ff", color.lower())
+            self.assertNotIn("purple", color.lower())
+            self.assertNotIn("magenta", color.lower())
+            # Should resolve to white or orange
+            self.assertTrue(
+                "F5F5F5" in color.upper() or "C96A2B" in color.upper() or color == "",
+                f"{tok} color unexpected: {color!r}",
+            )
 
 
 class TestZMascot(unittest.TestCase):
