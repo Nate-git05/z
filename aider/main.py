@@ -1201,17 +1201,25 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
         io.add_to_input_history(args.message)
         io.tool_output()
         try:
+            from aider.z.ni_contract import apply_ni_reflection_floor, finish_ni_run
+
+            apply_ni_reflection_floor(coder)
             coder.run(with_message=args.message)
+            code = finish_ni_run(io, coder, user_message=args.message)
         except SwitchCoder:
-            pass
+            code = 0
         analytics.event("exit", reason="Completed --message")
-        return
+        return code
 
     if args.message_file:
         try:
             message_from_file = io.read_text(args.message_file)
             io.tool_output()
+            from aider.z.ni_contract import apply_ni_reflection_floor, finish_ni_run
+
+            apply_ni_reflection_floor(coder)
             coder.run(with_message=message_from_file)
+            code = finish_ni_run(io, coder, user_message=message_from_file or "")
         except FileNotFoundError:
             io.tool_error(f"Message file not found: {args.message_file}")
             analytics.event("exit", reason="Message file not found")
@@ -1222,7 +1230,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
             return 1
 
         analytics.event("exit", reason="Completed --message-file")
-        return
+        return code
 
     if args.exit:
         analytics.event("exit", reason="Exit flag set")

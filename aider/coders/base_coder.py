@@ -1057,6 +1057,9 @@ class Coder:
         self.message_cost = 0
         # Per-turn reflection log for drift detection (ask cooldown is per-task)
         self._drift_reflection_log = []
+        # NI auto-seed fires at most once per user turn
+        self._z_ni_auto_seed_done = False
+        self._z_ni_user_message = None
 
         if self.repo:
             self.commit_before_message.append(self.repo.get_head_commit_sha())
@@ -1111,6 +1114,8 @@ class Coder:
 
     def run_one(self, user_message, preproc):
         self.init_before_message()
+        if isinstance(user_message, str):
+            self._z_ni_user_message = user_message
 
         if preproc:
             message = self.preproc_user_input(user_message)
@@ -3065,6 +3070,21 @@ class Coder:
         if self.reflected_message:
             return
 
+        # Non-interactive: model asked to /add files (or empty chat + path
+        # mentions) with zero edits — auto-seed and reflect once.
+        if not edited:
+            try:
+                from aider.z.ni_contract import maybe_auto_seed_reflect
+
+                if maybe_auto_seed_reflect(
+                    self,
+                    user_message=getattr(self, "_z_ni_user_message", None) or "",
+                    assistant_text=content,
+                ):
+                    return
+            except Exception:
+                pass
+
         # Reflection turns that apply no new patches must still gate/commit
         # earlier session edits (fmtlog4: lint-fix reflection replied with
         # prose → empty apply_updates → bool(edited) skipped prepare_commit
@@ -3115,12 +3135,26 @@ class Coder:
                     self.reflected_message = gate_result.reflect_message
                     return
                 if not gate_result.allow_commit:
+                    from aider.z.uncertainty.gate import format_commit_blocked_message
+
                     detail = gate_result.reason or (
                         "Resolve high-risk issues, acknowledge medium-risk, "
-                        "or use --force-commit."
+                        "or use --force-commit / Z_FORCE_COMMIT."
                     )
-                    blocked_msg = f"Commit blocked by Z verification gate. {detail}"
-                    self.io.tool_error(blocked_msg)
+                    if getattr(gate_result, "block_ui_emitted", False):
+                        blocked_msg = (
+                            gate_result.block_message
+                            or format_commit_blocked_message(
+                                detail,
+                                dirty_count=len(commit_edited or []),
+                            )
+                        )
+                    else:
+                        blocked_msg = format_commit_blocked_message(
+                            detail,
+                            dirty_count=len(commit_edited or []),
+                        )
+                        self.io.tool_error(blocked_msg)
                     self.move_back_cur_messages(blocked_msg)
                     return
 
