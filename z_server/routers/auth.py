@@ -115,9 +115,9 @@ def email_verify(payload: EmailVerifyRequest, request: Request, db: Session = De
     if not challenge or _as_utc(challenge.expires_at) < _utcnow():
         raise HTTPException(400, "No valid email code challenge found.")
     if challenge.code_hash != hash_token(payload.code.strip()):
-        # Dev convenience: accept 123456 when server is in dev mode
+        # Fixed code 123456 while Twilio/SMS delivery is not configured yet.
         settings = get_settings()
-        if not (settings.dev_mode and payload.code.strip() == "123456"):
+        if not settings.accepts_provisional_otp(payload.code):
             raise HTTPException(400, "Invalid code.")
 
     challenge.status = "confirmed"

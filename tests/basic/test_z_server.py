@@ -116,6 +116,29 @@ class ZServerTestCase(unittest.TestCase):
         self.assertEqual(data["user"]["provider"], "phone")
         self.assertTrue(data["access_token"].startswith("z_"))
 
+    def test_provisional_otp_works_without_dev_mode(self):
+        """123456 is accepted on production until Twilio is configured."""
+        os.environ["Z_SERVER_DEV"] = "0"
+        os.environ.pop("TWILIO_ACCOUNT_SID", None)
+        os.environ.pop("TWILIO_AUTH_TOKEN", None)
+        os.environ.pop("TWILIO_VERIFY_SERVICE_SID", None)
+        os.environ.pop("Z_PROVISIONAL_OTP", None)
+        get_settings.cache_clear()
+        self.app = create_app()
+        self.client = TestClient(self.app, raise_server_exceptions=True)
+
+        start = self.client.post(
+            "/v1/auth/email/start",
+            json={"email": "prod-otp@example.com", "name": "Prod"},
+        )
+        self.assertEqual(start.status_code, 200, start.text)
+        verify = self.client.post(
+            "/v1/auth/email/verify",
+            json={"email": "prod-otp@example.com", "code": "123456", "name": "Prod"},
+        )
+        self.assertEqual(verify.status_code, 200, verify.text)
+        self.assertIn("access_token", verify.json())
+
     def test_sqlalchemy_user_model_fields(self):
         from z_server.db import get_session_factory
         from z_server.services.tokens import find_or_create_user_by_email

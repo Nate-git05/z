@@ -94,13 +94,13 @@ def login_submit(
     code: str = Form("123456"),
     db: Session = Depends(get_db),
 ):
-    """Web login via email OTP; in Z_SERVER_DEV, code 123456 is accepted."""
+    """Web login via email OTP; provisional code 123456 until Twilio is live."""
     from z_server.config import get_settings
     from z_server.routers.auth import email_verify
 
     settings = get_settings()
     try:
-        if settings.dev_mode and code.strip() == "123456":
+        if settings.accepts_provisional_otp(code):
             user = find_or_create_user_by_email(db, email.strip().lower(), name or None)
             tokens = issue_session(db, user, AuthProvider.email)
         else:
