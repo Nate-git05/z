@@ -1937,6 +1937,7 @@ class Coder:
         try:
             from aider.z.uncertainty.detectors import count_symbol_references
             from aider.z.uncertainty.plan import (
+                format_plan_for_confirm,
                 format_plan_for_context,
                 format_plan_for_user,
             )
@@ -1980,20 +1981,21 @@ class Coder:
             if plan is None:
                 return True
 
+            # Full plan in the scrollback for review
             rendered = format_plan_for_user(plan)
             self.io.tool_output("")
             self.io.tool_output(rendered)
             self.io.tool_output("")
 
-            # Interactive: ask. --yes auto-approves so CI/evals keep moving,
-            # but the plan is still injected as binding grounding context.
+            # Interactive: ask. Escalation panel must show approach+steps,
+            # NEVER the truncated raw user request as the "plan".
             approved = True
             if getattr(self.io, "yes", None) is not True:
                 approved = bool(
                     self.io.confirm_ask(
                         "Proceed with this implementation plan?",
                         default="y",
-                        subject=plan.title,
+                        subject=format_plan_for_confirm(plan),
                     )
                 )
             if not approved:

@@ -50,6 +50,10 @@ class PlanningArtifact:
     task_id: str
     title: str
     reason: str = ""
+    # Human-facing plan body (what the confirm UI must show)
+    approach: str = ""
+    steps: List[str] = field(default_factory=list)
+    out_of_scope: List[str] = field(default_factory=list)
     validation_contracts: List[ValidationContract] = field(default_factory=list)
     # rows: (name, domain, notes)
     input_domain_table: List[Tuple[str, str, str]] = field(default_factory=list)
@@ -75,6 +79,9 @@ class PlanningArtifact:
             "task_id": self.task_id,
             "title": self.title,
             "reason": self.reason,
+            "approach": self.approach,
+            "steps": list(self.steps),
+            "out_of_scope": list(self.out_of_scope),
             "approved": self.approved,
             "skipped": self.skipped,
             "validation_contracts": [asdict(c) for c in self.validation_contracts],
@@ -255,6 +262,137 @@ def _default_domain(name: str) -> str:
     return "documented non-empty domain; reject invalid immediately"
 
 
+def _clean_plan_title(user_message: str, fallback: str = "Implementation plan") -> str:
+    """Short human title — never dump the raw truncated request into the confirm UI."""
+    text = (user_message or "").strip()
+    text = re.sub(r"(?i)^(hi|hello|hey|please|can you|could you)\b[\s,!.]*", "", text)
+    text = re.sub(r"\s+", " ", text).strip(" .")
+    if not text:
+        return fallback
+    # Prefer a noun-ish summary
+    lower = text.lower()
+    if re.search(r"(?i)\b(rpg|text\s*adventure|adventure\s*game)\b", lower):
+        return "Text RPG — implementation plan"
+    if re.search(r"(?i)\b(cli|command[- ]line)\b.*\bgame\b|\bgame\b.*\bcli\b", lower):
+        return "CLI game — implementation plan"
+    if re.search(r"(?i)\bmultiplayer\b", lower):
+        return "Multiplayer feature — implementation plan"
+    if re.search(r"(?i)\b(web\s*app|next\.?js|react)\b", lower):
+        return "Web app — implementation plan"
+    if re.search(r"(?i)\b(api|endpoint|backend)\b", lower):
+        return "API/backend — implementation plan"
+    # First ~8 words, cleaned
+    words = text.split()
+    summary = " ".join(words[:8])
+    if len(words) > 8:
+        summary += "…"
+    if len(summary) < 12:
+        return fallback
+    return f"{summary[0].upper()}{summary[1:]} — plan"
+
+
+def _draft_approach_and_steps(
+    user_message: str,
+    *,
+    checklist: Optional[TaskChecklist] = None,
+) -> Tuple[str, List[str], List[str]]:
+    """
+    Produce a concrete approach + ordered steps the human can actually review.
+
+    This is what the confirm UI must show — not the raw request and not only
+    boilerplate invariants.
+    """
+    text = (user_message or "").strip()
+    lower = text.lower()
+    steps: List[str] = []
+    out_of_scope: List[str] = []
+
+    if re.search(r"(?i)\b(rpg|text\s*adventure|adventure)\b", lower) or (
+        "game" in lower and re.search(r"(?i)\b(text|cli|terminal|woods|forest)\b", lower)
+    ):
+        approach = (
+            "Build a small text RPG as a runnable CLI: rooms/locations, player "
+            "state, commands (look/go/inventory/…), and a short starter area "
+            "(woods). Keep game rules in a clear module, not scattered prints."
+        )
+        steps = [
+            "Scaffold project layout (game package, entrypoint, README how to run).",
+            "Define core models: Player, Location/Room, Item, and world graph.",
+            "Implement command parser + game loop (look, go, take, inventory, quit).",
+            "Author a small woods starting area with 3–6 connected locations.",
+            "Add win/lose or quest hook so a short playthrough is completable.",
+            "Add unit tests for movement, inventory, and invalid commands.",
+            "Verify: run the game once end-to-end from a clean start.",
+        ]
+        out_of_scope = [
+            "Graphics / GUI (text-only unless you ask).",
+            "Multiplayer / networking.",
+            "Save-game persistence across sessions (unless you ask).",
+        ]
+    elif re.search(r"(?i)\b(multiplayer|two\s+players?|lobby)\b", lower):
+        approach = (
+            "Implement shared server state with clear UI ↔ API ↔ service ↔ "
+            "repository boundaries; prove the two-user journey with the right "
+            "evidence type before claiming done."
+        )
+        steps = [
+            "Architecture checkpoint: state ownership, auth, concurrency.",
+            "Domain/service layer + repository/state adapter.",
+            "Typed API routes with validation and auth.",
+            "UI states for lobby / challenge / match / results.",
+            "Unit + integration tests; plan multi-session E2E evidence.",
+        ]
+    elif re.search(r"(?i)\b(api|endpoint|backend|server)\b", lower):
+        approach = (
+            "Add or change backend endpoints with explicit schemas, validation, "
+            "and tests against the real state layer."
+        )
+        steps = [
+            "Identify routes and request/response contracts.",
+            "Implement service logic + validation at the boundary.",
+            "Wire auth/authorization if the surface is protected.",
+            "Add integration tests for success and error paths.",
+        ]
+    elif re.search(r"(?i)\b(fix|bug|broken|error|failing)\b", lower):
+        approach = (
+            "Diagnose from the reported symptom, find the earliest unsupported "
+            "assumption, fix root cause (not the detector), and re-run the "
+            "original failing check."
+        )
+        steps = [
+            "Reproduce the failure and capture exact command/output.",
+            "Classify failure layer (env / type / assertion / …).",
+            "Locate root cause; avoid weakening tests or typecheck.",
+            "Apply minimal fix; re-run the original verification.",
+        ]
+    else:
+        approach = (
+            "Break the request into concrete deliverables, implement "
+            "incrementally with tests, and verify the primary user path before "
+            "claiming completion."
+        )
+        steps = [
+            "Clarify deliverables from the request (what “done” looks like).",
+            "Sketch module boundaries / files to touch.",
+            "Implement core behavior first; keep side features for later.",
+            "Add focused tests for the main paths and error cases.",
+            "Run project checks (typecheck/tests) and a manual smoke of the main path.",
+        ]
+
+    # Fold checklist product items in as extra steps when present
+    if checklist:
+        for item in checklist.items[:6]:
+            kind = getattr(item, "kind", "product") or "product"
+            if kind in ("product", "quality") and item.text.strip():
+                candidate = item.text.strip()
+                if candidate.lower() not in {s.lower() for s in steps}:
+                    # Don't re-add the entire raw request as a step
+                    if len(candidate) < 120 and candidate.lower()[:40] not in lower[:40]:
+                        steps.append(f"Cover requirement: {candidate}")
+
+    return approach, steps[:10], out_of_scope
+
+
 def draft_plan_from_request(
     user_message: str,
     *,
@@ -272,8 +410,14 @@ def draft_plan_from_request(
     Includes capability plan, architecture checkpoint, and critical journeys.
     """
     task_id = (checklist.task_id if checklist else None) or str(uuid.uuid4())
-    title = title or (checklist.title if checklist else "") or "Task plan"
+    raw_title = title or (checklist.title if checklist else "") or ""
+    # Prefer a clean human title over dumping the raw user request
+    title = _clean_plan_title(user_message or raw_title, fallback=raw_title[:60] or "Task plan")
     inputs = _extract_public_inputs(user_message, checklist)
+
+    approach, steps, out_of_scope = _draft_approach_and_steps(
+        user_message, checklist=checklist
+    )
 
     contracts = [
         ValidationContract(
@@ -289,16 +433,18 @@ def draft_plan_from_request(
     ]
 
     invariants: List[str] = []
+    # Prefer concrete product invariants from checklist/steps — not the raw
+    # full user message dumped as a single invariant.
     if checklist:
         for item in checklist.items:
             kind = getattr(item, "kind", "product") or "product"
             if kind in ("product", "quality") and item.text.strip():
-                invariants.append(item.text.strip())
-    if not invariants and user_message.strip():
-        # Fallback: first sentence-ish of the request
-        first = re.split(r"[.\n]", user_message.strip())[0].strip()
-        if first:
-            invariants.append(first[:200])
+                t = item.text.strip()
+                if len(t) <= 160:
+                    invariants.append(t)
+    for step in steps[:4]:
+        if step not in invariants:
+            invariants.append(step)
 
     # Always name fail-loud / no-fabrication when high-stakes triage fired
     boilerplate = [
@@ -402,6 +548,9 @@ def draft_plan_from_request(
         task_id=task_id,
         title=title,
         reason=reason,
+        approach=approach,
+        steps=steps,
+        out_of_scope=out_of_scope,
         validation_contracts=contracts,
         input_domain_table=table,
         invariants=invariants[:24],
@@ -420,11 +569,26 @@ def draft_plan_from_request(
 
 def format_plan_for_user(plan: PlanningArtifact) -> str:
     lines = [
-        f"High-stakes plan (required before edits): {plan.title}",
-        f"Trigger: {plan.reason or '(unspecified)'}",
+        f"Implementation plan: {plan.title}",
+        f"Why planning: {plan.reason or '(unspecified)'}",
         "",
-        "Validation contracts (per public input):",
     ]
+    if plan.approach:
+        lines.append("Approach:")
+        lines.append(f"  {plan.approach}")
+        lines.append("")
+    if plan.steps:
+        lines.append("Steps:")
+        for i, step in enumerate(plan.steps, 1):
+            lines.append(f"  {i}. {step}")
+        lines.append("")
+    if plan.out_of_scope:
+        lines.append("Out of scope (unless you say otherwise):")
+        for item in plan.out_of_scope:
+            lines.append(f"  - {item}")
+        lines.append("")
+
+    lines.append("Validation contracts (per public input):")
     if plan.validation_contracts:
         for c in plan.validation_contracts:
             lines.append(
@@ -519,6 +683,30 @@ def format_plan_for_user(plan: PlanningArtifact) -> str:
     return "\n".join(lines)
 
 
+def format_plan_for_confirm(plan: PlanningArtifact) -> str:
+    """
+    Compact plan body for the orange escalation panel.
+
+    Must never be just the raw user request — always approach + numbered steps.
+    """
+    lines = [plan.title or "Implementation plan", ""]
+    if plan.approach:
+        lines.append(plan.approach.strip())
+        lines.append("")
+    if plan.steps:
+        lines.append("Steps:")
+        for i, step in enumerate(plan.steps, 1):
+            lines.append(f"  {i}. {step}")
+    else:
+        lines.append("Steps: (none drafted — reject and clarify the request)")
+    if plan.out_of_scope:
+        lines.append("")
+        lines.append("Out of scope:")
+        for item in plan.out_of_scope[:4]:
+            lines.append(f"  - {item}")
+    return "\n".join(lines)
+
+
 def format_plan_for_context(plan: PlanningArtifact) -> str:
     """Inject into cur_messages as grounding for implementation + detectors."""
     lines = [
@@ -526,8 +714,22 @@ def format_plan_for_context(plan: PlanningArtifact) -> str:
         f"Task: {plan.title}",
         f"Why gated: {plan.reason}",
         "",
-        "## Validation contracts",
     ]
+    if plan.approach:
+        lines.append("## Approach")
+        lines.append(plan.approach)
+        lines.append("")
+    if plan.steps:
+        lines.append("## Steps")
+        for i, step in enumerate(plan.steps, 1):
+            lines.append(f"{i}. {step}")
+        lines.append("")
+    if plan.out_of_scope:
+        lines.append("## Out of scope")
+        for item in plan.out_of_scope:
+            lines.append(f"- {item}")
+        lines.append("")
+    lines.append("## Validation contracts")
     for c in plan.validation_contracts:
         lines.append(f"- `{c.input_name}`: {c.domain} / {c.on_invalid}")
     if not plan.validation_contracts:
