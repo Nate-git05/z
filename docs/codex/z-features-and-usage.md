@@ -204,8 +204,7 @@ Shipped under `aider/z/uncertainty/` (see [reliability-9.md](../uncertainty/reli
 |-------|------|
 | Z theme | Black / white / gray + burnt-orange accent (`--z-theme` / `--no-z-theme`) |
 | Startup banner + scientist mascot | Identity / idle pose |
-| Spiral waiting animation | Shown while waiting on the model (soft collapse when done) |
-| Compact mascot spinner | Fallback / `Z_WAITING_GAME=0` |
+| Compact mascot spinner | Single-line `[o.o]` wait while the model works |
 
 ---
 
@@ -264,9 +263,9 @@ For non-trivial / high-stakes work, expect a **plan confirm**. Review approach +
 - Missing house rules? `/skills add` or `/skills create "how we do X here"` once  
 - After a great turn, accept the capture prompts so the next session starts smarter  
 
-### Step E — Watch escalations and the spiral
+### Step E — Watch escalations
 
-- Spiral = model is thinking; it collapses when the reply arrives  
+- Compact mascot spinner = model is thinking  
 - Orange panel = Z needs a decision; answer it; don’t auto-yes blind  
 
 ### Step F — Review the uncertainty tree before you trust “done”
@@ -313,7 +312,7 @@ you: task in natural language
         ▼
    agent edits (Aider engine + git)
         │
-        ├─ spiral wait during model calls
+        ├─ mascot spinner during model calls
         ├─ settle → verify (tests / typecheck when available)
         ├─ detectors → uncertainty tree
         ├─ integrity / journeys / completion gate
@@ -362,7 +361,6 @@ you: task in natural language
 |----------|--------|
 | `Z_HOME` | Override `~/.z` root |
 | `Z_SKIP_ACCOUNT=1` | Skip account login gate |
-| `Z_WAITING_GAME=0` | Compact mascot spinner instead of spiral |
 | `Z_SKIP_VERIFY_GATE=1` | Disable verify-before-commit gate |
 | `Z_UNCERTAINTY_AUTO_ACT=1` | Allow auto-act on high worries (off by default) |
 | `Z_RUN_CLEANROOM=1` | Actually run clean-room verification pipeline |

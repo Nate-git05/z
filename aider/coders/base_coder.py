@@ -768,21 +768,12 @@ class Coder:
         return True
 
     def _stop_waiting_spinner(self):
-        """Finish the waiting display (soft wind-down when supported)."""
+        """Clear the waiting spinner."""
         spinner = getattr(self, "waiting_spinner", None)
         if not spinner:
             return
         try:
-            # Spiral wait: collapse inward, then clear
-            if hasattr(spinner, "notifyFinish") and hasattr(spinner, "onEndComplete"):
-                done = threading.Event()
-                spinner.onEndComplete(done.set)
-                spinner.notifyFinish()
-                # Soft end ~0.5s; don't block the agent forever
-                if not done.wait(timeout=1.5):
-                    spinner.stop()
-            else:
-                spinner.stop()
+            spinner.stop()
         finally:
             self.waiting_spinner = None
 
