@@ -108,7 +108,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--adapter",
         choices=["scripted", "live"],
         default=None,
-        help="Agent adapter (default: scripted; live needs Z_P2_LIVE=1 + hook)",
+        help="Agent adapter (default: scripted; live needs Z_P2_LIVE=1; backends z|hook|replay)",
     )
     bench_score = bench_sub.add_parser(
         "score", help="Score a persisted run without re-executing"
