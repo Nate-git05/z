@@ -29,7 +29,7 @@ export function LoginPage({
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
-  const [code, setCode] = useState("000000");
+  const [code, setCode] = useState("123456");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 

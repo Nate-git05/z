@@ -412,7 +412,7 @@ class UncertaintyApiTest(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         verify = self.client.post(
             "/v1/auth/email/verify",
-            json={"email": "unc@example.com", "code": "000000", "name": "Unc"},
+            json={"email": "unc@example.com", "code": "123456", "name": "Unc"},
         )
         self.assertEqual(verify.status_code, 200, verify.text)
         self.headers = {"Authorization": f"Bearer {verify.json()['access_token']}"}

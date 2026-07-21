@@ -115,9 +115,9 @@ def email_verify(payload: EmailVerifyRequest, request: Request, db: Session = De
     if not challenge or _as_utc(challenge.expires_at) < _utcnow():
         raise HTTPException(400, "No valid email code challenge found.")
     if challenge.code_hash != hash_token(payload.code.strip()):
-        # Dev convenience: accept 000000 when server is in dev mode
+        # Dev convenience: accept 123456 when server is in dev mode
         settings = get_settings()
-        if not (settings.dev_mode and payload.code.strip() == "000000"):
+        if not (settings.dev_mode and payload.code.strip() == "123456"):
             raise HTTPException(400, "Invalid code.")
 
     challenge.status = "confirmed"

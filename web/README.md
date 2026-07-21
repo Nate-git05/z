@@ -20,7 +20,7 @@ Open [http://localhost:3000](http://localhost:3000).
 - `/`, `/pricing`, `/login` → Next.js
 - `/v1/*`, `/app/*`, `/static/*` → proxied to FastAPI
 
-Dev email OTP: use code `000000`.
+Dev email OTP: use code `123456`.
 
 ## Deploy on Vercel
 

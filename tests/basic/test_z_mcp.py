@@ -42,7 +42,7 @@ class McpApiTestCase(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         verify = self.client.post(
             "/v1/auth/email/verify",
-            json={"email": "mcp@example.com", "code": "000000", "name": "Mcp"},
+            json={"email": "mcp@example.com", "code": "123456", "name": "Mcp"},
         )
         self.assertEqual(verify.status_code, 200, verify.text)
         self.token = verify.json()["access_token"]
