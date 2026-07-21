@@ -54,8 +54,21 @@ WEB_LOGIN_OPTIONS = [
 
 AUTH_MODE_OPTIONS = [
     ("byok", "Bring your own API key"),
-    ("router", "Sign up / sign in (use Z's router)"),
+    ("router", "Use Z's model router"),
 ]
+
+
+def router_model_options() -> list[tuple[str, str]]:
+    """Choices for preferred model when using Z's router (from MODEL_REGISTRY)."""
+    from aider.z.routing.registry import MODEL_REGISTRY
+
+    opts: list[tuple[str, str]] = []
+    for m in MODEL_REGISTRY:
+        tags = f" · {', '.join(m.specialty_tags)}" if m.specialty_tags else ""
+        label = f"{m.model_id} ({m.provider}, {m.capability_tier.value}{tags})"
+        opts.append((m.model_id, label))
+    return opts
+
 
 OptionList = list[tuple[str, str]]
 
@@ -383,7 +396,7 @@ def prompt_login_choice(io, *, version: str = "", status_message: str = "") -> s
 def prompt_auth_mode_choice_plain(io) -> str | None:
     return _plain_choice_menu(
         io,
-        title="How would you like to use Z?",
+        title="You're signed in. How do you want to use models?",
         options=AUTH_MODE_OPTIONS,
     )
 
@@ -391,9 +404,10 @@ def prompt_auth_mode_choice_plain(io) -> str | None:
 def prompt_auth_mode_choice(
     io, *, version: str = "", status_message: str = ""
 ) -> str | None:
-    """Ask BYOK vs Z router — same UI primitives as the login screen."""
+    """After account auth: BYOK vs Z router — same UI primitives as login."""
     pretty = bool(getattr(io, "pretty", False))
     is_tty = sys.stdin.isatty() and sys.stdout.isatty()
+    prompt = "You're signed in. How do you want to use models?"
 
     if pretty and is_tty:
         console = Console(force_terminal=True, color_system="auto", soft_wrap=False)
@@ -403,11 +417,51 @@ def prompt_auth_mode_choice(
                 version=version,
                 status_message=status_message,
                 options=AUTH_MODE_OPTIONS,
-                prompt_text="How would you like to use Z?",
+                prompt_text=prompt,
             )
         except Exception:
             return prompt_auth_mode_choice_plain(io)
     return prompt_auth_mode_choice_plain(io)
+
+
+def prompt_router_model_choice_plain(io) -> str | None:
+    opts = router_model_options()
+    if not opts:
+        return None
+    return _plain_choice_menu(
+        io,
+        title="Preferred Z router model (escalates when needed)",
+        options=opts,
+    )
+
+
+def prompt_router_model_choice(
+    io, *, version: str = "", status_message: str = ""
+) -> str | None:
+    """Ask which Z router model the user prefers as their default."""
+    opts = router_model_options()
+    if not opts:
+        return None
+    pretty = bool(getattr(io, "pretty", False))
+    is_tty = sys.stdin.isatty() and sys.stdout.isatty()
+    prompt = "Choose a preferred Z model (router may escalate when needed)"
+
+    if pretty and is_tty:
+        console = Console(force_terminal=True, color_system="auto", soft_wrap=False)
+        try:
+            io.tool_output(
+                "Z's router picks a model per task, starting from your preference."
+            )
+            return interactive_login_select(
+                console,
+                version=version,
+                status_message=status_message,
+                options=opts,
+                prompt_text=prompt,
+            )
+        except Exception:
+            return prompt_router_model_choice_plain(io)
+    return prompt_router_model_choice_plain(io)
 
 
 def prompt_auth_intent_choice_plain(io) -> str | None:

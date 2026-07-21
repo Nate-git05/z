@@ -273,6 +273,89 @@ class AuthModeChoiceTest(unittest.TestCase):
         io = FakeIO(answers=["q"])
         self.assertIsNone(prompt_auth_mode_choice_plain(io))
 
+    def test_mode_labels_are_post_auth_not_login(self):
+        from aider.z.login_screen import AUTH_MODE_OPTIONS
+
+        labels = " ".join(label for _k, label in AUTH_MODE_OPTIONS).lower()
+        self.assertIn("api key", labels)
+        self.assertIn("router", labels)
+        self.assertNotIn("sign up", labels)
+        self.assertNotIn("sign in", labels)
+
+    def test_router_model_choice_plain(self):
+        from aider.z.login_screen import prompt_router_model_choice_plain, router_model_options
+
+        opts = router_model_options()
+        self.assertGreaterEqual(len(opts), 2)
+        io = FakeIO(answers=["1"])
+        self.assertEqual(prompt_router_model_choice_plain(io), opts[0][0])
+
+
+class RouterModeFlowTest(unittest.TestCase):
+    def test_router_mode_asks_for_preferred_model_after_login(self):
+        io = FakeIO()
+        order: list[str] = []
+
+        def fake_login(_io, **_k):
+            order.append("login")
+            return _creds()
+
+        def fake_mode(_io, **_k):
+            order.append("mode")
+            return "router"
+
+        def fake_router_model(_io, **_k):
+            order.append("router_model")
+            return "claude-sonnet-5"
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("Z_SKIP_ACCOUNT", None)
+            with patch("aider.z.auth.current_session", return_value=None):
+                with patch("aider.z.auth.open_web_login", side_effect=fake_login):
+                    with patch(
+                        "aider.z.onboarding.load_config",
+                        return_value=OnboardingConfig(),
+                    ):
+                        with patch(
+                            "aider.z.login_screen.prompt_auth_mode_choice",
+                            side_effect=fake_mode,
+                        ):
+                            with patch(
+                                "aider.z.login_screen.prompt_router_model_choice",
+                                side_effect=fake_router_model,
+                            ):
+                                with patch(
+                                    "aider.z.onboarding.save_auth_mode"
+                                ) as save_mode:
+                                    with patch(
+                                        "aider.z.onboarding.save_selected_model"
+                                    ) as save_model:
+                                        ok = ensure_agent_session(io)
+
+        self.assertTrue(ok)
+        self.assertEqual(order, ["login", "mode", "router_model"])
+        save_mode.assert_called_with("router")
+        save_model.assert_called_with("claude-sonnet-5")
+
+    def test_start_agent_injects_router_selected_model(self):
+        captured = {}
+
+        def fake_main(argv=None, **_k):
+            captured["argv"] = list(argv or [])
+            return 0
+
+        with patch("aider.z.cli.ensure_agent_session", return_value=True):
+            with patch(
+                "aider.z.onboarding.load_config",
+                return_value=OnboardingConfig(
+                    auth_mode="router", selected_model="claude-haiku-4-5"
+                ),
+            ):
+                with patch("aider.main.main", side_effect=fake_main):
+                    code = _start_agent([])
+        self.assertEqual(code, 0)
+        self.assertEqual(captured["argv"], ["--model", "claude-haiku-4-5"])
+
 
 class CuratedSectionsTest(unittest.TestCase):
     def test_includes_extra_providers(self):

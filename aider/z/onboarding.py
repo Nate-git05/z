@@ -17,7 +17,7 @@ from .paths import byok_env_path, config_path, ensure_z_home
 @dataclass
 class OnboardingConfig:
     auth_mode: Optional[str] = None  # "byok" | "router" | None (never chosen)
-    selected_model: Optional[str] = None  # only meaningful when auth_mode == "byok"
+    selected_model: Optional[str] = None  # BYOK model id, or preferred router model
 
 
 def load_config() -> OnboardingConfig:

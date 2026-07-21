@@ -213,7 +213,10 @@ class TestZCli(unittest.TestCase):
                     with patch("aider.z.auth.open_web_setup") as setup:
                         with patch(
                             "aider.z.onboarding.load_config",
-                            return_value=OnboardingConfig(auth_mode="router"),
+                            return_value=OnboardingConfig(
+                                auth_mode="router",
+                                selected_model="claude-sonnet-5",
+                            ),
                         ):
                             ok = ensure_agent_session(io)
         self.assertTrue(ok)
@@ -238,7 +241,10 @@ class TestZCli(unittest.TestCase):
                     with patch("aider.z.auth.open_web_setup") as setup:
                         with patch(
                             "aider.z.onboarding.load_config",
-                            return_value=OnboardingConfig(auth_mode="router"),
+                            return_value=OnboardingConfig(
+                                auth_mode="router",
+                                selected_model="claude-sonnet-5",
+                            ),
                         ):
                             ok = ensure_agent_session(io)
         self.assertTrue(ok)
