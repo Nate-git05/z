@@ -83,10 +83,10 @@
         <p class="auth-legal">
           {% if auth_intent == "signup" %}
           Already have an account?
-          <a href="/app/login">Sign in</a>
+          <a id="auth-switch-link" href="/app/login">Sign in</a>
           {% else %}
           New here?
-          <a href="/app/signup">Create an account</a>
+          <a id="auth-switch-link" href="/app/signup">Create an account</a>
           {% endif %}
           · By continuing you agree to the
           <a href="/#">Terms of Service</a> and

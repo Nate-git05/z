@@ -92,5 +92,25 @@ class OAuthState(Base):
     )
 
 
+class CliAuthBridge(Base):
+    """Browser → CLI handoff when localhost POST is blocked (HTTPS → http://127.0.0.1).
+
+    The CLI generates a high-entropy ``state``, opens the web signup/login page,
+    and polls ``GET /v1/auth/cli/poll``. After the browser finishes auth it
+    ``POST /v1/auth/cli/complete`` with the same state + session payload.
+    """
+
+    __tablename__ = "cli_auth_bridges"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    state: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
+    payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 def new_opaque_token(prefix: str = "z_") -> str:
     return prefix + secrets.token_urlsafe(32)

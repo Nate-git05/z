@@ -618,10 +618,10 @@ def _open_web_page_for_post_callback(
     timeout_message: str,
     failure_label: str = "Setup",
 ) -> dict | None:
-    """Open ``{auth_base}{path}`` and wait for a POST to a local callback.
+    """Open ``{auth_base}{path}`` and wait for auth to finish.
 
-    Browser pages on the auth host POST JSON ``{state, data|error}`` to
-    ``http://127.0.0.1:<port>/callback`` (never put secrets in a GET query).
+    Prefer a localhost POST callback. Also poll ``/v1/auth/cli/poll`` because
+    many browsers block HTTPS pages from reaching ``http://127.0.0.1``.
     """
     port = _find_available_port(8765, 8865)
     if port is None:
@@ -671,9 +671,14 @@ def _open_web_page_for_post_callback(
             result_box["done"].set()
 
         def _cors_headers(self):
+            # Chrome Private Network Access preflight from public HTTPS → loopback.
             self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header(
+                "Access-Control-Allow-Headers",
+                "Content-Type, Access-Control-Request-Private-Network",
+            )
+            self.send_header("Access-Control-Allow-Private-Network", "true")
 
         def _respond(self, status, body):
             self.send_response(status)
@@ -687,9 +692,35 @@ def _open_web_page_for_post_callback(
         def log_message(self, format, *args):  # noqa: A003
             return
 
+    def _poll_cli_bridge():
+        """Fallback when the browser cannot reach the local callback server."""
+        base = get_auth_base_url()
+        deadline = time.time() + AUTH_TIMEOUT_SECONDS
+        while not result_box["done"].is_set() and time.time() < deadline:
+            try:
+                resp = requests.get(
+                    f"{base}/v1/auth/cli/poll",
+                    params={"state": state},
+                    timeout=10,
+                )
+                if resp.status_code < 400:
+                    body = resp.json()
+                    if body.get("status") == "ready" and isinstance(body.get("data"), dict):
+                        result_box["data"] = body["data"]
+                        result_box["done"].set()
+                        return
+                    if body.get("status") in ("expired", "consumed"):
+                        return
+            except (requests.RequestException, ValueError, TypeError):
+                pass
+            # Wait in short slices so localhost success can cancel promptly.
+            result_box["done"].wait(timeout=1.0)
+
     server = socketserver.TCPServer(("127.0.0.1", port), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+    poller = threading.Thread(target=_poll_cli_bridge, daemon=True)
+    poller.start()
 
     base = get_auth_base_url()
     params = {"redirect_uri": redirect_uri, "state": state}
@@ -769,9 +800,15 @@ def open_web_login(
         extra_params={"method": method, "intent": intent},
         opening_message=f"Opening browser to {verb} with {label}…",
         success_html=(
-            "You're signed in to Z. Return to your terminal — this tab can close."
+            "Account created. Return to your terminal — this tab can close."
+            if intent == "signup"
+            else "You're signed in to Z. Return to your terminal — this tab can close."
         ),
-        timeout_message="Timed out waiting for the browser to finish.",
+        timeout_message=(
+            "Timed out waiting for sign-up to finish in the browser."
+            if intent == "signup"
+            else "Timed out waiting for the browser to finish."
+        ),
         failure_label="Sign up" if intent == "signup" else "Sign in",
     )
     if data is None:
