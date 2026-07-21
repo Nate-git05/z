@@ -369,6 +369,28 @@ def test_explicit_z_login_uses_web_login():
     terminal.assert_not_called()
 
 
+def test_open_web_login_never_uses_cli_credential_entry_in_dev_mode():
+    """Sign-in is web-only even when auth_dev_mode() would previously fall back."""
+    from aider.z.auth import open_web_login
+
+    io = FakeIO()
+    with patch.object(z_auth, "auth_dev_mode", return_value=True), patch(
+        "aider.z.login_screen.prompt_web_login_choice", return_value="z"
+    ), patch.object(z_auth, "login_with_email") as email, patch.object(
+        z_auth, "login_with_google"
+    ) as google, patch.object(z_auth, "run_login_flow") as terminal, patch.object(
+        z_auth, "_open_web_page_for_post_callback", return_value=None
+    ) as web:
+        result = open_web_login(io)
+
+    assert result is None
+    web.assert_called_once()
+    assert web.call_args.kwargs.get("extra_params") == {"method": "z"}
+    email.assert_not_called()
+    google.assert_not_called()
+    terminal.assert_not_called()
+
+
 def test_open_web_login_asks_google_vs_z_then_opens_method_url():
     from aider.z.auth import open_web_login
 

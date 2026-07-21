@@ -696,9 +696,10 @@ def _persist_session_credentials(io, creds: Credentials, *, analytics=None) -> C
 def open_web_login(io, analytics=None, *, method: str | None = None) -> Credentials | None:
     """Terminal asks Google vs Z, then opens the matching web login page.
 
-    ``method``: ``\"google\"`` | ``\"z\"``. When omitted, prompts in the terminal.
-    After the browser finishes, the page tells the user to return to the terminal
-    and attempts to close the tab. In auth_dev_mode(), falls back to local flows.
+    Sign-in credentials are collected only in the browser — never via CLI OTP
+    or in-terminal Google/email/phone flows. ``method``: ``\"google\"`` | ``\"z\"``.
+    When omitted, prompts in the terminal. After success, the page tells the user
+    to return to the terminal and attempts to close the tab.
     """
     from .login_screen import prompt_web_login_choice
 
@@ -707,23 +708,6 @@ def open_web_login(io, analytics=None, *, method: str | None = None) -> Credenti
     if method not in ("google", "z"):
         io.tool_output("Login cancelled.")
         return None
-
-    if auth_dev_mode():
-        # No real auth host — keep a local path for each choice.
-        try:
-            if method == "google":
-                result = login_with_google(io)
-            else:
-                result = login_with_email(io)
-        except AuthError as err:
-            io.tool_error(str(err))
-            return None
-        if not result.ok or not result.credentials:
-            io.tool_error(result.message or "Authentication failed.")
-            return None
-        return _persist_session_credentials(
-            io, result.credentials, analytics=analytics
-        )
 
     label = "Google" if method == "google" else "Z"
     data = _open_web_page_for_post_callback(
@@ -793,14 +777,15 @@ def open_web_setup(io, mode: str, *, skip_login: bool = False) -> dict | None:
 
 
 def _dev_web_setup(io, mode: str, *, skip_login: bool = False) -> dict | None:
-    """In-terminal fallback when no real auth backend/web app is configured.
+    """Dev fallback for mode setup when no /app/setup page is available.
 
-    Reuses run_login_flow + prompt_byok_setup so local testing works without
-    a deployed /app/setup page.
+    Login is always web-only (open_web_login). Only BYOK model/key prompting
+    stays in the terminal for local testing without a setup page.
     """
     credentials_data = None
     if not skip_login:
-        creds = run_login_flow(io)
+        # Avoid recursion through open_web_setup's auth_dev_mode branch.
+        creds = open_web_login(io)
         if not creds:
             return None
         credentials_data = creds.to_dict()
