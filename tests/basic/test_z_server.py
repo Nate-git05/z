@@ -117,11 +117,13 @@ class ZServerTestCase(unittest.TestCase):
         self.assertTrue(data["access_token"].startswith("z_"))
 
     def test_provisional_otp_works_without_dev_mode(self):
-        """123456 is accepted on production until Twilio is configured."""
+        """123456 is accepted on production until Twilio is live."""
         os.environ["Z_SERVER_DEV"] = "0"
-        os.environ.pop("TWILIO_ACCOUNT_SID", None)
-        os.environ.pop("TWILIO_AUTH_TOKEN", None)
-        os.environ.pop("TWILIO_VERIFY_SERVICE_SID", None)
+        # Even if Twilio env vars are present, keep accepting 123456
+        # until Z_PROVISIONAL_OTP=0 is set explicitly.
+        os.environ["TWILIO_ACCOUNT_SID"] = "ACxxxxxxxx"
+        os.environ["TWILIO_AUTH_TOKEN"] = "token"
+        os.environ["TWILIO_VERIFY_SERVICE_SID"] = "VAxxxxxxxx"
         os.environ.pop("Z_PROVISIONAL_OTP", None)
         get_settings.cache_clear()
         self.app = create_app()
@@ -138,6 +140,25 @@ class ZServerTestCase(unittest.TestCase):
         )
         self.assertEqual(verify.status_code, 200, verify.text)
         self.assertIn("access_token", verify.json())
+
+    def test_provisional_otp_can_be_disabled(self):
+        os.environ["Z_SERVER_DEV"] = "0"
+        os.environ["Z_PROVISIONAL_OTP"] = "0"
+        get_settings.cache_clear()
+        self.app = create_app()
+        self.client = TestClient(self.app, raise_server_exceptions=True)
+
+        start = self.client.post(
+            "/v1/auth/email/start",
+            json={"email": "no-prov@example.com", "name": "No"},
+        )
+        self.assertEqual(start.status_code, 200, start.text)
+        verify = self.client.post(
+            "/v1/auth/email/verify",
+            json={"email": "no-prov@example.com", "code": "123456", "name": "No"},
+        )
+        self.assertEqual(verify.status_code, 400, verify.text)
+        self.assertIn("Invalid code", verify.text)
 
     def test_sqlalchemy_user_model_fields(self):
         from z_server.db import get_session_factory
