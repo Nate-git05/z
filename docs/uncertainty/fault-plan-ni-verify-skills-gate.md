@@ -169,7 +169,7 @@ new `aider/z/ni_contract.py`, tests under `tests/basic/test_z_ni_contract.py`.
 
 ---
 
-### P0 — Verify: stale CMake + change-scoped tests (`verify-cmake`)
+### P0 — Verify: stale CMake + change-scoped tests (`verify-cmake`) — **IMPLEMENTED**
 
 **Goals**
 
@@ -186,14 +186,11 @@ new `aider/z/ni_contract.py`, tests under `tests/basic/test_z_ni_contract.py`.
 - **Meaningful pass** requires either matched change tests executed, or
   explicit `VerifyState` that change-tests were absent (fail closed in NI).
 
-**Acceptance**
-
-- Repro: existing `build/` with only `miniregex_tests`; edit CMakeLists to add
-  `minilfu_tests`; verify must reconfigure and run (or hard-fail if still
-  undiscovered), never report green on old suite alone.
-
-**Files:** `aider/z/uncertainty/verify.py`, new
-`aider/z/uncertainty/cmake_verify.py`, gate wiring, tests.
+**Shipped:** `aider/z/uncertainty/cmake_verify.py`; wired in `verify_edits`
+before ctest; `detect_test_command` returns ctest even without existing
+`build/`; gate passes `non_interactive` from `--yes-always`.
+Flags: `Z_CMAKE_RECONFIGURE` (default on), `Z_CMAKE_REQUIRE_MATCHED` (default
+on in NI / yes-always). Tests: `tests/basic/test_z_cmake_verify.py`.
 
 ---
 
@@ -333,10 +330,10 @@ optional `aider/z/uncertainty/recipe_runner.py`.
 
 ## Suggested PR slice order
 
-1. **chroma-telemetry** — tiny, confidence win  
-2. **gate-ni-ux** — messaging only  
-3. **ni-contract** — exit codes + auto-seed  
-4. **verify-cmake** — stale build  
+1. **chroma-telemetry** — tiny, confidence win (separate PR)  
+2. **gate-ni-ux** — block message + `Z_NI_GATE` (separate PR)  
+3. **ni-contract** — exit codes + auto-seed (separate PR)  
+4. **verify-cmake** — ✅ shipped (reconfigure + refuse stale suite-only green)  
 5. **sanitizer-teeth** — policy  
 6. **skill-retrieve** — lexical fallback + near-dup  
 
