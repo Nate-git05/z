@@ -1,8 +1,8 @@
 """Z mascot — pixel scientist glyph + waiting animation helpers.
 
 Idle pose is used on the startup / login banner (static, ASCII-stable).
-Working frames feed the compact spinner; the interactive runner game uses
-the taller sprites in ``waiting_game.py``.
+Working frames feed the compact spinner; the interactive wait display uses
+the spiral animation in ``waiting_game.py``.
 """
 
 from __future__ import annotations
@@ -81,7 +81,7 @@ class MascotSpinner:
     Lightweight frame-cycling mascot spinner for active Z work.
 
     Drop-in replacement for WaitingSpinner: start()/stop() and context manager.
-    Prefer ``MascotRunnerGame`` (waiting_game) when an interactive TTY wait is
+    Prefer ``SpiralWaiting`` (waiting_game) when an interactive TTY wait is
     wanted; this class stays as the safe non-interactive fallback.
     """
 
