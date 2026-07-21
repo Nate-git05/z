@@ -1,6 +1,6 @@
 # P3 Terminal UX — Turn flow (busy · queue · interrupt)
 
-**Status:** plan only — **do not implement until this plan is accepted**  
+**Status:** implemented — Idle / Busy / WaitingInput orchestrator + message queue  
 **Parent:** [terminal-ux-for-engineers.md](./terminal-ux-for-engineers.md)  
 **Siblings:** [terminal-ux-p0-plan.md](./terminal-ux-p0-plan.md), [terminal-ux-p1-plan.md](./terminal-ux-p1-plan.md), [terminal-ux-p2-plan.md](./terminal-ux-p2-plan.md)  
 **Branch intent:** `cursor/z-turn-flow-p3-…` (implementation PR after approval)  

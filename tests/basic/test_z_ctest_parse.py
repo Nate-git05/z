@@ -136,8 +136,18 @@ class PhaseSpinnerInterruptHintTests(unittest.TestCase):
         from aider.z.mascot import MascotSpinner
 
         coder = MagicMock(spec=Coder)
+        from aider.z.turn_ux import TurnOrchestrator
+
+        orch = TurnOrchestrator()
         coder.io = SimpleNamespace(
-            z_theme=True, tool_output=MagicMock(), agent_busy=False, _stop_agent_busy=None
+            z_theme=True,
+            tool_output=MagicMock(),
+            agent_busy=False,
+            _stop_agent_busy=None,
+            turn_orchestrator=orch,
+            ensure_turn_ux=MagicMock(return_value=orch),
+            start_busy_queue_reader=MagicMock(),
+            stop_busy_queue_reader=MagicMock(),
         )
         coder.waiting_spinner = None
         coder.show_pretty = lambda: True

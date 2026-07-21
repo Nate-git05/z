@@ -10,9 +10,20 @@ from unittest.mock import MagicMock, patch
 class PhaseSpinnerHelperTests(unittest.TestCase):
     def _coder(self):
         from aider.coders.base_coder import Coder
+        from aider.z.turn_ux import TurnOrchestrator
 
+        orch = TurnOrchestrator()
         coder = MagicMock(spec=Coder)
-        coder.io = SimpleNamespace(z_theme=True, tool_output=MagicMock())
+        coder.io = SimpleNamespace(
+            z_theme=True,
+            tool_output=MagicMock(),
+            agent_busy=False,
+            _stop_agent_busy=None,
+            turn_orchestrator=orch,
+            ensure_turn_ux=MagicMock(return_value=orch),
+            start_busy_queue_reader=MagicMock(),
+            stop_busy_queue_reader=MagicMock(),
+        )
         coder.waiting_spinner = None
         coder.show_pretty = lambda: True
         # Bind real helpers
