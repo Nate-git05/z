@@ -197,7 +197,7 @@ new `aider/z/ni_contract.py`, tests under `tests/basic/test_z_ni_contract.py`.
 
 ---
 
-### P0 — Sanitizer: soft → hard when required (`sanitizer-teeth`)
+### P0 — Sanitizer: soft → hard when required (`sanitizer-teeth`) — **IMPLEMENTED**
 
 **Goals**
 
@@ -210,13 +210,11 @@ new `aider/z/ni_contract.py`, tests under `tests/basic/test_z_ni_contract.py`.
 - If tool truly unavailable: NI exit ≠ 0 with node ids listed; do not pretend
   unit tests substituted.
 
-**Acceptance**
-
-- Dynamic-risk C edit + hard policy + no sanitizer → commit blocked and NI
-  nonzero; log shows attempted discovery commands.
-
-**Files:** `dynamic_analysis.py` (`blocks_commit` / soft_block), `gate.py`,
-optional `aider/z/uncertainty/recipe_runner.py`.
+**Shipped:** `sanitizer_policy` / `hard_policy` on `DynamicComparison`;
+`tool_missing` → High + `blocks_commit` under hard; `recipe_runner.py` extracts
+and attempts cmake/ctest/make sanitizer recipes; gate passes
+`non_interactive` from `--yes-always`. Flags: `Z_SANITIZER_POLICY`,
+`Z_SANITIZER_RECIPES` (default on). Tests: `tests/basic/test_z_sanitizer_policy.py`.
 
 ---
 
@@ -333,11 +331,11 @@ optional `aider/z/uncertainty/recipe_runner.py`.
 
 ## Suggested PR slice order
 
-1. **chroma-telemetry** — tiny, confidence win  
-2. **gate-ni-ux** — messaging only  
-3. **ni-contract** — exit codes + auto-seed  
-4. **verify-cmake** — stale build  
-5. **sanitizer-teeth** — policy  
+1. **chroma-telemetry** — tiny, confidence win (separate PR)  
+2. **gate-ni-ux** — block message + `Z_NI_GATE` (separate PR)  
+3. **ni-contract** — exit codes + auto-seed (separate PR)  
+4. **verify-cmake** — reconfigure + refuse stale suite (separate PR)  
+5. **sanitizer-teeth** — ✅ shipped (hard tool_missing + recipes)  
 6. **skill-retrieve** — lexical fallback + near-dup  
 
 Each slice independently mergeable with tests.
