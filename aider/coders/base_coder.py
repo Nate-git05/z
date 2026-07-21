@@ -4152,10 +4152,27 @@ class Coder:
                     return edited
             except Exception:
                 pass
+
+        content = getattr(self, "partial_response_content", None) or ""
+        proposed_edit_blocks = self._response_has_edit_blocks(content)
+
         try:
             edits = self.get_edits()
+            edits_before_filter = list(edits or [])
             edits = self.apply_edits_dry_run(edits)
             edits = self.prepare_to_edit(edits)
+            # Eval Finding 2: never silently drop a full SEARCH/REPLACE stream
+            if edits_before_filter and not edits:
+                msg = (
+                    "FAILED TO APPLY EDIT: model proposed SEARCH/REPLACE block(s) "
+                    "but every edit was blocked or skipped (not in chat / create "
+                    "refused / outside repo). Nothing was written to disk."
+                )
+                self.io.tool_error(msg)
+                self.reflected_message = msg
+                self._z_edit_apply_failed = True
+                return edited
+
             edited = set(edit[0] for edit in edits)
 
             self.apply_edits(edits)
@@ -4170,6 +4187,7 @@ class Coder:
             self.io.tool_output(str(err))
 
             self.reflected_message = str(err)
+            self._z_edit_apply_failed = True
             return edited
 
         except ANY_GIT_ERROR as err:
@@ -4182,6 +4200,7 @@ class Coder:
             traceback.print_exc()
 
             self.reflected_message = str(err)
+            self._z_edit_apply_failed = True
             return edited
 
         for path in edited:
@@ -4190,7 +4209,27 @@ class Coder:
             else:
                 self.io.tool_output(f"Applied edit to {path}")
 
+        # Eval Finding 2: fences in the reply but zero applied paths
+        if proposed_edit_blocks and not edited and not self.dry_run:
+            msg = (
+                "FAILED TO APPLY EDIT: response contained SEARCH/REPLACE fences "
+                "but no file was updated on disk. Refusing silent success."
+            )
+            self.io.tool_error(msg)
+            if not getattr(self, "reflected_message", None):
+                self.reflected_message = msg
+            self._z_edit_apply_failed = True
+
         return edited
+
+    @staticmethod
+    def _response_has_edit_blocks(content: str) -> bool:
+        if not content:
+            return False
+        has_search = bool(re.search(r"^<{5,9}\s*SEARCH", content, re.M | re.I))
+        has_div = "=======" in content
+        has_rep = bool(re.search(r"^>{5,9}\s*REPLACE", content, re.M | re.I))
+        return has_search and has_div and has_rep
 
     def parse_partial_args(self):
         # dump(self.partial_response_function_call)
@@ -4376,9 +4415,14 @@ class Coder:
                 if not approved:
                     msg = (
                         f"blocked: needs human approval to run:\n{skipped}\n"
-                        "Read-only repo commands, declared project checks, and "
-                        "declared dependency restores are auto-approved; all other "
-                        "shell commands require an interactive Yes."
+                        "Read-only repo commands, declared project checks "
+                        "(including cmake --build / ctest when CMakeLists.txt "
+                        "exists), and declared dependency restores are "
+                        "auto-approved; all other shell commands require an "
+                        "interactive Yes.\n"
+                        "If verification later says TESTS_FAILED / Not Run, "
+                        "the build step may never have been allowed to run — "
+                        "not necessarily that the code is broken."
                     )
                     self.io.tool_error(msg)
                     engine = getattr(self, "uncertainty_engine", None)
