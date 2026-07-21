@@ -125,3 +125,22 @@ def budget_tool_output(
         f"{'─' * 40}\n"
     )
     return header + preview, path
+
+
+def inject_tool_result(
+    text: str,
+    *,
+    label: str = "tool",
+    command: Optional[str] = None,
+) -> str:
+    """
+    Budget an arbitrary tool/MCP/scrape dump for chat injection.
+
+    Returns the (possibly previewed) text ready for ``cur_messages``.
+    """
+    budgeted, path = budget_tool_output(text or "", label=label)
+    if command:
+        return f"Output of `{command}`:\n{budgeted}"
+    if path:
+        return budgeted
+    return budgeted
