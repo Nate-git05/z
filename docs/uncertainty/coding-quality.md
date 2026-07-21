@@ -48,7 +48,7 @@ verify failed, or completion is PARTIAL, Z reflects instead of accepting the cla
 |-----------|---------|--------------|
 | Strict SEARCH (no cross-file fallback) | on | `Z_STRICT_SEARCH=0` |
 | AGENTS.md house instructions | on | `Z_HOUSE_INSTRUCTIONS=0` |
-| Live P2 adapter skeleton | opt-in | `Z_P2_LIVE=1` + `--adapter live` |
+| Live P2 adapter | opt-in (`z` / `hook` / `replay`) | `Z_P2_LIVE=1` + `--adapter live` |
 
 ### Strict SEARCH
 
@@ -63,8 +63,17 @@ per session as a compact coding-context block.
 ### Live P2 adapter
 
 ```bash
-Z_P2_LIVE=1 Z_P2_LIVE_HOOK=/path/to/hook.py \
-  python -m aider.z.benchmark run --adapter live --ids p2-011-bugfix-average
+# Builtin Z coder (API keys required)
+Z_P2_LIVE=1 Z_P2_LIVE_MODEL=gpt-4o-mini \
+  python -m aider.z.benchmark run --adapter live --ids p2-011-bugfix-average --no-baseline
+
+# Example hook
+Z_P2_LIVE=1 Z_P2_LIVE_HOOK=scripts/p2_live_hook_example.py \
+  python -m aider.z.benchmark run --adapter live --ids p2-011-bugfix-average --no-baseline
+
+# Offline replay (no LLM)
+Z_P2_LIVE=1 Z_P2_LIVE_BACKEND=replay \
+  python -m aider.z.benchmark run --adapter live --ids p2-011-bugfix-average --no-baseline
 ```
 
 Without `Z_P2_LIVE=1`, selecting `--adapter live` returns a timed-out stub so CI
