@@ -768,13 +768,23 @@ class Coder:
         return True
 
     def _stop_waiting_spinner(self):
-        """Stop and clear the waiting spinner if it is running."""
+        """Finish the waiting display (soft wind-down when supported)."""
         spinner = getattr(self, "waiting_spinner", None)
-        if spinner:
-            try:
+        if not spinner:
+            return
+        try:
+            # Agent Runner: decelerate → settle → resolve, then clear
+            if hasattr(spinner, "notifyFinish") and hasattr(spinner, "onEndComplete"):
+                done = threading.Event()
+                spinner.onEndComplete(done.set)
+                spinner.notifyFinish()
+                # Spec: ~0.9–1.2s ending; don't block the agent forever
+                if not done.wait(timeout=2.0):
+                    spinner.stop()
+            else:
                 spinner.stop()
-            finally:
-                self.waiting_spinner = None
+        finally:
+            self.waiting_spinner = None
 
     def get_abs_fnames_content(self):
         for fname in list(self.abs_fnames):
