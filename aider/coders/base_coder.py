@@ -1525,7 +1525,12 @@ class Coder:
             )
             if not block:
                 return
-            self.io.tool_output("Explore pass: candidate files found (read-only).")
+            deep = "Explore scout" in block or "deep)" in block[:80]
+            self.io.tool_output(
+                "Explore scout: candidate files + signatures (read-only)."
+                if deep
+                else "Explore pass: candidate files found (read-only)."
+            )
             self.cur_messages += [
                 {"role": "user", "content": block},
                 {

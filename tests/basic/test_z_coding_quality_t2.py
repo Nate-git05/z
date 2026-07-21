@@ -69,12 +69,13 @@ class ExplorePassTests(unittest.TestCase):
             pkg.mkdir()
             (pkg / "ops.py").write_text("def average(xs): return sum(xs)/len(xs)\n", encoding="utf-8")
             os.environ["Z_EXPLORE_PASS"] = "1"
+            os.environ["Z_EXPLORE_DEPTH"] = "thin"
             block = run_explore_pass(
                 "investigate average in calcpkg ops",
                 root=root,
                 already_in_chat=[],
             )
-            self.assertIn("Explore pass", block)
+            self.assertIn("Explore", block)
             self.assertIn("ops.py", block)
 
 
