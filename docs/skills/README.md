@@ -78,6 +78,10 @@ When your task matches a skill, you’ll see:
 Applying skill(s): Stripe webhook validation
 ```
 
+By default Z injects a **compact skill directive** (title, meta, truncated body +
+path to the full playbook on disk) so the coding turn stays thin. Set
+`Z_SKILL_INJECT_FULL=1` if you want the legacy full-markdown inject.
+
 ---
 
 ## After a task (capture flow)

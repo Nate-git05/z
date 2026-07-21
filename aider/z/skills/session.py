@@ -357,8 +357,23 @@ def format_bug_pattern_hypothesis(skill: Skill, *, repo_language: str = "") -> s
 
 
 def format_skills_for_context(skills: Sequence[Skill], *, checkpoint: str = "turn") -> str:
+    """
+    Format matched skills for injection into the coding turn.
+
+    Default (OpenCode-inspired): compact *directives* — title/meta + truncated
+    body — so playbooks steer without crowding the coder context. Full bodies
+    remain on disk at each skill's path.
+
+    Set ``Z_SKILL_INJECT_FULL=1`` to restore legacy full-markdown injection.
+    """
     if not skills:
         return ""
+
+    from aider.z.coding_context import format_skills_compact, skill_inject_full_enabled
+
+    if not skill_inject_full_enabled():
+        return format_skills_compact(skills, checkpoint=checkpoint)
+
     patterns = [s for s in skills if (s.kind or "") == SKILL_KIND_BUG_PATTERN]
     others = [s for s in skills if (s.kind or "") != SKILL_KIND_BUG_PATTERN]
     parts: List[str] = []
