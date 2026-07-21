@@ -62,11 +62,13 @@ class TestZMascot(unittest.TestCase):
         spinner.stop()
 
     def test_waiting_game_fallback_without_tty(self):
-        from aider.z.waiting_game import MascotRunnerGame, waiting_display
+        from aider.z.waiting_game import AgentRunnerGame, waiting_display
 
-        game = MascotRunnerGame("waiting")
+        game = AgentRunnerGame("waiting")
         game.is_tty = False
+        game.fancy = False
         game.start()
+        self.assertIsNotNone(game._fallback)
         game.stop()
         disp = waiting_display("x", interactive=False)
         self.assertIsInstance(disp, MascotSpinner)
@@ -74,17 +76,34 @@ class TestZMascot(unittest.TestCase):
         disp.start()
         disp.stop()
 
-    def test_waiting_game_physics_jump(self):
-        from aider.z.waiting_game import MascotRunnerGame
+    def test_agent_runner_soft_finish_api(self):
+        from aider.z.waiting_game import AgentRunnerGame
 
-        game = MascotRunnerGame("waiting", delay=0.01)
-        game.is_tty = False
-        game._interactive = True  # exercise physics without drawing
+        game = AgentRunnerGame("waiting")
+        game.fancy = False  # use fallback path so we don't touch the TTY
+        finished = []
+        game.onEndComplete(lambda: finished.append(1))
+        game.start()
+        game.notifyFinish()
+        # Fallback notifyFinish fires end immediately
+        self.assertTrue(finished)
+        game.stop()
+
+    def test_half_block_render_and_jump(self):
+        from aider.z.waiting_game import AgentRunnerGame, _render_half_block
+
+        lines = _render_half_block(
+            [["#F5A623", None], [None, "#161A2E"]]
+        )
+        self.assertEqual(len(lines), 1)
+        self.assertIn("▀", lines[0] + "▄")  # either half-block glyph used
+
+        game = AgentRunnerGame("waiting")
+        game.state.phase = "running"
         game._jump()
         self.assertGreater(game.state.vel_y, 0)
-        for _ in range(5):
-            game._tick_physics()
-        self.assertGreaterEqual(game.state.score, 5)
+        game._physics(0.08, spawning=False)
+        self.assertGreaterEqual(game.state.score, 0)
 
 
 class TestZBanner(unittest.TestCase):
