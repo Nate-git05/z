@@ -125,6 +125,54 @@ class ShellHandleSafeListTest(unittest.TestCase):
         self.assertFalse(io.confirm_ask("Override high risk?", explicit_yes_required=True))
 
 
+class CmakeDeclaredVerificationTest(unittest.TestCase):
+    """Eval Finding 3: cmake --build / ctest auto-approve when CMakeLists exists."""
+
+    def test_classify_cmake_build_and_ctest(self):
+        from aider.z.shell_risk import CommandRiskClass, classify_command
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "CMakeLists.txt").write_text("project(x)\n", encoding="utf-8")
+            for cmd in (
+                "cmake -S . -B build",
+                "cmake --build build",
+                "cmake --build build --target minijson_tests -j 4",
+                "ctest --test-dir build --output-on-failure",
+            ):
+                c = classify_command(cmd, root=root)
+                self.assertEqual(
+                    c.risk_class,
+                    CommandRiskClass.DECLARED_VERIFICATION,
+                    msg=cmd,
+                )
+
+    def test_cmake_without_cmakelists_not_auto(self):
+        from aider.z.shell_risk import CommandRiskClass, classify_command
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            c = classify_command("cmake --build build", root=root)
+            self.assertNotEqual(c.risk_class, CommandRiskClass.DECLARED_VERIFICATION)
+
+    def test_handle_shell_auto_approves_cmake_build_under_yes_always(self):
+        with GitTemporaryDirectory():
+            Path("CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.16)\n", encoding="utf-8")
+            io = InputOutput(yes=True, pretty=False, fancy_input=False)
+            coder = Coder.create(Model("gpt-3.5-turbo"), "diff", io=io)
+
+            with patch("aider.coders.base_coder.run_cmd") as mock_run:
+                mock_run.return_value = (0, "Built target x\n")
+                out = coder.handle_shell_commands(
+                    "cmake --build build\nctest --test-dir build --output-on-failure",
+                    group=None,
+                )
+
+            self.assertEqual(mock_run.call_count, 2)
+            self.assertIsNotNone(out)
+            self.assertIn("Built target", out)
+
+
 class ConfirmEofTest(unittest.TestCase):
     def test_eof_noninteractive_fails_loud(self):
         io = InputOutput(yes=None, pretty=False, fancy_input=False)

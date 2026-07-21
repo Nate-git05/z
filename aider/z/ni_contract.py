@@ -66,8 +66,13 @@ def apply_ni_reflection_floor(coder) -> None:
 
 _ADD_FILES_MISS_RE = re.compile(
     r"(?is)("
-    r"please\s+add\s+(?:these\s+)?(?:files?|paths?)|"
-    r"add\s+(?:these\s+)?(?:files?|paths?)\s+to\s+(?:the\s+)?chat|"
+    r"please\s+add\s+(?:these\s+|any\s+of\s+these\s+|the\s+)?"
+    r"(?:files?|paths?|that\s+already\s+exist)|"
+    r"please\s+add\s+any\s+of\s+these|"
+    r"add\s+(?:these\s+|any\s+of\s+these\s+)?"
+    r"(?:files?|paths?)\s+to\s+(?:the\s+)?chat|"
+    r"add\s+any\s+of\s+these\s+(?:that\s+already\s+exist\s+)?"
+    r"to\s+(?:the\s+)?chat|"
     r"(?:files?|paths?)\s+(?:are|is)\s+not\s+in\s+(?:the\s+)?chat|"
     r"not\s+(?:currently\s+)?in\s+(?:the\s+)?chat|"
     r"once\s+you\s+(?:have\s+)?add(?:ed)?|"
@@ -397,6 +402,16 @@ def evaluate_ni_outcome(
         )
 
     if need_edits:
+        if getattr(coder, "_z_edit_apply_failed", False) is True and edited_count == 0:
+            return NiOutcome(
+                exit_code=1,
+                edited_count=0,
+                verify=verify,
+                commit=commit,
+                gate=gate,
+                mode=mode_s,
+                reason="SEARCH/REPLACE proposed but nothing applied",
+            )
         if edited_count == 0:
             return NiOutcome(
                 exit_code=1,

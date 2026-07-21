@@ -28,10 +28,11 @@ from aider.z.task_mode import TaskMode
 
 
 class DetectAddFilesMissTest(unittest.TestCase):
-    def test_please_add_files(self):
+    def test_please_add_any_of_these(self):
+        # Eval Finding 1 — wording seen on build C
         self.assertTrue(
             detect_add_files_miss(
-                "Please add these files to the chat:\n- src/foo.c\n- src/foo.h"
+                "Please add any of these that already exist to the chat."
             )
         )
 
