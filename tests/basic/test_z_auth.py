@@ -67,7 +67,23 @@ class TestAuthFlows(unittest.TestCase):
         os.environ.pop("Z_AUTH_DEV", None)
         os.environ.pop("Z_AUTH_URL", None)
         os.environ.pop("Z_GOOGLE_CLIENT_ID", None)
-        self.assertTrue(auth_dev_mode())
+        # Production default auth URL is Cloud Run — not local mock mode.
+        self.assertFalse(auth_dev_mode())
+
+    def test_dev_mode_localhost_auto(self):
+        os.environ.pop("Z_AUTH_DEV", None)
+        os.environ["Z_AUTH_URL"] = "http://127.0.0.1:8080"
+        try:
+            self.assertTrue(auth_dev_mode())
+        finally:
+            os.environ.pop("Z_AUTH_URL", None)
+
+    def test_dev_mode_explicit_flag(self):
+        os.environ["Z_AUTH_DEV"] = "1"
+        try:
+            self.assertTrue(auth_dev_mode())
+        finally:
+            os.environ.pop("Z_AUTH_DEV", None)
 
     def test_dev_email_login(self):
         io = MagicMock()
