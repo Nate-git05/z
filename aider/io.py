@@ -977,6 +977,123 @@ class InputOutput:
 
         return is_yes
 
+    def plan_confirm_ask(
+        self,
+        question,
+        *,
+        subject=None,
+        default="y",
+    ):
+        """
+        Confirm an implementation plan with a Change option.
+
+        Returns ``\"yes\"`` | ``\"no\"`` | ``\"change\"``.
+        ``--yes-always`` auto-returns ``\"yes\"``.
+        """
+        self.num_user_asks += 1
+        self.ring_bell()
+
+        options = " (Y)es/(N)o/(C)hange"
+        if default.lower().startswith("y"):
+            prompt = f"{question}{options} [Yes]: "
+        elif default.lower().startswith("n"):
+            prompt = f"{question}{options} [No]: "
+        else:
+            prompt = f"{question}{options} [{default}]: "
+
+        if subject:
+            self.tool_output()
+            if getattr(self, "z_theme", False) and self.pretty:
+                from aider.z.escalation import render_escalation
+
+                render_escalation(
+                    question.strip(),
+                    console=self.console,
+                    context=subject if isinstance(subject, str) else None,
+                    options=["Yes — proceed", "No — abort edits", "Change — revise the plan"],
+                    pretty=True,
+                )
+            elif "\n" in subject:
+                lines = subject.splitlines()
+                max_length = max(len(line) for line in lines)
+                padded_lines = [line.ljust(max_length) for line in lines]
+                self.tool_output("\n".join(padded_lines), bold=True)
+            else:
+                self.tool_output(subject, bold=True)
+
+        valid = ("yes", "no", "change")
+        if self.yes is True:
+            res = "y"
+        elif self.yes is False:
+            res = "n"
+        else:
+            style = self._get_style()
+            while True:
+                try:
+                    if self.prompt_session:
+                        res = self.prompt_session.prompt(
+                            prompt,
+                            style=style,
+                            complete_while_typing=False,
+                        )
+                    else:
+                        res = input(prompt)
+                except EOFError:
+                    interactive = False
+                    try:
+                        interactive = bool(sys.stdin and sys.stdin.isatty())
+                    except Exception:
+                        interactive = False
+                    if not interactive:
+                        self.tool_error(
+                            "blocked: needs human approval for the implementation "
+                            "plan (no interactive terminal). Re-run in a TTY, or "
+                            "use --yes-always to auto-approve."
+                        )
+                        self.append_chat_history(
+                            f"{prompt.strip()} n  # eof/non-interactive",
+                            linebreak=True,
+                            blockquote=True,
+                        )
+                        return "no"
+                    res = default
+                    break
+                if not res:
+                    res = default
+                    break
+                res = res.lower().strip()
+                if any(v.startswith(res) for v in valid) and res:
+                    break
+                # Free-text that looks like a revision → treat as change intent
+                if len(res) > 2 and res not in ("y", "n", "c", "ye", "yo"):
+                    self.tool_output(
+                        "Treating that as a plan change request…"
+                    )
+                    # Stash for caller via attribute (consumed once)
+                    self._pending_plan_change = res
+                    self.append_chat_history(
+                        f"{prompt.strip()} change:{res}",
+                        linebreak=True,
+                        blockquote=True,
+                    )
+                    return "change"
+                self.tool_error("Please answer Yes, No, or Change (Y/N/C).")
+
+        res0 = res.lower()[0]
+        if res0 == "c":
+            choice = "change"
+        elif res0 == "y":
+            choice = "yes"
+        else:
+            choice = "no"
+
+        self.append_chat_history(
+            f"{prompt.strip()} {choice[0]}",
+            linebreak=True,
+            blockquote=True,
+        )
+        return choice
+
     @restore_multiline
     def prompt_ask(self, question, default="", subject=None):
         self.num_user_asks += 1

@@ -19,6 +19,8 @@ from aider.z.uncertainty.checklist import (  # noqa: E402
 from aider.z.uncertainty.plan import (  # noqa: E402
     draft_plan_from_request,
     format_plan_for_confirm,
+    interactive_plan_confirm,
+    revise_plan_with_feedback,
 )
 
 
@@ -38,14 +40,15 @@ class ThinChecklistUiTest(unittest.TestCase):
         self.assertIsNotNone(plan)
         self.assertTrue(plan.approach)
         self.assertGreaterEqual(len(plan.steps), 4)
-        # Must not keep a single echo item
         joined = " ".join(i.text.lower() for i in cl.items)
         self.assertNotEqual(joined.strip(), msg)
         self.assertTrue(
-            any("socket" in i.text.lower() or "webhook" in i.text.lower() for i in cl.items)
+            any(
+                "socket" in i.text.lower() or "webhook" in i.text.lower()
+                for i in cl.items
+            )
             or any("scaffold" in i.text.lower() for i in cl.items)
         )
-        # Preview UI shows approach + steps, not only the echo
         rendered = format_checklist_for_user(cl, plan=plan, thin=True)
         self.assertIn("Proposed approach", rendered)
         self.assertIn("Implementation steps:", rendered)
@@ -77,43 +80,100 @@ class ThinChecklistUiTest(unittest.TestCase):
         self.assertNotIn("Proposed approach", rendered)
 
 
+class PlanChangeOptionTest(unittest.TestCase):
+    def test_revise_socket_mode_feedback(self):
+        plan = draft_plan_from_request("build me a slack chatbot")
+        revised = revise_plan_with_feedback(
+            plan,
+            "use socket mode, python, no llm",
+            original_request="build me a slack chatbot",
+        )
+        blob = " ".join(revised.steps).lower() + " " + (revised.approach or "").lower()
+        self.assertIn("socket", blob)
+        self.assertTrue(
+            any("python" in (s or "").lower() for s in revised.steps)
+            or "python" in (revised.approach or "").lower()
+        )
+        self.assertTrue(any("llm" in (o or "").lower() for o in revised.out_of_scope))
+        self.assertTrue(
+            any(
+                "user revised" in (a.ambiguity or "").lower()
+                for a in revised.ambiguities
+            )
+        )
+
+    def test_interactive_change_then_yes(self):
+        plan = draft_plan_from_request("build me a slack chatbot")
+        io = MagicMock()
+        io.yes = None
+        io.plan_confirm_ask = MagicMock(side_effect=["change", "yes"])
+        io.prompt_ask = MagicMock(return_value="use socket mode and python")
+        io._pending_plan_change = None
+        io.confirm_ask = MagicMock(return_value=True)
+
+        ok, final = interactive_plan_confirm(
+            io,
+            plan,
+            question="Proceed with this approach?",
+            original_request="build me a slack chatbot",
+        )
+        self.assertTrue(ok)
+        self.assertIsNotNone(final)
+        self.assertEqual(io.plan_confirm_ask.call_count, 2)
+        self.assertTrue(io.prompt_ask.called)
+        blob = " ".join(final.steps).lower()
+        self.assertIn("socket", blob)
+
+    def test_free_text_pending_change_at_confirm(self):
+        plan = draft_plan_from_request("build me a slack chatbot")
+        mock_io = MagicMock()
+        mock_io.yes = None
+        mock_io.plan_confirm_ask = MagicMock(side_effect=["change", "yes"])
+        mock_io._pending_plan_change = "webhook only, typescript"
+        mock_io.prompt_ask = MagicMock(return_value="")
+        mock_io.confirm_ask = MagicMock(return_value=True)
+
+        ok, final = interactive_plan_confirm(
+            mock_io,
+            plan,
+            original_request="build me a slack chatbot",
+        )
+        self.assertTrue(ok)
+        blob = " ".join(final.steps).lower() + (final.approach or "").lower()
+        self.assertTrue("webhook" in blob or "typescript" in blob)
+
+
 class BeginTaskConfirmTest(unittest.TestCase):
-    def test_thin_task_shows_confirm_subject_with_steps(self):
-        """Interactive thin preview uses confirm_ask with real steps."""
+    def test_thin_task_uses_plan_confirm_with_change(self):
+        from pathlib import Path
+
         from aider.coders.base_coder import Coder
+        from aider.z.uncertainty.engine import SessionContext, UncertaintyEngine
+        from aider.z.uncertainty.store import UncertaintyStore
 
         io = MagicMock()
         io.yes = None
-        io.confirm_ask.return_value = True
+        io.plan_confirm_ask = MagicMock(return_value="yes")
+        io.confirm_ask = MagicMock(return_value=True)
 
-        # Minimal coder stub — call the method directly
         coder = MagicMock(spec=Coder)
         coder.io = io
+        coder.cur_messages = []
         coder._drift_asked_this_task = False
         coder._drift_reflection_log = []
-
-        from aider.z.uncertainty.engine import SessionContext, UncertaintyEngine
-        from aider.z.uncertainty.store import UncertaintyStore
-        from pathlib import Path
 
         store = UncertaintyStore(root=Path(_HOME) / "uncertainties")
         ctx = SessionContext(root=Path(_HOME), store=store)
         engine = UncertaintyEngine(ctx)
         coder.uncertainty_engine = engine
 
-        # Bind real method
         Coder._maybe_begin_uncertainty_task(coder, "build me a slack chatbot")
 
-        self.assertTrue(io.tool_output.called)
         printed = "\n".join(
             str(c.args[0]) for c in io.tool_output.call_args_list if c.args
         )
         self.assertIn("Proposed approach", printed)
-        self.assertIn("Implementation steps:", printed)
-        self.assertTrue(io.confirm_ask.called)
-        subject = io.confirm_ask.call_args.kwargs.get("subject") or ""
-        self.assertIn("Steps:", subject)
-        self.assertNotIn("Do: build me a slack chatbot", subject)
+        self.assertTrue(io.plan_confirm_ask.called)
         self.assertTrue(engine.ctx.checklist.confirmed_by_user)
 
 
