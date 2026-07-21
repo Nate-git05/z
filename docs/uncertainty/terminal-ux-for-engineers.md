@@ -1,6 +1,6 @@
 # Terminal UX for software engineers
 
-**Status:** design — P0/P1 implemented (see tranche links); P2 open  
+**Status:** design — P0/P1/P2 implemented (see tranche links)  
 **Audience:** people shipping product code with Z in a TTY  
 **Non-goals:** landing page, marketing, web dashboard
 
@@ -64,7 +64,7 @@ Even with phase spinners, completed milestones still print multiple lines.
 
 - Token/cost after every LLM round (`show_usage_report`)  
 - Most `tool_output` mirrored into chat history as blockquotes (`io.tool_output`)  
-- Dual uncertainty UIs: production `uncertainty/ui.py` vs unused Rich `uncertainty_ui.py`
+- Dual uncertainty UIs: production `uncertainty/ui.py` vs unused Rich `uncertainty_ui.py` (P2: product uses production Rich; prototype deprecated)
 
 ---
 
@@ -180,7 +180,7 @@ Document this next to NI gate UX (`fault-plan-ni-verify-skills-gate.md`).
 
 ## 10. Uncertainty browse
 
-- Prefer one stack: either port Rich hierarchy into `uncertainty/ui.py` or wire `uncertainty_ui.py` to `/uncertainties`  
+- One stack: Rich hierarchy in production `uncertainty/ui.py` (prototype `uncertainty_ui.py` deprecated)  
 - Keep risk-first sort; actions Fix / Test / Explain / Ignore / Custom  
 - After edits: one T1 line `Uncertainty · 2 High · 1 Medium — /uncertainties` instead of long prose when possible
 
@@ -215,6 +215,8 @@ Document this next to NI gate UX (`fault-plan-ni-verify-skills-gate.md`).
 
 7. Unify `/uncertainties` presentation  
 8. Golden “one implement turn” transcript fixtures for noise budget  
+
+**Extensive plan:** [terminal-ux-p2-plan.md](./terminal-ux-p2-plan.md) · **Implemented:** this PR
 
 **Out of scope for these tranches:** removing plan gates, auto-skipping verify, web UI.
 

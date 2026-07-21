@@ -2100,18 +2100,27 @@ Just show me the edits I need to make.
             mode = "risk"
         elif args.isdigit():
             # Direct open by index
-            from aider.z.uncertainty.tree import build_tree, flatten_for_display
-            from aider.z.uncertainty.ui import format_detail
+            from aider.z.uncertainty.ui import (
+                format_detail,
+                render_detail_rich,
+                rows_for_listing,
+            )
             from aider.z.uncertainty.actions import apply_action
 
-            nodes = store.list(include_resolved=False)
-            rows = flatten_for_display(build_tree(nodes, mode="risk"), mode="risk")
+            rows = rows_for_listing(store, mode="risk")
             idx = int(args)
             if idx < 1 or idx > len(rows):
                 self.io.tool_warning("Node number out of range. Use /uncertainties to list.")
                 return
             node = rows[idx - 1][1]
-            self.io.tool_output(format_detail(node))
+            pretty = bool(getattr(self.io, "pretty", True))
+            if pretty and getattr(self.io, "console", None) is not None:
+                try:
+                    render_detail_rich(node, self.io.console)
+                except Exception:
+                    self.io.tool_output(format_detail(node))
+            else:
+                self.io.tool_output(format_detail(node))
             act = self.io.prompt_ask(
                 "Action [F]ix / [T]est / [E]xplain / [I]gnore / [C]ustom / Enter skip",
                 default="",
