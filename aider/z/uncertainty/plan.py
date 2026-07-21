@@ -278,6 +278,12 @@ def _clean_plan_title(planning_text: str, fallback: str = "Implementation plan")
         return "Multiplayer feature — implementation plan"
     if re.search(r"(?i)\b(web\s*app|next\.?js|react)\b", lower):
         return "Web app — implementation plan"
+    if re.search(
+        r"(?i)\b(slack|discord|teams)\b.*\b(bot|chatbot|app)\b|"
+        r"\b(chat\s*bot|chatbot|slack\s*bot|discord\s*bot)\b",
+        lower,
+    ):
+        return "Chatbot — implementation plan"
     if re.search(r"(?i)\b(api|endpoint|backend)\b", lower) and re.search(
         r"(?i)\b(add|create|implement|build|change)\b", lower
     ):
@@ -383,6 +389,33 @@ def _draft_approach_and_steps(
             "Wire auth/authorization if the surface is protected.",
             "Add integration tests for success and error paths.",
         ]
+    elif re.search(
+        r"(?i)\b(slack|discord|teams)\b.*\b(bot|chatbot|app)\b|"
+        r"\b(chat\s*bot|chatbot|slack\s*bot|discord\s*bot)\b|"
+        r"\bbot\b.*\b(slack|discord|teams)\b",
+        lower,
+    ) and not _prohibited("bot"):
+        approach = (
+            "Build a small workspace chatbot with config, authenticated "
+            "event handling, one real reply path, and a local smoke run — "
+            "not a vague “bot somewhere.”"
+        )
+        steps = [
+            "Scaffold project layout (entrypoint, config for tokens/secrets, README how to run).",
+            "Wire Slack/Discord client (Socket Mode or HTTP Events webhook).",
+            "Handle a core event (app_mention / message) with a deterministic reply.",
+            "Add routing for 1–2 useful commands beyond echo.",
+            "Validate requests (signing secret) and fail closed on bad auth.",
+            "Add unit tests for handlers; document test-workspace setup.",
+            "Smoke: start the bot and verify one end-to-end reply.",
+        ]
+        out_of_scope.extend(
+            [
+                "Marketplace / App Directory publish (unless you ask).",
+                "Multi-workspace SaaS billing or admin UI (unless you ask).",
+                "Heavy LLM agent features beyond a simple reply (unless you ask).",
+            ]
+        )
     elif re.search(r"(?i)\b(fix|bug|broken|error|failing)\b", lower):
         approach = (
             "Diagnose from the reported symptom, find the earliest unsupported "
@@ -396,9 +429,24 @@ def _draft_approach_and_steps(
             "Apply minimal fix; re-run the original verification.",
         ]
     else:
-        # Prefer echoing concrete requested actions as steps when present
+        # Prefer concrete requested actions as steps when they are specific.
+        # Never fall through to "Do: <entire vague request>" — that is what
+        # made the plan/checklist UI look like an echo of the user prompt.
         actions = list(getattr(intent, "requested_actions", None) or [])
-        if actions:
+        vague_build = bool(
+            actions
+            and len(actions) == 1
+            and len(actions[0]) < 90
+            and re.search(
+                r"(?i)\b(build|create|make|implement|write|scaffold)\b",
+                actions[0],
+            )
+            and not re.search(
+                r"(?i)\b(test|fix|bug|endpoint|route|function|class|file)\b",
+                actions[0],
+            )
+        )
+        if actions and not vague_build:
             approach = (
                 "Implement the requested actions incrementally with tests, "
                 "respecting explicit exclusions."
@@ -412,11 +460,11 @@ def _draft_approach_and_steps(
                 "claiming completion."
             )
             steps = [
-                "Clarify deliverables from the request (what “done” looks like).",
-                "Sketch module boundaries / files to touch.",
-                "Implement core behavior first; keep side features for later.",
-                "Add focused tests for the main paths and error cases.",
-                "Run project checks (typecheck/tests) and a manual smoke of the main path.",
+                "Name what “done” looks like (user-visible path + how to run it).",
+                "Scaffold project layout / entrypoint and config.",
+                "Implement the core happy path first; defer extras.",
+                "Add focused tests for the main path and one failure case.",
+                "Run project checks and a manual smoke of the primary path.",
             ]
 
     # Fold checklist product items — but never prohibited topics

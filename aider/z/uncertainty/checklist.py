@@ -602,14 +602,134 @@ def decompose_request(
     )
 
 
-def format_checklist_for_user(checklist: TaskChecklist) -> str:
-    lines = [
-        f"Task checklist: {checklist.title}",
-        "Please confirm or correct these sub-requirements before implementation:",
-    ]
-    for i, item in enumerate(checklist.items, start=1):
-        lines.append(f"  {i}. [{item.kind}] {item.text}")
+def format_checklist_for_user(
+    checklist: TaskChecklist,
+    *,
+    plan=None,
+    thin: bool = False,
+) -> str:
+    """
+    Human-facing task preview.
+
+    When the checklist would only echo the user request (``thin``), show a
+    proposed approach + steps first — never a single ``[product] <same text>``
+    line pretending to be a breakdown.
+    """
+    lines: List[str] = []
+    title = (checklist.title or "Task").strip()
+
+    if plan is not None and (
+        thin or getattr(plan, "approach", None) or getattr(plan, "steps", None)
+    ):
+        plan_title = (getattr(plan, "title", None) or title).strip()
+        lines.append(f"Proposed approach — {plan_title}")
+        approach = (getattr(plan, "approach", None) or "").strip()
+        if approach:
+            lines.append(approach)
+            lines.append("")
+        steps = list(getattr(plan, "steps", None) or [])
+        if steps:
+            lines.append("Implementation steps:")
+            for i, step in enumerate(steps, start=1):
+                lines.append(f"  {i}. {step}")
+            lines.append("")
+        oos = list(getattr(plan, "out_of_scope", None) or [])
+        if oos:
+            lines.append("Assumed out of scope (say if wrong):")
+            for item in oos[:6]:
+                lines.append(f"  - {item}")
+            lines.append("")
+        lines.append("Tracking checklist (confirm or correct before we edit):")
+    else:
+        lines.append(f"Task checklist: {title}")
+        lines.append(
+            "Please confirm or correct these sub-requirements before implementation:"
+        )
+
+    if checklist.items:
+        for i, item in enumerate(checklist.items, start=1):
+            lines.append(f"  {i}. [{item.kind}] {item.text}")
+    else:
+        lines.append("  (no concrete sub-requirements yet — reply with corrections)")
     return "\n".join(lines)
+
+
+def checklist_is_thin(
+    checklist: TaskChecklist,
+    user_message: str = "",
+) -> bool:
+    """True when the checklist is an echo of the request, not a breakdown."""
+    items = list(getattr(checklist, "items", None) or [])
+    if not items:
+        return True
+    if len(items) > 2:
+        return False
+    msg = re.sub(r"\s+", " ", (user_message or "").strip().lower())
+    title = re.sub(r"\s+", " ", (checklist.title or "").strip().lower())
+    for item in items:
+        text = re.sub(r"\s+", " ", (item.text or "").strip().lower())
+        if not text:
+            continue
+        if text == msg or text == title:
+            return True
+        if len(items) == 1 and len(text) < 100 and (text in msg or msg in text):
+            return True
+    return False
+
+
+def enrich_thin_checklist(
+    checklist: TaskChecklist,
+    user_message: str,
+):
+    """
+    When decomposition only echoed the request, draft approach/steps and
+    replace echo items with concrete tracking requirements.
+
+    Returns ``(checklist, plan_or_None, was_thin)``.
+    """
+    was_thin = checklist_is_thin(checklist, user_message)
+    if not was_thin:
+        return checklist, None, False
+    try:
+        from .plan import draft_plan_from_request
+    except Exception:
+        return checklist, None, True
+
+    plan = draft_plan_from_request(
+        user_message or checklist.title or "",
+        title=checklist.title or "",
+        checklist=checklist,
+        reason="thin_checklist_preview",
+    )
+    # Promote concrete steps into checklist items (skip "Do: echo" leftovers)
+    new_items: List[RequirementItem] = []
+    seen: set[str] = set()
+    for step in list(plan.steps or [])[:7]:
+        text = (step or "").strip()
+        if not text or text.lower().startswith("do:"):
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        new_items.append(RequirementItem(text=text, kind="product"))
+    if new_items:
+        checklist.items = new_items
+    # Prefer a cleaned plan title over the raw request dump
+    if plan.title:
+        raw = (user_message or "").strip().lower()
+        pt = plan.title.strip()
+        prefix = raw[: min(12, len(raw))] if raw else ""
+        if not prefix or not pt.lower().startswith(prefix):
+            cleaned = re.sub(
+                r"\s*[—\-]\s*(implementation\s+)?plan\s*$",
+                "",
+                pt,
+                flags=re.I,
+            ).strip()
+            if cleaned:
+                checklist.title = cleaned
+    return checklist, plan, True
 
 
 def apply_gap_analysis(

@@ -1944,16 +1944,62 @@ class Coder:
         if engine.ctx.checklist and len(user_message) < 40:
             return
         try:
-            from aider.z.uncertainty.checklist import format_checklist_for_user
+            from aider.z.uncertainty.checklist import (
+                enrich_thin_checklist,
+                format_checklist_for_user,
+            )
 
             checklist = engine.begin_task(user_message)
             # New task → allow one drift confirm again
             self._drift_asked_this_task = False
             self._drift_reflection_log = []
-            if checklist.items:
-                self.io.tool_output("")
-                self.io.tool_output(format_checklist_for_user(checklist))
-                self.io.tool_output("")
+            checklist, plan, was_thin = enrich_thin_checklist(checklist, user_message)
+            engine.ctx.checklist = checklist
+            if not checklist.items and not plan:
+                return
+
+            rendered = format_checklist_for_user(
+                checklist, plan=plan, thin=was_thin
+            )
+            self.io.tool_output("")
+            self.io.tool_output(rendered)
+            self.io.tool_output("")
+
+            # Thin / greenfield previews: actually confirm (don't claim
+            # "confirm" then silently proceed). Yes-always auto-approves.
+            if was_thin and plan is not None:
+                approved = True
+                if getattr(self.io, "yes", None) is not True:
+                    from aider.z.uncertainty.plan import format_plan_for_confirm
+
+                    approved = bool(
+                        self.io.confirm_ask(
+                            "Proceed with this approach?",
+                            default="y",
+                            subject=format_plan_for_confirm(plan),
+                        )
+                    )
+                if not approved:
+                    self.io.tool_warning(
+                        "Approach rejected — reply with corrections "
+                        "(stack, Socket Mode vs webhook, commands, etc.)."
+                    )
+                    checklist.confirmed_by_user = False
+                    return
+                checklist.confirmed_by_user = True
+                # Keep plan on ctx so later high-stakes gate can reuse it
+                try:
+                    if getattr(engine.ctx, "plan", None) is None:
+                        engine.ctx.plan = plan
+                except Exception:
+                    pass
+                self.io.tool_output(
+                    "Approach noted — proceeding. Correct any checklist "
+                    "item in chat if needed."
+                )
+            elif checklist.items:
+                # Structured checklist already meaningful — mark seen
+                checklist.confirmed_by_user = True
         except Exception:
             pass
 
