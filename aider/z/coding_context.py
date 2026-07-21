@@ -155,4 +155,6 @@ def coding_quality_reminder() -> str:
         "- Match existing conventions and dependencies; do not invent packages.\n"
         "- After non-trivial edits, run the project's known tests/lint/typecheck when available.\n"
         "- Keep replies concise; do not paste uncertainty trees or full skill bodies into edits.\n"
+        "- For read-only lookups mid-turn, you may emit a ```z-tool fence with read/grep/glob/ls "
+        "(bounded); prefer `/add` before editing.\n"
     )

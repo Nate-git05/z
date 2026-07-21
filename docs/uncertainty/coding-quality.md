@@ -91,12 +91,48 @@ never spends tokens accidentally. Default remains the scripted adapter.
 Human scrollback (`format_plan_for_user`) and `engine.ctx.plan` stay complete —
 detectors still see the full artifact. Only `cur_messages` injects get thinner.
 
+## Plan interview + tools + thin loop
+
+| Mechanism | Default | Escape hatch |
+|-----------|---------|--------------|
+| Plan interview (clarify → draft → approve) | on | `Z_PLAN_INTERVIEW=0` |
+| Tool-output budget beyond shell (`/run`, `/web`, MCP helper) | on | `Z_TOOL_OUTPUT_BUDGET=0` |
+| Thin read-only tool-loop (` ```z-tool` ) | on | `Z_TOOL_LOOP=0` |
+
+### Plan interview
+
+```text
+/plan fix the average off-by-one without touching auth
+# … clarify questions …
+# … user answers …
+/plan-draft          # optional explicit advance
+# … write plan under $Z_HOME/plans/ …
+/plan-status
+/plan-exit           # or /plan-approve
+```
+
+### Thin tool-loop
+
+Model may request bounded read-only tools mid-turn:
+
+````text
+```z-tool
+read calcpkg/ops.py
+grep average --glob '*.py'
+```
+````
+
+Z runs up to `Z_TOOL_LOOP_MAX` tools, budgets output, reflects, and defers
+SEARCH/REPLACE apply for that round. Not a second agent.
+
 ## Related
 
 - Plans: [coding-quality-tranche1-plan.md](./coding-quality-tranche1-plan.md),
   [coding-quality-tranche2-plan.md](./coding-quality-tranche2-plan.md),
   [coding-quality-tranche3-plan.md](./coding-quality-tranche3-plan.md),
   [coding-quality-tranche4-plan.md](./coding-quality-tranche4-plan.md),
-  [coding-quality-explore-deep-plan.md](./coding-quality-explore-deep-plan.md)
+  [coding-quality-explore-deep-plan.md](./coding-quality-explore-deep-plan.md),
+  [coding-quality-plan-tools-loop.md](./coding-quality-plan-tools-loop.md)
 - Skills: [../skills/README.md](../skills/README.md)
 - Uncertainty: [README.md](./README.md)
+

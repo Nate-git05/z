@@ -1144,6 +1144,7 @@ class Coder:
             from aider.z.task_mode import TaskMode as _TM
 
             if mode is _TM.PLAN:
+                self._maybe_advance_plan_interview(user_text)
                 self._inject_plan_mode_reminder()
             elif mode.allows_planning:
                 if not self._maybe_require_implementation_plan(user_text):
@@ -1573,11 +1574,38 @@ class Coder:
 
     def _inject_plan_mode_reminder(self) -> None:
         try:
+            from pathlib import Path
+
+            from aider.z.plan_interview import (
+                PlanInterviewStage,
+                detect_stage,
+                format_interview_reminder,
+                plan_interview_enabled,
+            )
             from aider.z.plan_mode import format_plan_mode_reminder, new_plan_path
 
-            path = new_plan_path(stem="task")
-            self._active_plan_path = str(path)
-            block = format_plan_mode_reminder(path)
+            if not getattr(self, "_active_plan_path", None):
+                path = new_plan_path(stem="task")
+                self._active_plan_path = str(path)
+                if plan_interview_enabled():
+                    self._plan_interview_stage = PlanInterviewStage.CLARIFY
+                    self._plan_clarify_asked = False
+            path = Path(self._active_plan_path)
+
+            if plan_interview_enabled():
+                stage = getattr(self, "_plan_interview_stage", None)
+                detected = detect_stage(active_path=self._active_plan_path)
+                if detected is PlanInterviewStage.READY:
+                    stage = PlanInterviewStage.READY
+                elif stage is None:
+                    stage = detected
+                self._plan_interview_stage = stage
+                block = format_interview_reminder(stage, plan_path=path)
+                if stage is PlanInterviewStage.CLARIFY:
+                    self._plan_clarify_asked = True
+            else:
+                block = format_plan_mode_reminder(path)
+
             self.cur_messages += [
                 {"role": "user", "content": block},
                 {
@@ -1588,10 +1616,66 @@ class Coder:
                     ),
                 },
             ]
-            self.io.tool_output(f"Plan mode — artifact path: {path}")
+            stage_s = getattr(getattr(self, "_plan_interview_stage", None), "value", None)
+            extra = f" (interview: {stage_s})" if stage_s else ""
+            self.io.tool_output(f"Plan mode — artifact path: {path}{extra}")
         except Exception as err:
             if getattr(self, "verbose", False):
                 self.io.tool_warning(f"Plan mode reminder skipped: {err}")
+
+    def _maybe_advance_plan_interview(self, user_text: str) -> None:
+        """After clarify answers, move interview to draft on the next user turn."""
+        try:
+            from aider.z.plan_interview import (
+                PlanInterviewStage,
+                advance_after_user_reply,
+                plan_interview_enabled,
+            )
+            from aider.z.task_mode import TaskMode
+
+            if not plan_interview_enabled():
+                return
+            if getattr(self, "task_mode", None) is not TaskMode.PLAN:
+                return
+            if not user_text or user_text.strip().startswith("/"):
+                return
+            stage = getattr(self, "_plan_interview_stage", PlanInterviewStage.CLARIFY)
+            if stage is PlanInterviewStage.CLARIFY and getattr(
+                self, "_plan_clarify_asked", False
+            ):
+                self._plan_interview_stage = advance_after_user_reply(stage)
+        except Exception:
+            pass
+
+    def _maybe_run_tool_loop(self, content: str) -> bool:
+        """
+        Run read-only z-tool fences from the model reply.
+        Returns True if a reflect was scheduled (caller should skip apply).
+        """
+        try:
+            from aider.z.tool_loop import run_tool_loop, tool_loop_enabled
+
+            if not tool_loop_enabled() or not content:
+                return False
+            # Avoid infinite tool-loop reflections
+            if int(getattr(self, "num_reflections", 0) or 0) >= 3:
+                return False
+            res = run_tool_loop(content, root=getattr(self, "root", None) or ".")
+            if not res.ran:
+                return False
+            names = ", ".join(f"{c.name}" for c in res.calls)
+            self.io.tool_output(f"Tool-loop: ran {len(res.calls)} read-only tool(s) ({names}).")
+            prev = getattr(self, "reflected_message", None) or ""
+            self.reflected_message = (
+                (prev + "\n\n" + res.reflect_message).strip()
+                if prev
+                else res.reflect_message
+            )
+            return True
+        except Exception as err:
+            if getattr(self, "verbose", False):
+                self.io.tool_warning(f"Tool-loop skipped: {err}")
+            return False
 
     def _maybe_soft_stop_done_claim(self) -> None:
         from aider.z.uncertainty.done_gate import (
@@ -2956,6 +3040,10 @@ class Coder:
                     return
             except KeyboardInterrupt:
                 interrupted = True
+
+            # Thin read-only tool-loop before applying SEARCH/REPLACE
+            if not interrupted and self._maybe_run_tool_loop(content):
+                return
 
         if interrupted:
             if self.cur_messages and self.cur_messages[-1]["role"] == "user":
