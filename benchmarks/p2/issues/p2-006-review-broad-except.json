@@ -1,0 +1,31 @@
+{
+  "id": "p2-006-review-broad-except",
+  "task_type": "review",
+  "fixture_repo": "reviewlib",
+  "task_prompt": "Review revpkg/parse.py for error-handling quality. Do not edit files.",
+  "hidden_tests": [],
+  "expected_edit_scope": "none",
+  "ground_truth_root_cause": null,
+  "known_traps": [
+    "review-only no edits"
+  ],
+  "intended_clauses": [
+    {
+      "kind": "requested_action",
+      "text": "review code"
+    },
+    {
+      "kind": "constraint",
+      "text": "do not edit"
+    }
+  ],
+  "scripted": {
+    "review_findings": [
+      "Found maintainability / correctness concern"
+    ],
+    "shell_commands": [
+      "git status"
+    ],
+    "claim_complete": true
+  }
+}

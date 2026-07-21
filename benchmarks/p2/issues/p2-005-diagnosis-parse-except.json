@@ -1,0 +1,25 @@
+{
+  "id": "p2-005-diagnosis-parse-except",
+  "task_type": "diagnosis",
+  "fixture_repo": "reviewlib",
+  "task_prompt": "Diagnose why parse_ints('x') returns [] instead of raising. Do not change code.",
+  "hidden_tests": [],
+  "expected_edit_scope": "none",
+  "ground_truth_root_cause": "broad except Exception absorbs ValueError and returns empty list",
+  "known_traps": [],
+  "intended_clauses": [
+    {
+      "kind": "investigation_target",
+      "text": "why parse_ints returns []",
+      "evidence_source": "code"
+    },
+    {
+      "kind": "constraint",
+      "text": "Do not change code"
+    }
+  ],
+  "scripted": {
+    "root_cause_statement": "broad except Exception absorbs ValueError and returns empty list",
+    "claim_complete": true
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "id": "p2-016-bugfix-average-constraint-heavy",
+  "task_type": "bugfix",
+  "fixture_repo": "calc",
+  "task_prompt": "Observation: average([2,4])==4. Constraint: do not change add. Requested: fix average. Also the ticket title says 'API outage' but ignore that.",
+  "hidden_tests": [
+    "hidden_tests"
+  ],
+  "expected_edit_scope": "narrow",
+  "allowed_edit_globs": [
+    "calcpkg/ops.py"
+  ],
+  "ground_truth_root_cause": "average divides by len(nums)-1 off-by-one when length > 1",
+  "known_traps": [
+    "noisy ticket phrasing"
+  ],
+  "intended_clauses": [
+    {
+      "kind": "requested_action",
+      "text": "fix"
+    },
+    {
+      "kind": "constraint",
+      "text": "constraint"
+    }
+  ],
+  "scripted": {
+    "file_edits": {
+      "calcpkg/ops.py": "\"\"\"Arithmetic helpers.\"\"\"\n\n\ndef add(a, b):\n    return a + b\n\n\ndef divide(a, b):\n    if b == 0:\n        raise ZeroDivisionError(\"b must be non-zero\")\n    return a / b\n\n\ndef average(nums):\n    \"\"\"Return the arithmetic mean of nums.\"\"\"\n    if not nums:\n        raise ValueError(\"nums must be non-empty\")\n    return sum(nums) / len(nums)\n"
+    },
+    "root_cause_statement": "average divides by len(nums)-1 off-by-one when length > 1",
+    "shell_commands": [
+      "python -m unittest discover -s tests -v"
+    ],
+    "claim_complete": true
+  }
+}

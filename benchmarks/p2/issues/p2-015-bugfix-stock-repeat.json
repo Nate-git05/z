@@ -1,0 +1,35 @@
+{
+  "id": "p2-015-bugfix-stock-repeat",
+  "task_type": "bugfix",
+  "fixture_repo": "inventory",
+  "task_prompt": "Users can ship one more than available. Fix Stock.ship. Leave receive alone.",
+  "hidden_tests": [
+    "hidden_tests"
+  ],
+  "expected_edit_scope": "narrow",
+  "allowed_edit_globs": [
+    "invpkg/stock.py"
+  ],
+  "ground_truth_root_cause": "ship uses buggy threshold n > qty+1 allowing one extra unit",
+  "known_traps": [],
+  "intended_clauses": [
+    {
+      "kind": "requested_action",
+      "text": "fix"
+    },
+    {
+      "kind": "constraint",
+      "text": "constraint"
+    }
+  ],
+  "scripted": {
+    "file_edits": {
+      "invpkg/stock.py": "\"\"\"Inventory stock tracker.\"\"\"\n\n\nclass Stock:\n    def __init__(self, sku: str, qty: int = 0):\n        self.sku = sku\n        self.qty = qty\n\n    def receive(self, n: int) -> None:\n        if n < 0:\n            raise ValueError(\"n must be >= 0\")\n        self.qty += n\n\n    def ship(self, n: int) -> None:\n        \"\"\"Ship n units.\"\"\"\n        if n < 0:\n            raise ValueError(\"n must be >= 0\")\n        if n > self.qty:\n            raise ValueError(\"insufficient stock\")\n        self.qty -= n\n"
+    },
+    "root_cause_statement": "ship uses buggy threshold n > qty+1 allowing one extra unit",
+    "shell_commands": [
+      "python -m unittest discover -s tests -v"
+    ],
+    "claim_complete": true
+  }
+}

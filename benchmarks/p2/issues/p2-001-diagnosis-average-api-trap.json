@@ -1,0 +1,36 @@
+{
+  "id": "p2-001-diagnosis-average-api-trap",
+  "task_type": "diagnosis",
+  "fixture_repo": "calc",
+  "task_prompt": "Investigate why average([2,4]) returns 4.0 instead of 3.0 in calcpkg.ops. The report mentions the API and UI auth pages only as context from the ticket template \u2014 do not treat those as the problem. Do not edit anything.",
+  "hidden_tests": [],
+  "expected_edit_scope": "none",
+  "ground_truth_root_cause": "average divides by len(nums)-1 off-by-one when length > 1",
+  "known_traps": [
+    "P0.2/P0.3 negative controls: incidental API/UI/auth words"
+  ],
+  "intended_clauses": [
+    {
+      "kind": "investigation_target",
+      "text": "why average returns wrong",
+      "evidence_source": "code"
+    },
+    {
+      "kind": "constraint",
+      "text": "do not edit anything"
+    },
+    {
+      "kind": "observation",
+      "text": "average([2,4]) returns 4.0"
+    }
+  ],
+  "scripted": {
+    "root_cause_statement": "average divides by len(nums)-1 off-by-one when length > 1",
+    "shell_commands": [
+      "git status",
+      "rg average calcpkg"
+    ],
+    "claim_complete": true
+  },
+  "notes": "Trap: API/UI/auth incidental"
+}

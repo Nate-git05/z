@@ -1,0 +1,5 @@
+# Persisted harness output — keep the directory, ignore run artifacts
+*
+!.gitkeep
+!.gitignore
+!README.md

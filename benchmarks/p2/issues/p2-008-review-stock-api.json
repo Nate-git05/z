@@ -1,0 +1,31 @@
+{
+  "id": "p2-008-review-stock-api",
+  "task_type": "review",
+  "fixture_repo": "inventory",
+  "task_prompt": "Assess Stock.ship edge cases. Auth middleware is unrelated. No code changes.",
+  "hidden_tests": [],
+  "expected_edit_scope": "none",
+  "ground_truth_root_cause": null,
+  "known_traps": [
+    "P0.3 auth unrelated"
+  ],
+  "intended_clauses": [
+    {
+      "kind": "requested_action",
+      "text": "review code"
+    },
+    {
+      "kind": "constraint",
+      "text": "do not edit"
+    }
+  ],
+  "scripted": {
+    "review_findings": [
+      "Found maintainability / correctness concern"
+    ],
+    "shell_commands": [
+      "git status"
+    ],
+    "claim_complete": true
+  }
+}

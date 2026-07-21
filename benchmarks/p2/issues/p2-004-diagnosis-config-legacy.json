@@ -1,0 +1,30 @@
+{
+  "id": "p2-004-diagnosis-config-legacy",
+  "task_type": "diagnosis",
+  "fixture_repo": "configpkg",
+  "task_prompt": "Investigate which Config method is the legacy accessor still used by app.py. Do not edit. Auth is out of scope.",
+  "hidden_tests": [],
+  "expected_edit_scope": "none",
+  "ground_truth_root_cause": "app.py still calls legacy Config.get_value accessor",
+  "known_traps": [
+    "P0.3 auth incidental out of scope"
+  ],
+  "intended_clauses": [
+    {
+      "kind": "investigation_target",
+      "text": "legacy accessor in app.py",
+      "evidence_source": "code"
+    },
+    {
+      "kind": "constraint",
+      "text": "Do not edit"
+    }
+  ],
+  "scripted": {
+    "root_cause_statement": "app.py still calls legacy Config.get_value accessor",
+    "shell_commands": [
+      "rg get_value cfg"
+    ],
+    "claim_complete": true
+  }
+}
