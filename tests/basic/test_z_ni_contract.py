@@ -221,7 +221,7 @@ class AutoSeedTest(unittest.TestCase):
         coder = MagicMock()
         coder.root = str(self.root)
         coder.io = MagicMock()
-        coder.io.yes = None  # interactive
+        coder.io.yes = None  # interactive — NO --yes-always
         coder.reflected_message = None
         coder.aider_edited_files = set()
         coder._z_ni_auto_seed_done = False
@@ -245,6 +245,34 @@ class AutoSeedTest(unittest.TestCase):
         self.assertIn("CMakeLists.txt", added)
         self.assertTrue(any("event_bus" in a for a in added), added)
         self.assertIn("SEARCH/REPLACE", coder.reflected_message)
+
+    def test_no_yes_flag_needed_after_plan_approve(self):
+        """Plan confirm Yes is enough — do not require io.yes / --yes-always."""
+        (self.root / "CMakeLists.txt").write_text("project(x)\n", encoding="utf-8")
+        eng = MagicMock()
+        eng.ctx = MagicMock()
+        eng.ctx.plan_approved = True
+
+        coder = MagicMock()
+        coder.root = str(self.root)
+        coder.io = MagicMock()
+        coder.io.yes = None
+        coder.reflected_message = None
+        coder.aider_edited_files = set()
+        coder._z_ni_auto_seed_done = False
+        coder.uncertainty_engine = eng
+        coder.get_inchat_relative_files = MagicMock(return_value=[])
+        added = []
+        coder.add_rel_fname = lambda r: added.append(r)
+
+        ok = maybe_auto_seed_reflect(
+            coder,
+            user_message="test the event bus",
+            assistant_text="Please add `CMakeLists.txt` to the chat before I proceed.",
+        )
+        self.assertTrue(ok)
+        self.assertIn("CMakeLists.txt", added)
+        self.assertIsNone(coder.io.yes)
 
 
 class ReflectionFloorTest(unittest.TestCase):

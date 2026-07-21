@@ -3551,7 +3551,8 @@ class Coder:
         if not new_mentions:
             return
 
-        # After plan approve / add-files miss: don't ask — just add
+        # After plan approve / add-files miss: don't ask — just add.
+        # Does NOT require --yes-always; plan Yes or miss prose is enough.
         auto_add = False
         try:
             from aider.z.ni_contract import detect_add_files_miss
@@ -3565,6 +3566,7 @@ class Coder:
                 auto_add = True
         except Exception:
             pass
+        # --yes-always still auto-adds ordinary mentions; not required for miss/plan
         if getattr(self.io, "yes", None) is True:
             auto_add = True
 

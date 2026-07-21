@@ -375,9 +375,15 @@ def maybe_auto_seed_reflect(
     """
     When the model asks to /add files instead of editing: seed chat + reflect.
 
-    Runs for non-interactive sessions always, and for interactive sessions when
-    the reply is an add-files miss (Claude eval Finding 1) or a plan was just
-    approved — so "Plan approved — proceeding" cannot stall on "please add…".
+    Does **not** require ``--yes-always`` / ``io.yes``. Triggers when:
+
+    - the assistant reply is an add-files miss ("please add these files…"), or
+    - a plan was already approved and the reply still stalls on add-files /
+      names discoverable repo paths with no SEARCH/REPLACE yet, or
+    - non-interactive session with path mentions / miss
+
+    So after the user answers Yes on the plan confirm, Z must keep going
+    without needing a second global yes flag.
     """
     if not ni_auto_seed_enabled():
         return False
@@ -387,34 +393,29 @@ def maybe_auto_seed_reflect(
         return False
 
     content = assistant_text or ""
-    miss = detect_add_files_miss(content)
-    ni = is_non_interactive_session(getattr(coder, "io", None))
-    plan_ok = _plan_approved(coder)
-
-    # Interactive: only auto-seed on clear add-files miss or after plan approve
-    if not ni and not miss and not plan_ok:
+    # Already implementing — leave it alone
+    if "<<<<<<< SEARCH" in content or ">>>>>>> REPLACE" in content:
         return False
-    # Interactive + plan approved but model is implementing (has edits fences): skip
-    if not ni and not miss and plan_ok:
-        if "<<<<<<< SEARCH" in content or ">>>>>>> REPLACE" in content:
-            return False
-        # Plan approved but no miss — don't interrupt normal replies
-        return False
-
-    paths = extract_path_mentions(user_message, content)
-    if not miss and not paths and not ni:
-        return False
-    if not miss and not paths and ni:
-        return False
-
-    # Don't fire if we already edited product files this turn
     if getattr(coder, "aider_edited_files", None):
         return False
 
+    miss = detect_add_files_miss(content)
+    ni = is_non_interactive_session(getattr(coder, "io", None))
+    plan_ok = _plan_approved(coder)
+    paths = extract_path_mentions(user_message, content)
     candidates = collect_seed_candidates(
         coder, user_message=user_message, assistant_text=content
     )
-    if not candidates and not miss:
+
+    # None of these branches check io.yes — plan Yes / miss prose is enough.
+    should = bool(
+        miss
+        or (ni and (paths or candidates or miss))
+        or (plan_ok and (miss or paths or candidates))
+    )
+    if not should:
+        return False
+    if not miss and not paths and not candidates:
         return False
 
     root = Path(getattr(coder, "root", None) or Path.cwd())
@@ -427,8 +428,9 @@ def maybe_auto_seed_reflect(
     io = getattr(coder, "io", None)
     if io is not None and added:
         try:
-            label = "Auto-added to chat" if not ni else "NI auto-seed: added to chat"
-            io.tool_output(f"{label} — " + ", ".join(added[:8]))
+            io.tool_output(
+                "Auto-added to chat — " + ", ".join(added[:8])
+            )
         except Exception:
             pass
 
