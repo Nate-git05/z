@@ -1329,6 +1329,32 @@ class Coder:
                 eng0.ctx.task_intent = intent
                 eng0.ctx.task_mode = mode.value if hasattr(mode, "value") else str(mode)
 
+            # Phase 5 — push TaskMode/intent to the routing gateway for this turn.
+            try:
+                from aider.z.gateway_client import set_gateway_routing_hints
+
+                esc_depth = int(getattr(self, "_gateway_escalation_depth", 0) or 0)
+                intent_text = None
+                if intent is not None:
+                    intent_text = (
+                        getattr(intent, "planning_text", None)
+                        or getattr(intent, "capability_text", None)
+                        or None
+                    )
+                    if isinstance(intent_text, str):
+                        intent_text = intent_text.strip() or None
+                if not intent_text and isinstance(user_text, str):
+                    intent_text = user_text
+                set_gateway_routing_hints(
+                    task_mode=mode,
+                    intent=intent_text,
+                    escalate=esc_depth > 0,
+                    escalation_depth=esc_depth,
+                    thread_id=getattr(self, "thread_id", None),
+                )
+            except Exception:
+                pass
+
             # Skills + overlapped explore, with continuous mascot/eyes updates.
             # Explore forks off the critical path while checklist/plan draft (T3).
             from aider.z.ux_preamble import TurnPreamble, ux_verbose
@@ -1555,6 +1581,33 @@ class Coder:
             except Exception:
                 pass
             self._maybe_suggest_skill(user_message)
+
+    def _report_gateway_routing_outcome(self, gate_passed: bool, gate_result=None) -> None:
+        """Phase 5b — feed verify/commit gate results into gateway calibration."""
+        try:
+            from aider.z.gateway_client import report_routing_outcome, router_uses_gateway
+
+            if not router_uses_gateway():
+                return
+            model_id = getattr(getattr(self, "main_model", None), "name", None) or "unknown"
+            mode = getattr(self, "task_mode", None)
+            from aider.z.routing.task_tier import tier_for_task_mode
+
+            tier = tier_for_task_mode(mode).value
+            checker = None
+            if gate_result is not None:
+                checker = getattr(gate_result, "reason", None)
+                if checker:
+                    checker = str(checker)[:200]
+            report_routing_outcome(
+                model_id=str(model_id),
+                tier=tier,
+                gate_passed=bool(gate_passed),
+                escalated=int(getattr(self, "_gateway_escalation_depth", 0) or 0) > 0,
+                checker_triggered=checker,
+            )
+        except Exception:
+            pass
 
     def _resolve_task_mode_and_intent(self, user_message: str):
         """Per-message TaskMode + TaskIntent (P0.1 / P0.2)."""
@@ -3686,6 +3739,11 @@ class Coder:
                 gate_result = prepare_commit(self, commit_edited)
                 if gate_result.reflect_message:
                     self.reflected_message = gate_result.reflect_message
+                    self._report_gateway_routing_outcome(False, gate_result)
+                    # Next model call escalates one tier (Phase 5b).
+                    self._gateway_escalation_depth = (
+                        int(getattr(self, "_gateway_escalation_depth", 0) or 0) + 1
+                    )
                     return
                 if not gate_result.allow_commit:
                     from aider.z.uncertainty.gate import format_commit_blocked_message
@@ -3709,8 +3767,14 @@ class Coder:
                         )
                         self.io.tool_error(blocked_msg)
                     self.move_back_cur_messages(blocked_msg)
+                    self._report_gateway_routing_outcome(False, gate_result)
+                    self._gateway_escalation_depth = (
+                        int(getattr(self, "_gateway_escalation_depth", 0) or 0) + 1
+                    )
                     return
 
+                self._report_gateway_routing_outcome(True, gate_result)
+                self._gateway_escalation_depth = 0
                 saved_message = self.auto_commit(commit_edited)
                 # Tie explicit acknowledgments / force overrides to the commit hash
                 if saved_message and getattr(self, "last_aider_commit_hash", None):

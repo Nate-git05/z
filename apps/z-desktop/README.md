@@ -1,6 +1,6 @@
 # Z Desktop (app shell)
 
-**Status:** Phase 0–4 — IPC, gateway, shell lifecycle, auth, **agent-first** Chat turn loop.
+**Status:** Phase 0–5 — IPC, gateway **TaskMode routing**, shell lifecycle, auth, agent-first Chat.
 
 **Read first:** [`docs/app/z-editor-v1-implementation-plan.md`](../../docs/app/z-editor-v1-implementation-plan.md)
 
@@ -45,11 +45,13 @@ z app-server --host 127.0.0.1 --port 8741 --pid-file ~/.z/app-server/8741.pid
 
 Extension settings: `z.appServerUrl`, `z.autoStartAppServer`, `z.zBinary`.
 
-## Routing gateway
+## Routing gateway (Phase 5)
 
-- `POST /v1/gateway/chat/completions`
+- `POST /v1/gateway/chat/completions` — TaskMode / intent → capability tier → model select; optional `escalate` / `escalation_depth`
+- Response includes `z_routing` (`tier`, `model_id`, `routing_policy_version=v1-taskmode`, …)
+- `POST /v1/gateway/routing/outcome` — local verify/commit gate → calibration store
 - `GET /v1/gateway/usage`
-- Router CLI mode: `aider.z.gateway_client` (`Z_USE_GATEWAY=0` to disable)
+- Client: `aider.z.gateway_client` injects `task_mode` / `intent` via litellm `extra_body` (`Z_USE_GATEWAY=0` to disable)
 
 ## Agent-first layout (Phase 4)
 
@@ -68,9 +70,8 @@ Flow:
 3. Notifications: `turn/busy`, `item/agentMessage/delta`, `turn/waiting_input`, `uncertainty/changed`, `gate/commit_blocked`, `turn/completed`
 4. Approvals / plan confirm answered via Chat buttons → `turn/respond`
 
-## Next (Phase 5+)
+## Next (Phase 6+)
 
-1. Real gateway routing policy (TaskMode / escalate)
-2. Skills / MCP in-app surfaces; finer live uncertainty upserts
-3. Profile usage from `gateway_requests`
-4. Apply `product.z.json` when building from `vendor/vscode`
+1. Skills / MCP in-app surfaces; finer live uncertainty upserts
+2. Profile usage charts from `gateway_requests`
+3. Apply `product.z.json` when building from `vendor/vscode`

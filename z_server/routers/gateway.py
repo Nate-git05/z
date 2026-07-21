@@ -12,9 +12,16 @@ from sqlalchemy.orm import Session
 from z_server.db import get_db
 from z_server.models import User
 from z_server.models.gateway import GatewayRequest
-from z_server.schemas.gateway import ChatCompletionRequest, UsageRow, UsageSummary
+from z_server.schemas.gateway import (
+    ChatCompletionRequest,
+    RoutingOutcomeRequest,
+    RoutingOutcomeResponse,
+    UsageRow,
+    UsageSummary,
+)
 from z_server.services.deps import get_current_user
 from z_server.services.gateway_proxy import GatewayUpstreamError, proxy_chat_completion
+from z_server.services.gateway_routing import ROUTING_POLICY_VERSION, record_gateway_outcome
 
 router = APIRouter(prefix="/v1/gateway", tags=["gateway"])
 
@@ -41,7 +48,7 @@ def _log_request(
         latency_ms=meta.get("latency_ms"),
         status=meta.get("status") or "ok",
         thread_id=thread_id,
-        task_mode=task_mode,
+        task_mode=task_mode or meta.get("task_mode"),
         routing_policy_version=meta.get("routing_policy_version"),
         error_message=meta.get("error_message"),
     )
@@ -52,7 +59,12 @@ def _log_request(
 
 @router.get("/health")
 def gateway_health():
-    return {"ok": True, "service": "z-gateway", "policy": "v0-hardcoded"}
+    return {
+        "ok": True,
+        "service": "z-gateway",
+        "policy": ROUTING_POLICY_VERSION,
+        "features": ["task_mode", "intent", "escalate", "calibration"],
+    }
 
 
 @router.post("/chat/completions")
@@ -64,16 +76,21 @@ def chat_completions(
     messages = [m.model_dump() for m in payload.messages]
     thread_id = payload.thread_id
     task_mode = payload.task_mode
+    preferred = payload.preferred_model or payload.model
     try:
         body, meta = proxy_chat_completion(
-            model=payload.model,
+            model=preferred,
             messages=messages,
             temperature=payload.temperature,
             max_tokens=payload.max_tokens,
             stream=payload.stream,
+            task_mode=task_mode,
+            intent=payload.intent,
+            tier=payload.tier,
+            escalate=bool(payload.escalate),
+            escalation_depth=int(payload.escalation_depth or 0),
+            customer_id=str(user.id),
         )
-        if payload.tier:
-            meta["tier"] = payload.tier
         _log_request(
             db,
             user=user,
@@ -91,6 +108,27 @@ def chat_completions(
             task_mode=task_mode,
         )
         raise HTTPException(err.status_code, err.message) from err
+
+
+@router.post("/routing/outcome", response_model=RoutingOutcomeResponse)
+def routing_outcome(
+    payload: RoutingOutcomeRequest,
+    user: User = Depends(get_current_user),
+):
+    """Calibration hook — local verify/commit gate reports pass/fail anonymously."""
+    try:
+        result = record_gateway_outcome(
+            model_id=payload.model_id,
+            tier=payload.tier,
+            gate_passed=payload.gate_passed,
+            escalated=payload.escalated,
+            cost_usd=payload.cost_usd,
+            customer_id=str(user.id),
+            checker_triggered=payload.checker_triggered,
+        )
+        return RoutingOutcomeResponse(**result)
+    except Exception as err:
+        raise HTTPException(500, f"routing outcome failed: {err}") from err
 
 
 @router.get("/usage", response_model=UsageSummary)

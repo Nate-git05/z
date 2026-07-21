@@ -67,6 +67,7 @@ class GatewayTestCase(unittest.TestCase):
         resp = self.client.get("/v1/gateway/health")
         self.assertEqual(resp.status_code, 200)
         self.assertTrue(resp.json()["ok"])
+        self.assertEqual(resp.json()["policy"], "v1-taskmode")
 
     def test_chat_completions_requires_auth(self):
         # Fresh client — setUp login leaves a session cookie on self.client.
@@ -88,25 +89,33 @@ class GatewayTestCase(unittest.TestCase):
                 "model": "gpt-4o-mini",
                 "messages": [{"role": "user", "content": "hello gateway"}],
                 "thread_id": "t-1",
+                "task_mode": "ask",
             },
         )
         self.assertEqual(resp.status_code, 200, resp.text)
         data = resp.json()
         self.assertEqual(data["object"], "chat.completion")
         self.assertIn("stub", data["choices"][0]["message"]["content"].lower())
+        self.assertIn("z_routing", data)
+        routed_model = data["z_routing"]["model_id"]
 
         usage = self.client.get("/v1/gateway/usage", headers=self._auth())
         self.assertEqual(usage.status_code, 200, usage.text)
         body = usage.json()
         self.assertGreaterEqual(body["total_requests"], 1)
-        self.assertTrue(any(r["model_id"] == "gpt-4o-mini" for r in body["by_model"]))
+        self.assertTrue(any(r["model_id"] == routed_model for r in body["by_model"]))
 
     def test_resolve_route(self):
         from z_server.services.gateway_proxy import resolve_route
 
-        r = resolve_route("openai/gpt-4o")
-        self.assertEqual(r["upstream_model"], "gpt-4o")
-        self.assertEqual(r["routing_policy_version"], "v0-hardcoded")
+        r = resolve_route(
+            "openai/gpt-4o",
+            messages=[{"role": "user", "content": "hi"}],
+            task_mode="ask",
+        )
+        self.assertTrue(r["upstream_model"])
+        self.assertEqual(r["routing_policy_version"], "v1-taskmode")
+        self.assertEqual(r["base_tier"], "trivial")
 
 
 if __name__ == "__main__":

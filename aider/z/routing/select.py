@@ -112,3 +112,41 @@ def select_fast_lane(policy: "RoutingPolicy") -> Optional[ModelProfile]:
             return None
         return m
     return None
+
+
+def select_or_prefer(
+    tier: CapabilityTier,
+    preferred_model_id: Optional[str],
+    *,
+    policy: "RoutingPolicy",
+    context_tokens: int,
+    latency_budget_ms: Optional[int],
+    pricing: "PricingCache",
+    calibration: "CalibrationStore",
+    registry: Optional[tuple] = None,
+) -> ModelProfile:
+    """Use the user's preferred model when it meets the tier floor; else select."""
+    from .registry import model_by_id
+
+    pref = model_by_id(preferred_model_id or "")
+    if pref is not None:
+        allowed = policy.allowed_providers()
+        if (
+            pref.provider in allowed
+            and pref.context_window >= context_tokens
+            and (
+                latency_budget_ms is None or pref.avg_latency_ms <= latency_budget_ms
+            )
+            and not circuit_breaker.is_tripped(pref.provider)
+            and TIER_ORDER.index(pref.capability_tier) >= TIER_ORDER.index(tier)
+        ):
+            return pref
+    return select_model(
+        tier,
+        policy=policy,
+        context_tokens=context_tokens,
+        latency_budget_ms=latency_budget_ms,
+        pricing=pricing,
+        calibration=calibration,
+        registry=registry,
+    )

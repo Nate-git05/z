@@ -1,7 +1,7 @@
 # Z Editor V1 — Implementation Plan (post–Codex audit)
 
-**Status:** Phase 0–4 landing — **agent-first** layout (Chat center · Uncertainty left · Commit Gate right) + turn loop over IPC; Phases 5–10 next.  
-**Date:** 2026-07-21 (revised: agent-first main interface — no chat sidebar)  
+**Status:** Phase 0–5 landing — agent-first layout + turn loop + **gateway TaskMode/Intent routing** (`v1-taskmode`); Phases 6–10 next.  
+**Date:** 2026-07-21 (revised: Phase 5 real routing policy)  
 **Inputs:** user revised V1 scope; local clones `vendor/codex` + `vendor/vscode`; Z monorepo surfaces.  
 **Related:** [`z-desktop-north-star.md`](./z-desktop-north-star.md), router-only CLI (#147).
 

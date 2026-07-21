@@ -1046,6 +1046,18 @@ class Model(ModelSettings):
         if self.is_deepseek_r1():
             messages = ensure_alternating_roles(messages)
 
+        # Phase 5 — attach TaskMode/intent/escalate hints for the routing gateway.
+        try:
+            from aider.z.gateway_client import (
+                inject_gateway_routing_into_model,
+                router_uses_gateway,
+            )
+
+            if router_uses_gateway():
+                inject_gateway_routing_into_model(self)
+        except Exception:
+            pass
+
         kwargs = dict(
             model=self.name,
             stream=stream,
