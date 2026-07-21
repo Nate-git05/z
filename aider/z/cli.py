@@ -443,6 +443,15 @@ def _start_agent(argv: list[str]) -> int | None:
 def main(argv: list[str] | None = None) -> int | None:
     argv = list(sys.argv[1:] if argv is None else argv)
 
+    # Before any skills/Chroma import path: kill product telemetry spam
+    # (ClientStartEvent capture() TypeError under mismatched posthog).
+    try:
+        from aider.z.skills.vector import configure_chroma_telemetry
+
+        configure_chroma_telemetry()
+    except Exception:
+        pass
+
     if argv and argv[0] in ("-h", "--help"):
         _print_help()
         return 0

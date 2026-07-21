@@ -14,7 +14,7 @@ from .tree import SortMode, build_tree, flatten_for_display
 
 
 ACCENT = "\033[38;2;201;106;43m"  # burnt orange #C96A2B
-DIM = "\033[90m"
+DIM = "\033[38;2;201;106;43m"  # same orange — grey (\033[90m) was unreadable
 BOLD = "\033[1m"
 RESET = "\033[0m"
 

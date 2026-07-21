@@ -1,10 +1,15 @@
 # Spec: Non-interactive continuity, verify honesty, skill retrieval, gate UX
 
-**Status:** planning (no implementation in this doc’s first commit)  
+**Status:** planning doc; runtime slices F1–F5 shipped separately (see § Suggested PR
+slice order — all six including `skill-retrieve` are on `main` after this merge).  
+**Deep dive + feature plan:** [fault-impl-deep-dive.md](./fault-impl-deep-dive.md)  
 **Triggered by:** Claude Code writeup of live faults on `miniregex` / `minilfu`  
 **Thesis (confirmed in code):** The model can write correct C++; the **orchestration /
 product layer** is where false-completion-shaped silence, wrong-suite “verify,”
 soft-blocked sanitizers, skill non-retrieval, and undiscoverable gate exits live.
+
+> **Not the coding-quality stack.** Compact skills, explore, plan interview, tool-loop,
+> and live P2 **are** on `main`. This fault set is a **separate** implement pass.
 
 ---
 
@@ -141,7 +146,7 @@ pin/suppress Chroma product telemetry.
 
 ## Workstreams (implementation order)
 
-### P0 — Non-interactive run contract (`ni-contract`)
+### P0 — Non-interactive run contract (`ni-contract`) — **IMPLEMENTED**
 
 **Goals**
 
@@ -157,19 +162,15 @@ pin/suppress Chroma product telemetry.
   a **structured miss** → auto `/add` candidates or create-new-file path,
   not silent success.
 
-**Acceptance**
-
-- Fixture: empty CMake project + SPEC requiring new `src/foo.c`; NI run must
-  create files or exit nonzero.
-- Exit 0 only if `len(aider_edited_files) > 0` or classified non-edit mode
-  completed with an artifact (diagnosis text / review findings).
-
-**Files (expected):** `aider/main.py`, `aider/coders/base_coder.py`,
-new `aider/z/ni_contract.py`, tests under `tests/basic/test_z_ni_contract.py`.
+**Shipped:** `aider/z/ni_contract.py`; `aider/main.py` one-shot paths call
+`apply_ni_reflection_floor` + `finish_ni_run` (exit code + outcome line);
+`base_coder` calls `maybe_auto_seed_reflect` after empty applies.
+Flags: `Z_NI_REQUIRE_EDITS` (default on), `Z_NI_AUTO_SEED` (default on),
+`Z_NI_MIN_REFLECTIONS` (default 5). Tests: `tests/basic/test_z_ni_contract.py`.
 
 ---
 
-### P0 — Verify: stale CMake + change-scoped tests (`verify-cmake`)
+### P0 — Verify: stale CMake + change-scoped tests (`verify-cmake`) — **IMPLEMENTED**
 
 **Goals**
 
@@ -186,18 +187,15 @@ new `aider/z/ni_contract.py`, tests under `tests/basic/test_z_ni_contract.py`.
 - **Meaningful pass** requires either matched change tests executed, or
   explicit `VerifyState` that change-tests were absent (fail closed in NI).
 
-**Acceptance**
-
-- Repro: existing `build/` with only `miniregex_tests`; edit CMakeLists to add
-  `minilfu_tests`; verify must reconfigure and run (or hard-fail if still
-  undiscovered), never report green on old suite alone.
-
-**Files:** `aider/z/uncertainty/verify.py`, new
-`aider/z/uncertainty/cmake_verify.py`, gate wiring, tests.
+**Shipped:** `aider/z/uncertainty/cmake_verify.py`; wired in `verify_edits`
+before ctest; `detect_test_command` returns ctest even without existing
+`build/`; gate passes `non_interactive` from `--yes-always`.
+Flags: `Z_CMAKE_RECONFIGURE` (default on), `Z_CMAKE_REQUIRE_MATCHED` (default
+on in NI / yes-always). Tests: `tests/basic/test_z_cmake_verify.py`.
 
 ---
 
-### P0 — Sanitizer: soft → hard when required (`sanitizer-teeth`)
+### P0 — Sanitizer: soft → hard when required (`sanitizer-teeth`) — **IMPLEMENTED**
 
 **Goals**
 
@@ -210,17 +208,15 @@ new `aider/z/ni_contract.py`, tests under `tests/basic/test_z_ni_contract.py`.
 - If tool truly unavailable: NI exit ≠ 0 with node ids listed; do not pretend
   unit tests substituted.
 
-**Acceptance**
-
-- Dynamic-risk C edit + hard policy + no sanitizer → commit blocked and NI
-  nonzero; log shows attempted discovery commands.
-
-**Files:** `dynamic_analysis.py` (`blocks_commit` / soft_block), `gate.py`,
-optional `aider/z/uncertainty/recipe_runner.py`.
+**Shipped:** `sanitizer_policy` / `hard_policy` on `DynamicComparison`;
+`tool_missing` → High + `blocks_commit` under hard; `recipe_runner.py` extracts
+and attempts cmake/ctest/make sanitizer recipes; gate passes
+`non_interactive` from `--yes-always`. Flags: `Z_SANITIZER_POLICY`,
+`Z_SANITIZER_RECIPES` (default on). Tests: `tests/basic/test_z_sanitizer_policy.py`.
 
 ---
 
-### P1 — Gate UX for automation (`gate-ni-ux`)
+### P1 — Gate UX for automation (`gate-ni-ux`) — **IMPLEMENTED**
 
 **Goals**
 
@@ -241,46 +237,40 @@ optional `aider/z/uncertainty/recipe_runner.py`.
   the above (today it answers `n` via `explicit_yes_required`).
 - Optional: `Z_NI_GATE=force` for trusted CI after green verify+sanitizer.
 
-**Acceptance**
-
-- NI run that hits High gate: exit ≠ 0, message contains `Z_FORCE_COMMIT` and
-  `Z_SKIP_VERIFY_GATE` substrings; tree remains dirty unless force set.
-
-**Files:** `gate.py`, `io.py` (document yes-always + explicit_yes interaction),
-`base_coder.py` block path.
+**Shipped:** `format_commit_blocked_message` / `emit_commit_blocked` / `ni_gate_policy`
+in `aider/z/uncertainty/gate.py`; yes-always High/Medium paths apply `Z_NI_GATE`;
+`Z_NI_GATE=force` honored via `_force_requested`; `base_coder` / `/commit` avoid
+double-print when UI already emitted; `io.confirm_ask` documents yes-always +
+explicit_yes interaction. Tests: `tests/basic/test_z_gate_ni_ux.py`.
 
 ---
 
-### P1 — Skill retrieve + near-dup consolidation (`skill-retrieve`)
+### P1 — Skill retrieve + near-dup consolidation (`skill-retrieve`) — IMPLEMENTED
 
-**Status:** planning — thorough impl plan in
-[skill-retrieve-impl-plan.md](./skill-retrieve-impl-plan.md) (runtime not started)
+**Detail plan:** [skill-retrieve-impl-plan.md](./skill-retrieve-impl-plan.md)
 
-**Goals**
+**Shipped**
 
-1. **Fallback matcher** when Chroma empty/miss: token overlap on
-   title/symptom/`root_cause_category`/`fix_technique` with stem folding
-   (`lru`↔`lfu`↔`cache`↔`evict`).
-2. **Log retrieve attempts** always in verbose/NI: top-k distances + skip
-   reasons (today silence looks like “no index”).
-3. **Before capture:** if Jaccard/title similarity ≥ threshold to an existing
-   skill → **update** that skill (append evidence) instead of new id;
-   print `Updated existing skill: …` not a new near-dup.
-4. Optional: periodic `z skill dedupe --apply` command.
+1. **Fallback matcher** (`aider/z/skills/near_dup.py`): stem-folded token
+   overlap on title/symptom/`root_cause_category`/`fix_technique` when Chroma
+   is empty or weak (`Z_SKILL_CHROMA_WEAK`).
+2. **RetrieveTrace** logged under verbose, `--yes-always`, or
+   `Z_SKILL_RETRIEVE_LOG=1` (plus skip reasons under NI).
+3. **Capture merge:** near-dup bug_patterns update existing id
+   (`Updated existing skill: …`) instead of minting a clone.
+4. Optional CLI `z skill dedupe --apply` still deferred.
 
-**Acceptance**
+**Acceptance (tests)**
 
-- Synthetic index with `release-backing-storage-during-lru-eviction`; LFU
-  eviction SPEC must retrieve it (or category sibling) above threshold in
-  unit test without live embeddings if using lexical fallback.
-- Capture path with near-dup title does not increase skill count.
+- `test_z_skill_near_dup.py`: LFU task retrieves LRU sibling via lexical;
+  capture near-dup keeps skill count stable; `Z_SKILL_NEAR_DUP=0` creates new.
 
-**Files:** `skills/session.py`, `skills/router.py`, new
-`skills/near_dup.py`, capture path in `base_coder` / `cli.py`.
+**Files:** `skills/near_dup.py`, `skills/session.py`, `skills/cli.py`,
+`coders/base_coder.py`.
 
 ---
 
-### P2 — Chroma telemetry silence (`chroma-telemetry`)
+### P2 — Chroma telemetry silence (`chroma-telemetry`) — **IMPLEMENTED**
 
 **Goals**
 
@@ -289,12 +279,10 @@ optional `aider/z/uncertainty/recipe_runner.py`.
 - Swallow/ignore product telemetry errors; never print to coding session
   unless `Z_VERBOSE=1`.
 
-**Acceptance**
-
-- Fresh session with skills/Chroma: no `ClientStartEvent` / `capture()` TypeError
-  lines on stderr.
-
-**Files:** `skills/vector.py`, maybe `main.py` early env.
+**Shipped:** `aider/z/skills/vector.py` (`configure_chroma_telemetry`), early call from
+`aider/z/cli.py`, tests in `tests/basic/test_z_chroma_telemetry.py`. Also no-ops
+Chroma’s broken 3-arg `Posthog.capture` (posthog SDK arity mismatch) so
+`ClientStartEvent` TypeErrors cannot spam stderr even when Chroma still invokes capture.
 
 ---
 
@@ -329,6 +317,10 @@ optional `aider/z/uncertainty/recipe_runner.py`.
 | `Z_SANITIZER_POLICY` | `hard` when yes-always else `soft` | Teeth for tool_missing |
 | `Z_CMAKE_RECONFIGURE` | `1` | Reconfigure when build files edited |
 | `Z_SKILL_NEAR_DUP` | `1` | Merge near-dup captures |
+| `Z_SKILL_LEXICAL_FALLBACK` | `1` | Folded lexical matcher after miss/weak Chroma |
+| `Z_SKILL_LEXICAL_THRESHOLD` | `0.28` | Min lexical score |
+| `Z_SKILL_CHROMA_WEAK` | `0.45` | Score below → also run lexical |
+| `Z_SKILL_RETRIEVE_LOG` | off | Force retrieve trace even if not verbose/NI |
 | `Z_SKIP_VERIFY_GATE` | off | Existing escape (must be **printed** on block) |
 | `Z_FORCE_COMMIT` | off | Existing escape (must be **printed** on block) |
 
@@ -336,12 +328,12 @@ optional `aider/z/uncertainty/recipe_runner.py`.
 
 ## Suggested PR slice order
 
-1. **chroma-telemetry** — tiny, confidence win  
-2. **gate-ni-ux** — messaging only  
-3. **ni-contract** — exit codes + auto-seed  
-4. **verify-cmake** — stale build  
-5. **sanitizer-teeth** — policy  
-6. **skill-retrieve** — lexical fallback + near-dup  
+1. **chroma-telemetry** — ✅ shipped (`configure_chroma_telemetry`)  
+2. **gate-ni-ux** — ✅ shipped (block message + `Z_NI_GATE`)  
+3. **ni-contract** — ✅ shipped (exit codes + auto-seed + outcome line)  
+4. **verify-cmake** — ✅ shipped (reconfigure + refuse stale suite-only green)  
+5. **sanitizer-teeth** — ✅ shipped (hard tool_missing + recipes)  
+6. **skill-retrieve** — ✅ shipped (lexical fallback + near-dup capture merge)  
 
 Each slice independently mergeable with tests.
 

@@ -199,7 +199,55 @@ def _normalize_cmd_line(argv: Sequence[str]) -> str:
     return " ".join(argv).strip()
 
 
+def _is_cmake_project(root: Path) -> bool:
+    return (root / "CMakeLists.txt").is_file()
+
+
+def _is_declared_cmake_build_or_test(argv: Sequence[str], root: Path) -> bool:
+    """
+    Eval Finding 3: ``cmake --build`` / ``ctest`` must auto-approve when the
+    repo is a CMake project — otherwise NI self-verification is blind
+    (configure may run, compile never does, ctest reports Not Run).
+    """
+    if not argv or not _is_cmake_project(root):
+        return False
+    base = Path(argv[0]).name.lower()
+    if base == "cmake":
+        args = [a for a in argv[1:]]
+        if not args:
+            return False
+        # cmake --build <dir> [...]
+        if args[0] == "--build":
+            return True
+        # cmake -S . -B build  /  cmake -B build  /  cmake --fresh -S … -B …
+        if "-S" in args or "-B" in args:
+            return True
+        # Disallow arbitrary -P script / --install of system paths etc.
+        if args[0] in ("--install", "-P", "--graphviz"):
+            return False
+        return False
+    if base == "ctest":
+        # ctest --test-dir build --output-on-failure  (and plain ctest)
+        return True
+    # Generator-native build inside the usual out-of-source dir
+    if base in {"ninja", "make"} and len(argv) >= 1:
+        # make/ninja with -C build, or cwd already build/ (caller uses cwd=root)
+        if "-C" in argv:
+            return True
+        # bare `ninja` / `make` only when build/ exists as cmake tree
+        build = root / "build"
+        if build.is_dir() and (
+            (build / "build.ninja").is_file()
+            or (build / "Makefile").is_file()
+            or (build / "CMakeCache.txt").is_file()
+        ):
+            return len(argv) <= 6  # allow -jN / targets, not pipelines
+    return False
+
+
 def _is_declared_verification(argv: Sequence[str], root: Path) -> bool:
+    if _is_declared_cmake_build_or_test(argv, root):
+        return True
     declared = _load_declared_scripts(root)
     line = _normalize_cmd_line(argv)
     if line in declared:

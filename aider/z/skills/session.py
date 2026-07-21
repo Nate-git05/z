@@ -160,37 +160,105 @@ def retrieve_skill_candidates(
     pool: Optional[str] = None,
 ) -> List[Tuple[Skill, float]]:
     """
-    First-stage retrieval only (Chroma / keywords). Does not inject.
+    First-stage retrieval only (Chroma / keywords / lexical fallback). Does not inject.
     Returns (skill, score) with higher score = better.
 
     For bug-fix tasks, pass ``kind="bug_pattern"`` / ``pool="bug_pattern"``
     to search that logical pool inside the same Chroma collection.
     """
+    from .near_dup import (
+        chroma_weak_threshold,
+        get_last_retrieve_trace,
+        lexical_fallback_enabled,
+        lexical_match_skills,
+        lexical_threshold,
+        RetrieveTrace,
+        set_last_retrieve_trace,
+    )
+
     matches: list[tuple[SkillIndexEntry, float]] = []
+    trace = RetrieveTrace()
+    chroma_scores: list[float] = []
 
     try:
         vindex = get_skill_vector_index()
-        if vindex.available and vindex.count() > 0:
+        trace.chroma_available = bool(vindex.available)
+        if vindex.available:
+            try:
+                trace.chroma_count = int(vindex.count())
+            except Exception:
+                trace.chroma_count = 0
+        if vindex.available and trace.chroma_count > 0:
             # Tighter than the old 0.85 — router still filters further
             # query() returns (entry, score) with score = 1 - cosine distance
-            matches = list(
+            raw = list(
                 vindex.query(
                     task,
                     k=limit,
                     max_distance=max_distance,
                     kind=kind,
                     pool=pool,
-                    boost_bug_text=task if (kind == SKILL_KIND_BUG_PATTERN or pool == "bug_pattern") else None,
+                    boost_bug_text=task
+                    if (kind == SKILL_KIND_BUG_PATTERN or pool == "bug_pattern")
+                    else None,
                 )
             )
+            for entry, score in raw:
+                chroma_scores.append(float(score))
+                trace.chroma_top.append(
+                    (entry.id or "", entry.title or "", float(score))
+                )
+            matches = list(raw)
+            trace.chroma_kept = len(matches)
     except Exception:
         matches = []
+        trace.note = "chroma error"
 
-    if not matches:
+    best_chroma = max(chroma_scores) if chroma_scores else 0.0
+    weak = bool(matches) and best_chroma < chroma_weak_threshold()
+    need_lexical = lexical_fallback_enabled() and (
+        not matches or weak
+    )
+    if weak and matches:
+        trace.note = (trace.note + "; " if trace.note else "") + "weak chroma"
+
+    # Legacy keyword fallback when chroma empty and lexical off
+    if not matches and not need_lexical:
         kw = match_skills(task, _SESSION_INDEX, threshold=threshold, limit=limit * 2)
         if kind:
             kw = [(e, s) for e, s in kw if (e.kind or "") == kind]
         matches = kw[:limit]
+
+    if need_lexical:
+        trace.lexical_ran = True
+        lex = lexical_match_skills(
+            task,
+            _SESSION_INDEX,
+            kind=kind,
+            threshold=lexical_threshold(),
+            limit=max(limit, 5),
+        )
+        for entry, score, reason in lex:
+            trace.lexical_top.append(
+                (entry.id or "", entry.title or "", float(score), reason)
+            )
+        # Merge by id — prefer higher score
+        by_id: dict[str, tuple[SkillIndexEntry, float]] = {}
+        for entry, score in matches:
+            key = entry.id or entry.title or str(id(entry))
+            by_id[key] = (entry, float(score))
+        for entry, score, _reason in lex:
+            key = entry.id or entry.title or str(id(entry))
+            prev = by_id.get(key)
+            if prev is None or float(score) > prev[1]:
+                by_id[key] = (entry, float(score))
+        matches = sorted(by_id.values(), key=lambda x: x[1], reverse=True)[:limit]
+        if not lex and not matches:
+            # Also try keyword as last resort
+            kw = match_skills(task, _SESSION_INDEX, threshold=threshold, limit=limit * 2)
+            if kind:
+                kw = [(e, s) for e, s in kw if (e.kind or "") == kind]
+            matches = kw[:limit]
 
     out: List[Tuple[Skill, float]] = []
     for entry, score in matches:
@@ -209,8 +277,11 @@ def retrieve_skill_candidates(
         if entry.language and not skill.language:
             skill.language = entry.language
         out.append((skill, float(score)))
+        if skill.id:
+            trace.merged_ids.append(skill.id)
         if len(out) >= limit:
             break
+    set_last_retrieve_trace(trace)
     return out
 
 
@@ -301,6 +372,15 @@ def pull_skills_for_checkpoint(
     skip_reasons = [
         f"{d.skill.title}: {d.reason}" for d in decisions if not d.apply
     ]
+    try:
+        from .near_dup import get_last_retrieve_trace, set_last_retrieve_trace
+
+        tr = get_last_retrieve_trace()
+        if tr is not None:
+            tr.skip_reasons = list(skip_reasons)
+            set_last_retrieve_trace(tr)
+    except Exception:
+        pass
 
     for skill in approved:
         if skill.id:

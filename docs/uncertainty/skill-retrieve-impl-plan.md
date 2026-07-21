@@ -1,9 +1,10 @@
 # Implementation plan: skill-retrieve + near-dup consolidation
 
-**Status:** planning (runtime not implemented)  
-**Slice:** fault-plan `skill-retrieve` (last remaining F3/F5-adjacent product gap after chroma-telemetry)  
+**Status:** IMPLEMENTED (runtime on this branch; see `aider/z/skills/near_dup.py`)  
+**Slice:** fault-plan `skill-retrieve` (F3 / P1)  
 **Companion:** [fault-plan-ni-verify-skills-gate.md](./fault-plan-ni-verify-skills-gate.md) § P1 skill-retrieve  
-**Scope:** all models / all Z sessions — not Claude-specific (live LFU/LRU miss was the repro)
+**Scope:** all models / all Z sessions — not Claude-specific (live LFU/LRU miss was the repro)  
+**Tests:** `tests/basic/test_z_skill_near_dup.py`
 
 ---
 
@@ -287,7 +288,9 @@ Each step independently testable; prefer one PR for the whole slice unless size 
 
 > An LFU/cache eviction task must retrieve (or category-match) an existing LRU/eviction bug-pattern via lexical fallback when embeddings miss, and a yes-always capture must update that skill instead of cloning a near-dup title into `~/.z/skills`.
 
-Until the code above lands with tests, this remains planning-only (same status as the original fault-plan P1 section).
+Landed: lexical fallback (stem folding + bug fields), weak-chroma trigger,
+`RetrieveTrace` logging under verbose/NI/`Z_SKILL_RETRIEVE_LOG`, and capture
+near-dup merge via `save_skill_from_task` → `Updated existing skill`.
 
 ---
 

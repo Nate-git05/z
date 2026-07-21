@@ -1057,6 +1057,9 @@ class Coder:
         self.message_cost = 0
         # Per-turn reflection log for drift detection (ask cooldown is per-task)
         self._drift_reflection_log = []
+        # NI auto-seed fires at most once per user turn
+        self._z_ni_auto_seed_done = False
+        self._z_ni_user_message = None
 
         if self.repo:
             self.commit_before_message.append(self.repo.get_head_commit_sha())
@@ -1111,6 +1114,8 @@ class Coder:
 
     def run_one(self, user_message, preproc):
         self.init_before_message()
+        if isinstance(user_message, str):
+            self._z_ni_user_message = user_message
 
         if preproc:
             message = self.preproc_user_input(user_message)
@@ -1406,8 +1411,33 @@ class Coder:
                 limit=2,
                 checkpoint=checkpoint,
             )
+            # Retrieve trace: verbose, --yes-always / NI, or Z_SKILL_RETRIEVE_LOG
+            try:
+                import os
+
+                from aider.z.skills.near_dup import get_last_retrieve_trace
+
+                log_retrieve = bool(getattr(self, "verbose", False))
+                if getattr(self.io, "yes", None) is True:
+                    log_retrieve = True
+                if os.environ.get("Z_SKILL_RETRIEVE_LOG", "").strip().lower() in (
+                    "1",
+                    "true",
+                    "yes",
+                ):
+                    log_retrieve = True
+                if log_retrieve:
+                    tr = get_last_retrieve_trace()
+                    if tr is not None:
+                        for line in tr.format_lines():
+                            self.io.tool_output(line)
+            except Exception:
+                pass
             if getattr(self, "verbose", False) and skip_reasons:
                 for reason in skip_reasons[:6]:
+                    self.io.tool_output(f"Skill skip — {reason}")
+            elif skip_reasons and getattr(self.io, "yes", None) is True:
+                for reason in skip_reasons[:4]:
                     self.io.tool_output(f"Skill skip — {reason}")
 
             skill_caps = [s.capability for s in (skills or []) if getattr(s, "capability", None)]
@@ -1914,16 +1944,82 @@ class Coder:
         if engine.ctx.checklist and len(user_message) < 40:
             return
         try:
-            from aider.z.uncertainty.checklist import format_checklist_for_user
+            from aider.z.uncertainty.checklist import (
+                enrich_thin_checklist,
+                format_checklist_for_user,
+            )
 
             checklist = engine.begin_task(user_message)
             # New task → allow one drift confirm again
             self._drift_asked_this_task = False
             self._drift_reflection_log = []
-            if checklist.items:
-                self.io.tool_output("")
-                self.io.tool_output(format_checklist_for_user(checklist))
-                self.io.tool_output("")
+            checklist, plan, was_thin = enrich_thin_checklist(checklist, user_message)
+            engine.ctx.checklist = checklist
+            if not checklist.items and not plan:
+                return
+
+            rendered = format_checklist_for_user(
+                checklist, plan=plan, thin=was_thin
+            )
+            self.io.tool_output("")
+            self.io.tool_output(rendered)
+            self.io.tool_output("")
+
+            # Thin / greenfield previews: Y/N/C confirm (Change revises specs).
+            if was_thin and plan is not None:
+                from aider.z.uncertainty.plan import (
+                    format_plan_for_context,
+                    interactive_plan_confirm,
+                )
+                from aider.z.uncertainty.schema import RequirementItem
+
+                approved, plan = interactive_plan_confirm(
+                    self.io,
+                    plan,
+                    question="Proceed with this approach?",
+                    original_request=user_message,
+                )
+                if not approved:
+                    self.io.tool_warning(
+                        "Approach rejected — reply in chat with corrections "
+                        "(stack, Socket Mode vs webhook, commands, …)."
+                    )
+                    checklist.confirmed_by_user = False
+                    return
+                # Sync tracking checklist to the (possibly revised) plan
+                if plan and plan.steps:
+                    checklist.items = [
+                        RequirementItem(text=s, kind="product")
+                        for s in plan.steps[:7]
+                        if s and not str(s).lower().startswith("do:")
+                    ]
+                checklist.confirmed_by_user = True
+                try:
+                    engine.ctx.plan = plan
+                except Exception:
+                    pass
+                try:
+                    block = format_plan_for_context(plan)
+                    self.cur_messages += [
+                        {"role": "user", "content": block},
+                        {
+                            "role": "assistant",
+                            "content": (
+                                "I'll follow that approach and the tracking "
+                                "checklist. Tell me if you want further changes "
+                                "before I edit."
+                            ),
+                        },
+                    ]
+                except Exception:
+                    pass
+                self.io.tool_output(
+                    "Approach noted — proceeding. Say what to change anytime "
+                    "before edits if the specs are still wrong."
+                )
+            elif checklist.items:
+                # Structured checklist already meaningful — mark seen
+                checklist.confirmed_by_user = True
         except Exception:
             pass
 
@@ -2266,7 +2362,6 @@ class Coder:
         try:
             from aider.z.uncertainty.detectors import count_symbol_references
             from aider.z.uncertainty.plan import (
-                format_plan_for_confirm,
                 format_plan_for_context,
                 format_plan_for_user,
             )
@@ -2316,28 +2411,41 @@ class Coder:
             self.io.tool_output(rendered)
             self.io.tool_output("")
 
-            # Interactive: ask. Escalation panel must show approach+steps,
-            # NEVER the truncated raw user request as the "plan".
+            # Interactive: Yes / No / Change. Change revises specs from chat.
             approved = True
             if getattr(self.io, "yes", None) is not True:
-                approved = bool(
-                    self.io.confirm_ask(
-                        "Proceed with this implementation plan?",
-                        default="y",
-                        subject=format_plan_for_confirm(plan),
-                    )
+                from aider.z.uncertainty.plan import interactive_plan_confirm
+
+                approved, plan = interactive_plan_confirm(
+                    self.io,
+                    plan,
+                    question="Proceed with this implementation plan?",
+                    original_request=user_message,
                 )
             if not approved:
                 self.io.tool_warning(
-                    "Plan rejected — no edits will be written for this request."
+                    "Plan rejected — no edits will be written for this request. "
+                    "Reply with the specs you want changed, then ask again."
                 )
                 engine.record_user_decision(f"rejected plan: {plan.title}")
                 engine.ctx.plan_approved = False
                 engine.ctx.plan_required = True
+                engine.ctx.plan = plan
                 return False
 
             engine.approve_plan(plan)
             block = format_plan_for_context(plan)
+            revisions = [
+                a.resolution
+                for a in (plan.ambiguities or [])
+                if (a.ambiguity or "").lower().startswith("user revised")
+            ]
+            revision_note = ""
+            if revisions:
+                revision_note = (
+                    " Incorporating your plan revisions: "
+                    + "; ".join(revisions[-3:])
+                )
             self.cur_messages += [
                 {"role": "user", "content": block},
                 {
@@ -2346,6 +2454,7 @@ class Coder:
                         "I'll treat that plan as binding: validation contracts, "
                         "input domains, invariants, and ambiguity resolutions "
                         "before writing any diff."
+                        + revision_note
                     ),
                 },
             ]
@@ -3065,6 +3174,21 @@ class Coder:
         if self.reflected_message:
             return
 
+        # Non-interactive: model asked to /add files (or empty chat + path
+        # mentions) with zero edits — auto-seed and reflect once.
+        if not edited:
+            try:
+                from aider.z.ni_contract import maybe_auto_seed_reflect
+
+                if maybe_auto_seed_reflect(
+                    self,
+                    user_message=getattr(self, "_z_ni_user_message", None) or "",
+                    assistant_text=content,
+                ):
+                    return
+            except Exception:
+                pass
+
         # Reflection turns that apply no new patches must still gate/commit
         # earlier session edits (fmtlog4: lint-fix reflection replied with
         # prose → empty apply_updates → bool(edited) skipped prepare_commit
@@ -3115,12 +3239,26 @@ class Coder:
                     self.reflected_message = gate_result.reflect_message
                     return
                 if not gate_result.allow_commit:
+                    from aider.z.uncertainty.gate import format_commit_blocked_message
+
                     detail = gate_result.reason or (
                         "Resolve high-risk issues, acknowledge medium-risk, "
-                        "or use --force-commit."
+                        "or use --force-commit / Z_FORCE_COMMIT."
                     )
-                    blocked_msg = f"Commit blocked by Z verification gate. {detail}"
-                    self.io.tool_error(blocked_msg)
+                    if getattr(gate_result, "block_ui_emitted", False):
+                        blocked_msg = (
+                            gate_result.block_message
+                            or format_commit_blocked_message(
+                                detail,
+                                dirty_count=len(commit_edited or []),
+                            )
+                        )
+                    else:
+                        blocked_msg = format_commit_blocked_message(
+                            detail,
+                            dirty_count=len(commit_edited or []),
+                        )
+                        self.io.tool_error(blocked_msg)
                     self.move_back_cur_messages(blocked_msg)
                     return
 
@@ -4014,10 +4152,27 @@ class Coder:
                     return edited
             except Exception:
                 pass
+
+        content = getattr(self, "partial_response_content", None) or ""
+        proposed_edit_blocks = self._response_has_edit_blocks(content)
+
         try:
             edits = self.get_edits()
+            edits_before_filter = list(edits or [])
             edits = self.apply_edits_dry_run(edits)
             edits = self.prepare_to_edit(edits)
+            # Eval Finding 2: never silently drop a full SEARCH/REPLACE stream
+            if edits_before_filter and not edits:
+                msg = (
+                    "FAILED TO APPLY EDIT: model proposed SEARCH/REPLACE block(s) "
+                    "but every edit was blocked or skipped (not in chat / create "
+                    "refused / outside repo). Nothing was written to disk."
+                )
+                self.io.tool_error(msg)
+                self.reflected_message = msg
+                self._z_edit_apply_failed = True
+                return edited
+
             edited = set(edit[0] for edit in edits)
 
             self.apply_edits(edits)
@@ -4032,6 +4187,7 @@ class Coder:
             self.io.tool_output(str(err))
 
             self.reflected_message = str(err)
+            self._z_edit_apply_failed = True
             return edited
 
         except ANY_GIT_ERROR as err:
@@ -4044,6 +4200,7 @@ class Coder:
             traceback.print_exc()
 
             self.reflected_message = str(err)
+            self._z_edit_apply_failed = True
             return edited
 
         for path in edited:
@@ -4052,7 +4209,27 @@ class Coder:
             else:
                 self.io.tool_output(f"Applied edit to {path}")
 
+        # Eval Finding 2: fences in the reply but zero applied paths
+        if proposed_edit_blocks and not edited and not self.dry_run:
+            msg = (
+                "FAILED TO APPLY EDIT: response contained SEARCH/REPLACE fences "
+                "but no file was updated on disk. Refusing silent success."
+            )
+            self.io.tool_error(msg)
+            if not getattr(self, "reflected_message", None):
+                self.reflected_message = msg
+            self._z_edit_apply_failed = True
+
         return edited
+
+    @staticmethod
+    def _response_has_edit_blocks(content: str) -> bool:
+        if not content:
+            return False
+        has_search = bool(re.search(r"^<{5,9}\s*SEARCH", content, re.M | re.I))
+        has_div = "=======" in content
+        has_rep = bool(re.search(r"^>{5,9}\s*REPLACE", content, re.M | re.I))
+        return has_search and has_div and has_rep
 
     def parse_partial_args(self):
         # dump(self.partial_response_function_call)
@@ -4238,9 +4415,14 @@ class Coder:
                 if not approved:
                     msg = (
                         f"blocked: needs human approval to run:\n{skipped}\n"
-                        "Read-only repo commands, declared project checks, and "
-                        "declared dependency restores are auto-approved; all other "
-                        "shell commands require an interactive Yes."
+                        "Read-only repo commands, declared project checks "
+                        "(including cmake --build / ctest when CMakeLists.txt "
+                        "exists), and declared dependency restores are "
+                        "auto-approved; all other shell commands require an "
+                        "interactive Yes.\n"
+                        "If verification later says TESTS_FAILED / Not Run, "
+                        "the build step may never have been allowed to run — "
+                        "not necessarily that the code is broken."
                     )
                     self.io.tool_error(msg)
                     engine = getattr(self, "uncertainty_engine", None)
