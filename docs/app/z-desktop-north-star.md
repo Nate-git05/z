@@ -40,8 +40,11 @@ Ship **current Z agent features** with:
 | MCP | Connect from app settings |
 | Workspace groups | Multi-root / team workspaces |
 
-Clone / fork Codex OSS into `apps/z-desktop` (or sibling repo) when app implementation starts.
-Do **not** vendor the full Codex tree into `main` until the app slice is staffed.
+**Codex OSS note (audit):** [openai/codex](https://github.com/openai/codex) is CLI/TUI +
+`app-server` JSON-RPC — **not** a Tauri/desktop GUI. Local clone lives at
+`apps/z-desktop/vendor/codex` (gitignored). Reuse protocol/sandbox/MCP *patterns*;
+build the GUI (Tauri + Monaco) ourselves. Full plan:
+[`z-editor-v1-implementation-plan.md`](./z-editor-v1-implementation-plan.md).
 
 ## Escapes
 
