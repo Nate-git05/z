@@ -1,16 +1,21 @@
 # Z Desktop (app shell)
 
-**Status:** plan + local Codex reference clone — not a shipping binary yet.
+**Status:** plan + local vendor clones — not a shipping binary yet.
 
 **Read first:** [`docs/app/z-editor-v1-implementation-plan.md`](../../docs/app/z-editor-v1-implementation-plan.md)
 
-**Important:** `openai/codex` OSS does **not** contain a desktop GUI (no Tauri/Electron/Monaco).
-`codex app` installs a separate closed-source app. We reuse **app-server protocol ideas**
-and build the Z Editor shell ourselves.
+## Foundations (two upstreams)
+
+| Upstream | Path (gitignored) | Role for Z |
+|----------|-------------------|------------|
+| [microsoft/vscode](https://github.com/microsoft/vscode) (MIT) | `apps/z-desktop/vendor/vscode` | **Editor shell** — workbench, file tree, tabs, Monaco, Electron |
+| [openai/codex](https://github.com/openai/codex) (Apache-2.0) | `apps/z-desktop/vendor/codex` | **Agent protocol patterns** — app-server JSON-RPC, MCP, session lifecycle |
+
+Codex OSS is **not** a desktop GUI (`codex app` installs a separate binary). VS Code OSS **is** the Cursor-shaped shell we build on.
 
 ## Intent
 
-Desktop app for Z, shaped like Cursor / Codex apps:
+Desktop app for Z, shaped like Cursor:
 
 - Workspace-first coding (not terminal-primary)
 - **Z model router only** (no BYOK as the product path)
@@ -21,32 +26,17 @@ Desktop app for Z, shaped like Cursor / Codex apps:
 
 Full decision: [`docs/app/z-desktop-north-star.md`](../../docs/app/z-desktop-north-star.md)
 
-## V1
-
-V1 ships in the existing Z CLI/agent with **router-only** model setup.
-This directory is reserved for the Codex-based app implementation.
-
-## Codex upstream (local vendor)
-
-Upstream: [openai/codex](https://github.com/openai/codex) (Apache-2.0).
+## Clone locally
 
 ```bash
-# From repo root
-git clone --depth 1 https://github.com/openai/codex.git apps/z-desktop/vendor/codex
-# or: gh repo clone openai/codex apps/z-desktop/vendor/codex
+# From repo root — both trees are gitignored under apps/z-desktop/vendor/
+gh repo clone microsoft/vscode apps/z-desktop/vendor/vscode -- --depth 1
+gh repo clone openai/codex apps/z-desktop/vendor/codex -- --depth 1
 ```
 
-Local path (gitignored — do not commit the vendor tree):
+## Next
 
-`apps/z-desktop/vendor/codex/`
-
-Layout of interest for the Z app shell:
-
-| Path | Role |
-|------|------|
-| `codex-rs/` | Rust agent / app core |
-| `codex-cli/` | CLI packaging |
-| `sdk/` | SDK surfaces |
-| `docs/` | Upstream docs |
-
-Next: strip/replace Codex branding and wire Z uncertainty / skills / verify / router APIs.
+1. Fork/brand VS Code OSS → Z Editor product identity (`product.json`, icons, name).
+2. Add a Z workbench contribution (chat + uncertainty + skills + commit-block + MCP + profile).
+3. Wire local `z-app-server` (Python) for agent IPC; model calls via routing gateway.
+4. Keep Codex as read-only protocol reference — do not vendor either tree into git history.

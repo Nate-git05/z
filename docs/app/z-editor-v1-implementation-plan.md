@@ -1,8 +1,8 @@
 # Z Editor V1 — Implementation Plan (post–Codex audit)
 
-**Status:** plan only — do not start app implementation until Section 0 locks are confirmed.  
-**Date:** 2026-07-21  
-**Inputs:** user revised V1 scope doc; local clone `apps/z-desktop/vendor/codex` ([openai/codex](https://github.com/openai/codex)); current Z monorepo surfaces.  
+**Status:** plan only — confirm stack lock below before large VS Code fork work.  
+**Date:** 2026-07-21 (revised: VS Code OSS added as editor foundation)  
+**Inputs:** user revised V1 scope; local clones `vendor/codex` + `vendor/vscode`; Z monorepo surfaces.  
 **Related:** [`z-desktop-north-star.md`](./z-desktop-north-star.md), router-only CLI (#147).
 
 ---
@@ -12,12 +12,12 @@
 | Decision | Plan lock |
 |----------|-----------|
 | Goal | Desktop editor; Z engine programs; **router-only** models; uncertainty / skills / gate / cost visible in-app |
-| Codex role | **Protocol + local-systems patterns** — **not** a Tauri/desktop GUI to fork |
-| Agent brain | Existing Z (Python/Aider fork) — TaskMode, skills, uncertainty, verify gate, TurnOrchestrator |
-| V1 UI shell | **New** Tauri + React + TS + Monaco (as specified) |
-| Biggest correction | `openai/codex` OSS is CLI/TUI + `app-server` JSON-RPC. `codex app` downloads a **separate** closed-source desktop binary. There is **no** Monaco/Tauri/Electron app source in the clone. |
+| **Editor shell** | **[microsoft/vscode](https://github.com/microsoft/vscode) (Code - OSS, MIT)** — Electron workbench, Monaco, file tree, tabs. Local: `apps/z-desktop/vendor/vscode` (~333MB shallow) |
+| Codex role | **Protocol + MCP/session patterns only** — CLI/TUI/`app-server`; **not** a desktop GUI. Local: `apps/z-desktop/vendor/codex` |
+| Agent brain | Existing Z (Python/Aider fork) |
+| Stack change | **Drop Tauri greenfield** for V1 shell — fork/brand VS Code OSS instead (Cursor-shaped). React panels can still mount inside VS Code webview/workbench contributions. |
 
-Said plainly: keep your stack table (Tauri/React/Monaco). Reinterpret “fork Codex” as **steal the app-server contract and sandbox/MCP/config ideas**, then build the GUI ourselves with Z behind a local IPC bridge.
+Said plainly: **VS Code = the frame. Codex = the agent IPC playbook. Z = the brain.**
 
 ---
 
@@ -25,15 +25,20 @@ Said plainly: keep your stack table (Tauri/React/Monaco). Reinterpret “fork Co
 
 These match the user’s Section 0, with one Codex-reality amendment.
 
-### 0.1 Codex = shell *patterns*, not the agent — **amended**
+### 0.1 Editor shell = VS Code OSS; Codex = protocol patterns — **locked**
 
-| Prior assumption | After audit |
-|------------------|-------------|
-| Fork Codex repo as desktop app shell | **False as stated.** Clone has no desktop GUI. |
-| Useful fork surface | **`codex-rs/app-server-protocol`**, `app-server-client`, transport (stdio/WS/UDS), TUI session flow, MCP/config/sandbox/execpolicy crates as *reference* |
-| Discard / replace | `codex-rs/core` agent loop, OpenAI ChatGPT auth, model-provider stack, Codex skills injection — Z replaces all of this |
+| Prior assumption | After audit + VS Code clone |
+|------------------|-----------------------------|
+| Fork Codex as desktop app shell | **False.** Codex has no desktop GUI. |
+| Fork / brand VS Code OSS | **True — V1 editor foundation.** Electron + workbench + Monaco. |
+| Codex useful surface | `app-server-protocol`, client/transport, MCP/config/session lifecycle as *reference* |
+| Discard from Codex | `codex-rs/core` agent brain, ChatGPT auth, Codex model stack |
 
-**License:** Apache-2.0 (`LICENSE` + workspace `license = "Apache-2.0"`). Carry `NOTICE` (includes Ratatui attribution) in any derivative distribution.
+**Licenses:**
+- VS Code OSS: **MIT** (`LICENSE.txt`) — commercial fork OK; keep notices / `ThirdPartyNotices.txt`.
+- Codex: **Apache-2.0** — carry `NOTICE` if copying code.
+
+**Product branding:** change `product.json`, app name, icons, update URLs — ship as **Z Editor**, not “Code - OSS” / VS Code.
 
 ### 0.2 “Sign in through Z”
 
@@ -214,9 +219,9 @@ Marketing + login + MCP dashboard. **Not** the desktop editor. Reuse auth pages/
 
 | Layer | Choice | Audit note |
 |-------|--------|------------|
-| Desktop shell | Tauri | Build new — Codex does not provide this |
-| UI | React + TypeScript | New |
-| Editor | Monaco | New |
+| Desktop shell | **VS Code OSS (Electron)** | Fork/brand `vendor/vscode` — not Tauri |
+| UI | VS Code workbench + webview panels (React/TS where needed) | Z sidebars/panels as contributions |
+| Editor | Monaco (already inside VS Code) | Do not re-embed a second Monaco |
 | Uncertainty chain | Plain React + CSS connectors | No graph lib |
 | Agent | Z Python | Existing |
 | Local IPC | JSON-RPC over WS | Align with Codex app-server *semantics*; prefer WS as user specified (Codex marks WS experimental — our server, our rules) |
@@ -308,8 +313,9 @@ Standard editor chrome. Owns process lifecycle for `z-app-server`. Six panel gro
 | D8 | Manual skill trust | draft / needs_review | Matches current CLI generate path |
 | D9 | New MCP tool trust | Confirm first use per server | Align with command-risk thinking |
 | D10 | Usage freshness | Live from `requests` | No rollup in V1 |
-| **D11 (new)** | Codex reuse mode | **Protocol inspiration + optional later sandbox crates** — **not** binary fork of desktop | Critical audit finding |
-| **D12 (new)** | Gateway vs `z_server` | Prefer gateway as module/router inside `z_server` for V1 | One auth domain, one deploy |
+| **D11** | Codex reuse mode | Protocol inspiration — not desktop fork | Audit finding |
+| **D12** | Gateway vs `z_server` | Prefer gateway module inside `z_server` for V1 | One auth domain |
+| **D13 (new)** | Editor foundation | **VS Code OSS fork** (not Tauri greenfield) | User provided `microsoft/vscode` clone |
 
 ---
 
@@ -317,7 +323,7 @@ Standard editor chrome. Owns process lifecycle for `z-app-server`. Six panel gro
 
 ### In V1
 
-1. Tauri + Monaco + file tree + chat  
+1. **VS Code OSS fork** branded as Z Editor (workbench + Monaco + file tree) + chat panel  
 2. z-app-server + TurnOrchestrator-driven UI state  
 3. Routing gateway (no BYOK) + preferred model + tier escalate  
 4. Uncertainty chain (risk sort + secondary sorts)  
@@ -331,11 +337,12 @@ Standard editor chrome. Owns process lifecycle for `z-app-server`. Six panel gro
 
 - Free-form uncertainty graph  
 - Workspace groups  
-- VS Code extension compatibility  
+- Full marketplace / arbitrary VS Code extension compatibility (may come free-ish with OSS; not a V1 goal)  
 - Learned/ML routing  
 - Spend alerts / budget caps  
-- Vendoring full Codex tree into git  
-- Passwordless passkeys (unless already trivial via chosen auth)  
+- Vendoring full vscode/codex trees into git  
+- Tauri greenfield shell  
+- Passwordless passkeys (unless already trivial)  
 
 ### Pressure cuts (bottom of build order first)
 
@@ -353,11 +360,12 @@ If timeline slips, cut in this order **without** killing the pivot:
 
 ```
 Phase 0 — Locks & scaffolding
-  0a. Confirm §0 + D7/D11/D12 with owner
-  0b. apps/z-desktop/{src-tauri,ui,z-app-server} skeleton (empty panels)
-  0c. Document IPC schema v0 (OpenAPI/JSON Schema)
+  0a. Confirm §0 + D7/D11/D12/D13 (VS Code fork locked)
+  0b. Brand vendor/vscode → Z Editor (product.json, name, icons) — build once
+  0c. apps/z-desktop/z-app-server skeleton + IPC schema v0
+  0d. Empty Z workbench contribution (sidebar container)
 
-Phase 1 — Gateway skeleton (parallel with 0b)
+Phase 1 — Gateway skeleton (parallel with 0b–0d)
   1a. Auth (Google + Z-native) reuse from z_server
   1b. Provider key vault (server-only)
   1c. Stream proxy + hardcoded route
@@ -368,9 +376,10 @@ Phase 2 — Wire Z model calls through gateway
   2b. End-to-end: CLI or thin client → gateway → model
   2c. Kill BYOK as product path (already started #147)
 
-Phase 3 — Tauri shell + Monaco + file tree
-  3a. Open folder / tabs / save
-  3b. Spawn z-app-server child process
+Phase 3 — VS Code shell lifecycle
+  3a. Open folder / tabs / save (inherited from Code - OSS)
+  3b. Spawn/attach z-app-server from Z contribution
+  3c. Auth deep-link / sign-in UX in workbench
 
 Phase 4 — IPC + turn orchestrator → UI
   4a. Chat panel: prompt in, stream out, Busy/WaitingInput
@@ -486,11 +495,11 @@ Exact schema lands in `apps/z-desktop/protocol/` as JSON Schema + generated TS t
 
 1. Owner confirms §0 + D7/D11/D12.  
 2. Open tracking issues / epic for Phases 1–4 only (do not ticket all five UI subsystems until gateway+IPC green).  
-3. Scaffold `apps/z-desktop/` Tauri + `z-app-server` package **without** vendoring Codex into git.  
-4. Keep using `apps/z-desktop/vendor/codex` as read-only reference (already gitignored).  
+3. Brand + build `vendor/vscode` as Z Editor; add `z-app-server` — **do not** commit vendor trees.  
+4. Keep `vendor/codex` as read-only protocol reference.  
 5. Continue router-only CLI (#147) as the model-path precondition for Phase 2.
 
-**Do not start** Monaco panels or uncertainty chain UI until Phase 1–2 prove gateway streaming.
+**Do not start** uncertainty/skills panels until Phase 1–2 prove gateway streaming and Phase 0b builds Code - OSS.
 
 ---
 

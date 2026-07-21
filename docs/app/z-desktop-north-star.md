@@ -40,11 +40,14 @@ Ship **current Z agent features** with:
 | MCP | Connect from app settings |
 | Workspace groups | Multi-root / team workspaces |
 
-**Codex OSS note (audit):** [openai/codex](https://github.com/openai/codex) is CLI/TUI +
-`app-server` JSON-RPC — **not** a Tauri/desktop GUI. Local clone lives at
-`apps/z-desktop/vendor/codex` (gitignored). Reuse protocol/sandbox/MCP *patterns*;
-build the GUI (Tauri + Monaco) ourselves. Full plan:
-[`z-editor-v1-implementation-plan.md`](./z-editor-v1-implementation-plan.md).
+**Foundations:**
+- **Editor shell:** [microsoft/vscode](https://github.com/microsoft/vscode) (Code - OSS, MIT) →
+  `apps/z-desktop/vendor/vscode` (gitignored). Electron workbench + Monaco.
+- **Agent protocol reference:** [openai/codex](https://github.com/openai/codex) →
+  `apps/z-desktop/vendor/codex` (gitignored). CLI/TUI/`app-server` — not a GUI.
+- **Brain:** Z (existing Python agent) + routing gateway.
+
+Full plan: [`z-editor-v1-implementation-plan.md`](./z-editor-v1-implementation-plan.md).
 
 ## Escapes
 
