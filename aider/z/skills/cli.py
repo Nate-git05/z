@@ -353,6 +353,55 @@ def save_skill_from_task(
     )
     if skill.shared and (skill.kind or "") == "bug_pattern":
         io.tool_output("  Scope: shared (bug-pattern — portable across projects)")
+
+    # Near-dup consolidation: update existing skill instead of minting a clone
+    try:
+        from .near_dup import find_near_dup, merge_into_existing, near_dup_enabled
+        from .schema import SKILL_KIND_BUG_PATTERN as _BP
+
+        if near_dup_enabled() and (skill.kind or "") == _BP:
+            store = LocalSkillStore(
+                root=None  # default ~/.z/skills; tests can patch LocalSkillStore
+            )
+            # Prefer same store root when repo_root points at a test skills dir
+            # — LocalSkillStore() uses skills_dir(); capture tests patch store.
+            existing_list = [
+                s
+                for s in store.list_skills()
+                if (s.kind or "") == _BP or getattr(s, "shared", False)
+            ]
+            hit = find_near_dup(skill, existing_list)
+            if hit is not None:
+                merged = merge_into_existing(
+                    hit.skill,
+                    skill,
+                    grounding_note=(
+                        f"Near-dup capture merge ({hit.reason})."
+                    ),
+                )
+                if ground and not ground.ok:
+                    merged.needs_review = True
+                    merged.quality_state = "draft"
+                    if ground.reason:
+                        io.tool_warning(f"  {ground.reason}")
+                    _emit_ungrounded_node(io, merged, ground, uncertainty_engine)
+                path = store.save(merged)
+                merged.path = str(path)
+                upsert_skill_vector(merged)
+                io.tool_output(
+                    f"Updated existing skill: {merged.title} ({(merged.id or '')[:8]})"
+                )
+                io.tool_output(f"  → {merged.path}")
+                io.tool_output(
+                    "Saved as draft (not auto-applied). Accept with: z skill accept <name>"
+                    if merged.needs_review
+                    or (merged.quality_state or "") == "draft"
+                    else f"Updated skill kept state={merged.quality_state}"
+                )
+                return merged, False
+    except Exception:
+        pass
+
     if ground and not ground.ok:
         io.tool_warning(
             "Skill saved as draft — it may not match the real implementation."

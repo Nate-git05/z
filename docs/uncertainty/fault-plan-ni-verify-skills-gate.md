@@ -1,7 +1,7 @@
 # Spec: Non-interactive continuity, verify honesty, skill retrieval, gate UX
 
-**Status:** planning — **runtime not implemented** (flags/`ni_contract`/cmake reconfigure
-exist only in docs; confirmed by repo grep on `main`)  
+**Status:** planning doc; runtime slices F1–F5 shipped separately (see § Suggested PR
+slice order — all six including `skill-retrieve` are on `main` after this merge).  
 **Deep dive + feature plan:** [fault-impl-deep-dive.md](./fault-impl-deep-dive.md)  
 **Triggered by:** Claude Code writeup of live faults on `miniregex` / `minilfu`  
 **Thesis (confirmed in code):** The model can write correct C++; the **orchestration /
@@ -245,29 +245,28 @@ explicit_yes interaction. Tests: `tests/basic/test_z_gate_ni_ux.py`.
 
 ---
 
-### P1 — Skill retrieve + near-dup consolidation (`skill-retrieve`)
+### P1 — Skill retrieve + near-dup consolidation (`skill-retrieve`) — IMPLEMENTED
 
-**Goals**
+**Detail plan:** [skill-retrieve-impl-plan.md](./skill-retrieve-impl-plan.md)
 
-1. **Fallback matcher** when Chroma empty/miss: token overlap on
-   title/symptom/`root_cause_category`/`fix_technique` with stem folding
-   (`lru`↔`lfu`↔`cache`↔`evict`).
-2. **Log retrieve attempts** always in verbose/NI: top-k distances + skip
-   reasons (today silence looks like “no index”).
-3. **Before capture:** if Jaccard/title similarity ≥ threshold to an existing
-   skill → **update** that skill (append evidence) instead of new id;
-   print `Updated existing skill: …` not a new near-dup.
-4. Optional: periodic `z skill dedupe --apply` command.
+**Shipped**
 
-**Acceptance**
+1. **Fallback matcher** (`aider/z/skills/near_dup.py`): stem-folded token
+   overlap on title/symptom/`root_cause_category`/`fix_technique` when Chroma
+   is empty or weak (`Z_SKILL_CHROMA_WEAK`).
+2. **RetrieveTrace** logged under verbose, `--yes-always`, or
+   `Z_SKILL_RETRIEVE_LOG=1` (plus skip reasons under NI).
+3. **Capture merge:** near-dup bug_patterns update existing id
+   (`Updated existing skill: …`) instead of minting a clone.
+4. Optional CLI `z skill dedupe --apply` still deferred.
 
-- Synthetic index with `release-backing-storage-during-lru-eviction`; LFU
-  eviction SPEC must retrieve it (or category sibling) above threshold in
-  unit test without live embeddings if using lexical fallback.
-- Capture path with near-dup title does not increase skill count.
+**Acceptance (tests)**
 
-**Files:** `skills/session.py`, `skills/router.py`, new
-`skills/near_dup.py`, capture path in `base_coder` / `cli.py`.
+- `test_z_skill_near_dup.py`: LFU task retrieves LRU sibling via lexical;
+  capture near-dup keeps skill count stable; `Z_SKILL_NEAR_DUP=0` creates new.
+
+**Files:** `skills/near_dup.py`, `skills/session.py`, `skills/cli.py`,
+`coders/base_coder.py`.
 
 ---
 
@@ -318,6 +317,10 @@ Chroma’s broken 3-arg `Posthog.capture` (posthog SDK arity mismatch) so
 | `Z_SANITIZER_POLICY` | `hard` when yes-always else `soft` | Teeth for tool_missing |
 | `Z_CMAKE_RECONFIGURE` | `1` | Reconfigure when build files edited |
 | `Z_SKILL_NEAR_DUP` | `1` | Merge near-dup captures |
+| `Z_SKILL_LEXICAL_FALLBACK` | `1` | Folded lexical matcher after miss/weak Chroma |
+| `Z_SKILL_LEXICAL_THRESHOLD` | `0.28` | Min lexical score |
+| `Z_SKILL_CHROMA_WEAK` | `0.45` | Score below → also run lexical |
+| `Z_SKILL_RETRIEVE_LOG` | off | Force retrieve trace even if not verbose/NI |
 | `Z_SKIP_VERIFY_GATE` | off | Existing escape (must be **printed** on block) |
 | `Z_FORCE_COMMIT` | off | Existing escape (must be **printed** on block) |
 
@@ -325,33 +328,12 @@ Chroma’s broken 3-arg `Posthog.capture` (posthog SDK arity mismatch) so
 
 ## Suggested PR slice order
 
-<<<<<<< HEAD
-1. **chroma-telemetry** — tiny, confidence win (separate PR)  
-2. **gate-ni-ux** — block message + `Z_NI_GATE` (separate PR)  
-3. **ni-contract** — exit codes + auto-seed (separate PR)  
-4. **verify-cmake** — reconfigure + refuse stale suite (separate PR)  
-5. **sanitizer-teeth** — ✅ shipped (hard tool_missing + recipes)  
-=======
-<<<<<<< HEAD
-1. **chroma-telemetry** — tiny, confidence win (separate PR)  
-2. **gate-ni-ux** — block message + `Z_NI_GATE` (separate PR)  
-3. **ni-contract** — exit codes + auto-seed (separate PR)  
-4. **verify-cmake** — ✅ shipped (reconfigure + refuse stale suite-only green)  
-=======
-<<<<<<< HEAD
-1. **chroma-telemetry** — tiny, confidence win (separate PR)  
-2. **gate-ni-ux** — block message + `Z_NI_GATE` (separate PR)  
-3. **ni-contract** — ✅ shipped (exit codes + auto-seed + outcome line)  
-=======
 1. **chroma-telemetry** — ✅ shipped (`configure_chroma_telemetry`)  
 2. **gate-ni-ux** — ✅ shipped (block message + `Z_NI_GATE`)  
-3. **ni-contract** — exit codes + auto-seed  
->>>>>>> origin/main
-4. **verify-cmake** — stale build  
->>>>>>> origin/main
-5. **sanitizer-teeth** — policy  
->>>>>>> origin/main
-6. **skill-retrieve** — lexical fallback + near-dup  
+3. **ni-contract** — ✅ shipped (exit codes + auto-seed + outcome line)  
+4. **verify-cmake** — ✅ shipped (reconfigure + refuse stale suite-only green)  
+5. **sanitizer-teeth** — ✅ shipped (hard tool_missing + recipes)  
+6. **skill-retrieve** — ✅ shipped (lexical fallback + near-dup capture merge)  
 
 Each slice independently mergeable with tests.
 
