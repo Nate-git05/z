@@ -2541,8 +2541,11 @@ class Coder:
         self._drift_asked_this_task = True
         prompt = confirm_prompt(signal)
         try:
+            # Long drift text goes in the escalation panel (subject); keep the
+            # prompt_toolkit line short so terminal resize does not garble it.
             accepted = self.io.confirm_ask(
-                prompt,
+                "Refocus on the original task?",
+                subject=prompt,
                 default="n",
                 explicit_yes_required=True,
             )
