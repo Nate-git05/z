@@ -865,6 +865,24 @@ def format_plan_for_confirm(plan: PlanningArtifact) -> str:
     return "\n".join(lines)
 
 
+def format_thin_confirm(plan: PlanningArtifact, checklist=None) -> str:
+    """Compact thin-checklist confirm body (no scrollback wall)."""
+    lines = [format_plan_for_confirm(plan)]
+    items = list(getattr(checklist, "items", None) or [])
+    tracking = []
+    for item in items[:7]:
+        text = (getattr(item, "text", None) or "").strip()
+        if not text or text.lower().startswith("do:"):
+            continue
+        tracking.append(text)
+    if tracking:
+        lines.append("")
+        lines.append("Tracking:")
+        for i, text in enumerate(tracking, 1):
+            lines.append(f"  {i}. {text}")
+    return "\n".join(lines)
+
+
 def format_plan_for_context(plan: PlanningArtifact) -> str:
     """
     Inject into cur_messages as grounding for implementation.
@@ -1152,13 +1170,15 @@ def interactive_plan_confirm(
     question: str = "Proceed with this implementation plan?",
     original_request: str = "",
     max_rounds: int = 4,
+    confirm_subject: str | None = None,
+    checklist=None,
 ) -> tuple:
     """
-    Y/N/C confirm loop for an implementation plan.
+    Y/N/C/V confirm loop for an implementation plan.
 
     Returns ``(approved: bool, plan)``. On Change, collects free-text
-    revisions (or uses typed free-text from the confirm prompt), revises
-    the plan, and re-asks.
+    revisions, revises the plan, and re-asks with a compact panel.
+    View prints the full plan once then re-asks (does not consume a change round).
     """
     if plan is None:
         return False, plan
@@ -1171,8 +1191,16 @@ def interactive_plan_confirm(
 
     current = plan
     ask = getattr(io, "plan_confirm_ask", None)
-    for _round in range(max(1, max_rounds)):
-        subject = format_plan_for_confirm(current)
+    changes_used = 0
+    subject_override = confirm_subject
+    while changes_used < max(1, max_rounds):
+        if subject_override is not None:
+            subject = subject_override
+            subject_override = None
+        elif checklist is not None:
+            subject = format_thin_confirm(current, checklist)
+        else:
+            subject = format_plan_for_confirm(current)
         if ask:
             choice = ask(question, subject=subject, default="y")
         else:
@@ -1180,12 +1208,22 @@ def interactive_plan_confirm(
             ok = bool(io.confirm_ask(question, default="y", subject=subject))
             choice = "yes" if ok else "no"
 
+        if choice == "view":
+            try:
+                io.tool_output("")
+                io.tool_output(format_plan_for_user(current))
+                io.tool_output("")
+            except Exception:
+                pass
+            continue
+
         if choice == "yes":
             return True, current
         if choice == "no":
             return False, current
 
         # change
+        changes_used += 1
         pending = getattr(io, "_pending_plan_change", None)
         if pending:
             feedback = str(pending).strip()
@@ -1214,12 +1252,7 @@ def interactive_plan_confirm(
             feedback,
             original_request=original_request,
         )
-        try:
-            io.tool_output("")
-            io.tool_output(format_plan_for_user(current))
-            io.tool_output("")
-        except Exception:
-            pass
+        # Compact re-confirm only — full plan via View
     # Exhausted rounds — last chance yes/no only
     io.tool_warning(
         "Change limit reached — Yes to proceed with the latest plan, No to abort."

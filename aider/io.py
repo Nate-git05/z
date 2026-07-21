@@ -985,15 +985,15 @@ class InputOutput:
         default="y",
     ):
         """
-        Confirm an implementation plan with a Change option.
+        Confirm an implementation plan with Change and View options.
 
-        Returns ``\"yes\"`` | ``\"no\"`` | ``\"change\"``.
+        Returns ``\"yes\"`` | ``\"no\"`` | ``\"change\"`` | ``\"view\"``.
         ``--yes-always`` auto-returns ``\"yes\"``.
         """
         self.num_user_asks += 1
         self.ring_bell()
 
-        options = " (Y)es/(N)o/(C)hange"
+        options = " (Y)es/(N)o/(C)hange/(V)iew"
         if default.lower().startswith("y"):
             prompt = f"{question}{options} [Yes]: "
         elif default.lower().startswith("n"):
@@ -1010,7 +1010,12 @@ class InputOutput:
                     question.strip(),
                     console=self.console,
                     context=subject if isinstance(subject, str) else None,
-                    options=["Yes — proceed", "No — abort edits", "Change — revise the plan"],
+                    options=[
+                        "Yes — proceed",
+                        "No — abort edits",
+                        "Change — revise the plan",
+                        "View — show full plan",
+                    ],
                     pretty=True,
                 )
             elif "\n" in subject:
@@ -1021,7 +1026,7 @@ class InputOutput:
             else:
                 self.tool_output(subject, bold=True)
 
-        valid = ("yes", "no", "change")
+        valid = ("yes", "no", "change", "view")
         if self.yes is True:
             res = "y"
         elif self.yes is False:
@@ -1065,7 +1070,7 @@ class InputOutput:
                 if any(v.startswith(res) for v in valid) and res:
                     break
                 # Free-text that looks like a revision → treat as change intent
-                if len(res) > 2 and res not in ("y", "n", "c", "ye", "yo"):
+                if len(res) > 2 and res not in ("y", "n", "c", "v", "ye", "yo", "vi"):
                     self.tool_output(
                         "Treating that as a plan change request…"
                     )
@@ -1077,11 +1082,13 @@ class InputOutput:
                         blockquote=True,
                     )
                     return "change"
-                self.tool_error("Please answer Yes, No, or Change (Y/N/C).")
+                self.tool_error("Please answer Yes, No, Change, or View (Y/N/C/V).")
 
         res0 = res.lower()[0]
         if res0 == "c":
             choice = "change"
+        elif res0 == "v":
+            choice = "view"
         elif res0 == "y":
             choice = "yes"
         else:
