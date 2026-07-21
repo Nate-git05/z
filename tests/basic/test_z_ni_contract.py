@@ -29,10 +29,19 @@ from aider.z.task_mode import TaskMode
 
 class DetectAddFilesMissTest(unittest.TestCase):
     def test_please_add_any_of_these(self):
-        # Eval Finding 1 — wording seen on build C
         self.assertTrue(
             detect_add_files_miss(
                 "Please add any of these that already exist to the chat."
+            )
+        )
+
+    def test_please_add_existing_before_execute(self):
+        self.assertTrue(
+            detect_add_files_miss(
+                "Please add these existing files to the chat before I execute "
+                "the authorized testing and sanitizer plan:\n"
+                "* `CMakeLists.txt`\n"
+                "* The current C++ event-bus header and source files\n"
             )
         )
 
@@ -191,6 +200,79 @@ class AutoSeedTest(unittest.TestCase):
         coder.add_rel_fname = lambda r: added.append(r)
         got = auto_seed_chat(coder, ["src/existing.c", "src/missing.c"])
         self.assertEqual(got, ["src/existing.c"])
+
+    def test_interactive_auto_seed_on_add_files_miss(self):
+        """Interactive sessions must not stall on 'please add these files'."""
+        from aider.z.ni_contract import discover_topic_files
+
+        (self.root / "CMakeLists.txt").write_text("project(x)\n", encoding="utf-8")
+        (self.root / "include").mkdir()
+        (self.root / "include" / "event_bus.hpp").write_text("#pragma once\n", encoding="utf-8")
+        (self.root / "src" / "event_bus.cpp").write_text("void f(){}\n", encoding="utf-8")
+        (self.root / "tests").mkdir()
+        (self.root / "tests" / "test_event_bus.cpp").write_text("int main(){}\n", encoding="utf-8")
+
+        topics = discover_topic_files(
+            self.root,
+            "The current C++ event-bus header and source files and test file",
+        )
+        self.assertTrue(any("event_bus" in t for t in topics), topics)
+
+        coder = MagicMock()
+        coder.root = str(self.root)
+        coder.io = MagicMock()
+        coder.io.yes = None  # interactive — NO --yes-always
+        coder.reflected_message = None
+        coder.aider_edited_files = set()
+        coder._z_ni_auto_seed_done = False
+        coder.uncertainty_engine = None
+        coder.get_inchat_relative_files = MagicMock(return_value=[])
+        added = []
+        coder.add_rel_fname = lambda r: added.append(r)
+
+        ok = maybe_auto_seed_reflect(
+            coder,
+            user_message="run concurrency tests on the event bus",
+            assistant_text=(
+                "Please add these existing files to the chat before I execute "
+                "the authorized testing and sanitizer plan:\n"
+                "* `CMakeLists.txt`\n"
+                "* The current C++ event-bus header and source files\n"
+                "* The current C++ event-bus test file\n"
+            ),
+        )
+        self.assertTrue(ok)
+        self.assertIn("CMakeLists.txt", added)
+        self.assertTrue(any("event_bus" in a for a in added), added)
+        self.assertIn("SEARCH/REPLACE", coder.reflected_message)
+
+    def test_no_yes_flag_needed_after_plan_approve(self):
+        """Plan confirm Yes is enough — do not require io.yes / --yes-always."""
+        (self.root / "CMakeLists.txt").write_text("project(x)\n", encoding="utf-8")
+        eng = MagicMock()
+        eng.ctx = MagicMock()
+        eng.ctx.plan_approved = True
+
+        coder = MagicMock()
+        coder.root = str(self.root)
+        coder.io = MagicMock()
+        coder.io.yes = None
+        coder.reflected_message = None
+        coder.aider_edited_files = set()
+        coder._z_ni_auto_seed_done = False
+        coder.uncertainty_engine = eng
+        coder.get_inchat_relative_files = MagicMock(return_value=[])
+        added = []
+        coder.add_rel_fname = lambda r: added.append(r)
+
+        ok = maybe_auto_seed_reflect(
+            coder,
+            user_message="test the event bus",
+            assistant_text="Please add `CMakeLists.txt` to the chat before I proceed.",
+        )
+        self.assertTrue(ok)
+        self.assertIn("CMakeLists.txt", added)
+        self.assertIsNone(coder.io.yes)
 
 
 class ReflectionFloorTest(unittest.TestCase):

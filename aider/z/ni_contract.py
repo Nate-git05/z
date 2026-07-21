@@ -67,12 +67,15 @@ def apply_ni_reflection_floor(coder) -> None:
 _ADD_FILES_MISS_RE = re.compile(
     r"(?is)("
     r"please\s+add\s+(?:these\s+|any\s+of\s+these\s+|the\s+)?"
-    r"(?:files?|paths?|that\s+already\s+exist)|"
+    r"(?:existing\s+)?(?:files?|paths?|that\s+already\s+exist)|"
     r"please\s+add\s+any\s+of\s+these|"
+    r"please\s+add\s+these\s+existing\s+files|"
     r"add\s+(?:these\s+|any\s+of\s+these\s+)?"
-    r"(?:files?|paths?)\s+to\s+(?:the\s+)?chat|"
+    r"(?:existing\s+)?(?:files?|paths?)\s+to\s+(?:the\s+)?chat|"
     r"add\s+any\s+of\s+these\s+(?:that\s+already\s+exist\s+)?"
     r"to\s+(?:the\s+)?chat|"
+    r"add\s+these\s+existing\s+files\s+to\s+(?:the\s+)?chat|"
+    r"before\s+i\s+(?:execute|implement|run|proceed)|"
     r"(?:files?|paths?)\s+(?:are|is)\s+not\s+in\s+(?:the\s+)?chat|"
     r"not\s+(?:currently\s+)?in\s+(?:the\s+)?chat|"
     r"once\s+you\s+(?:have\s+)?add(?:ed)?|"
@@ -152,6 +155,138 @@ def explore_seed_candidates(
         return []
 
 
+def discover_topic_files(
+    root: Path | str,
+    text: str,
+    *,
+    limit: int = 10,
+) -> List[str]:
+    """
+    Map vague prose like "C++ event-bus header and source files" onto real paths.
+
+    Looks for hyphenated topics (event-bus) and spaced topics (event bus),
+    then finds matching headers/sources/tests under the repo.
+    """
+    root_p = Path(root)
+    if not root_p.is_dir() or not (text or "").strip():
+        return []
+    low = text.lower()
+    topics: List[str] = []
+    for m in re.finditer(r"\b([a-z][a-z0-9]+(?:-[a-z0-9]+)+)\b", low):
+        topics.append(m.group(1))
+    for m in re.finditer(
+        r"\b([a-z][a-z0-9]{1,20})\s+([a-z][a-z0-9]{1,20})\b", low
+    ):
+        a, b = m.group(1), m.group(2)
+        if a in {
+            "the",
+            "and",
+            "for",
+            "with",
+            "from",
+            "into",
+            "current",
+            "existing",
+            "please",
+            "these",
+            "those",
+            "this",
+            "that",
+            "add",
+            "file",
+            "files",
+            "test",
+            "header",
+            "source",
+            "cmake",
+        }:
+            continue
+        if b in {
+            "file",
+            "files",
+            "header",
+            "headers",
+            "source",
+            "sources",
+            "test",
+            "tests",
+            "plan",
+            "chat",
+        }:
+            continue
+        topics.append(f"{a}-{b}")
+        topics.append(f"{a}_{b}")
+
+    # Dedup preserve order
+    seen_t: Set[str] = set()
+    uniq_topics: List[str] = []
+    for t in topics:
+        if t in seen_t:
+            continue
+        seen_t.add(t)
+        uniq_topics.append(t)
+
+    if not uniq_topics:
+        return []
+
+    code_ext = {
+        ".c",
+        ".cc",
+        ".cpp",
+        ".cxx",
+        ".h",
+        ".hpp",
+        ".hh",
+        ".py",
+        ".ts",
+        ".js",
+        ".go",
+        ".rs",
+    }
+    skip_dirs = {
+        ".git",
+        "node_modules",
+        "build",
+        "dist",
+        ".venv",
+        "venv",
+        "__pycache__",
+        ".z",
+    }
+    hits: List[str] = []
+    seen_h: Set[str] = set()
+    try:
+        for dirpath, dirnames, filenames in os.walk(root_p):
+            dirnames[:] = [d for d in dirnames if d not in skip_dirs and not d.startswith(".")]
+            for name in filenames:
+                path = Path(dirpath) / name
+                try:
+                    rel = str(path.relative_to(root_p)).replace("\\", "/")
+                except ValueError:
+                    continue
+                if path.suffix.lower() not in code_ext and name != "CMakeLists.txt":
+                    continue
+                rel_l = rel.lower()
+                name_l = name.lower()
+                for topic in uniq_topics:
+                    t_flat = topic.replace("-", "").replace("_", "")
+                    n_flat = name_l.replace("-", "").replace("_", "")
+                    if (
+                        topic in rel_l
+                        or topic.replace("-", "_") in rel_l
+                        or t_flat in n_flat
+                    ):
+                        if rel not in seen_h:
+                            seen_h.add(rel)
+                            hits.append(rel)
+                        break
+                if len(hits) >= limit:
+                    return hits
+    except OSError:
+        return hits
+    return hits[:limit]
+
+
 def collect_seed_candidates(
     coder,
     *,
@@ -159,7 +294,7 @@ def collect_seed_candidates(
     assistant_text: str = "",
     limit: int = 12,
 ) -> List[str]:
-    """Merge SPEC path mentions, assistant mentions, and explore hits."""
+    """Merge SPEC path mentions, assistant mentions, topic discovery, explore hits."""
     root = Path(getattr(coder, "root", None) or Path.cwd())
     try:
         in_chat = list(coder.get_inchat_relative_files() or [])
@@ -168,6 +303,9 @@ def collect_seed_candidates(
     in_chat_set = {str(x).replace("\\", "/") for x in in_chat}
 
     mentioned = extract_path_mentions(user_message, assistant_text, limit=limit)
+    topics = discover_topic_files(
+        root, f"{user_message}\n{assistant_text}", limit=limit
+    )
     explore = explore_seed_candidates(
         user_message or assistant_text,
         root,
@@ -177,7 +315,7 @@ def collect_seed_candidates(
 
     merged: List[str] = []
     seen: Set[str] = set()
-    for rel in mentioned + explore:
+    for rel in mentioned + topics + explore:
         rel = str(rel).replace("\\", "/").lstrip("./")
         if not rel or rel in seen or rel in in_chat_set:
             continue
@@ -219,6 +357,15 @@ def _create_new_file_hint(missing: Sequence[str]) -> str:
     )
 
 
+def _plan_approved(coder) -> bool:
+    try:
+        eng = getattr(coder, "uncertainty_engine", None)
+        ctx = getattr(eng, "ctx", None)
+        return bool(getattr(ctx, "plan_approved", False))
+    except Exception:
+        return False
+
+
 def maybe_auto_seed_reflect(
     coder,
     *,
@@ -226,36 +373,49 @@ def maybe_auto_seed_reflect(
     assistant_text: str = "",
 ) -> bool:
     """
-    If NI + add-files miss + no reflected_message yet: seed chat and reflect once.
+    When the model asks to /add files instead of editing: seed chat + reflect.
 
-    Returns True when ``coder.reflected_message`` was set (caller should return
-    into the reflection loop).
+    Does **not** require ``--yes-always`` / ``io.yes``. Triggers when:
+
+    - the assistant reply is an add-files miss ("please add these files…"), or
+    - a plan was already approved and the reply still stalls on add-files /
+      names discoverable repo paths with no SEARCH/REPLACE yet, or
+    - non-interactive session with path mentions / miss
+
+    So after the user answers Yes on the plan confirm, Z must keep going
+    without needing a second global yes flag.
     """
     if not ni_auto_seed_enabled():
         return False
-    if not is_non_interactive_session(getattr(coder, "io", None)):
-        return False
     if getattr(coder, "reflected_message", None):
         return False
-    # Only once per turn
     if getattr(coder, "_z_ni_auto_seed_done", False):
         return False
 
     content = assistant_text or ""
-    miss = detect_add_files_miss(content)
-    paths = extract_path_mentions(user_message, content)
-    # Require miss prose, or SPEC/reply path mentions with zero edits so far
-    if not miss and not paths:
+    # Already implementing — leave it alone
+    if "<<<<<<< SEARCH" in content or ">>>>>>> REPLACE" in content:
         return False
-
-    # Don't fire if we already edited product files this turn
     if getattr(coder, "aider_edited_files", None):
         return False
 
+    miss = detect_add_files_miss(content)
+    ni = is_non_interactive_session(getattr(coder, "io", None))
+    plan_ok = _plan_approved(coder)
+    paths = extract_path_mentions(user_message, content)
     candidates = collect_seed_candidates(
         coder, user_message=user_message, assistant_text=content
     )
-    if not candidates and not miss:
+
+    # None of these branches check io.yes — plan Yes / miss prose is enough.
+    should = bool(
+        miss
+        or (ni and (paths or candidates or miss))
+        or (plan_ok and (miss or paths or candidates))
+    )
+    if not should:
+        return False
+    if not miss and not paths and not candidates:
         return False
 
     root = Path(getattr(coder, "root", None) or Path.cwd())
@@ -269,14 +429,15 @@ def maybe_auto_seed_reflect(
     if io is not None and added:
         try:
             io.tool_output(
-                "NI auto-seed: added to chat — " + ", ".join(added[:8])
+                "Auto-added to chat — " + ", ".join(added[:8])
             )
         except Exception:
             pass
 
     parts = [
-        "Files were added to the chat automatically (non-interactive contract).",
-        "Implement the request now with SEARCH/REPLACE (or new-file) edit blocks.",
+        "Files were added to the chat automatically.",
+        "Implement / execute the approved plan now with SEARCH/REPLACE "
+        "(or new-file) edit blocks.",
         "Do not ask to /add files again — create missing paths yourself.",
     ]
     if added:
@@ -284,7 +445,7 @@ def maybe_auto_seed_reflect(
     hint = _create_new_file_hint(missing)
     if hint:
         parts.append(hint)
-    elif detect_add_files_miss(content) and not added and not missing:
+    elif miss and not added and not missing:
         parts.append(
             "No matching repo files were found to add. Create any new files "
             "required by the SPEC with edit blocks now."
