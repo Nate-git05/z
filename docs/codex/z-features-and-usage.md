@@ -202,9 +202,12 @@ Shipped under `aider/z/uncertainty/` (see [reliability-9.md](../uncertainty/reli
 
 | Piece | Role |
 |-------|------|
-| Z theme | Black / white / gray + burnt-orange accent (`--z-theme` / `--no-z-theme`) |
+| Z theme | Black / white + burnt-orange accent (`--z-theme` / `--no-z-theme`) |
 | Startup banner + scientist mascot | Identity / idle pose |
-| Compact mascot spinner | Single-line `[o.o]` wait while the model works |
+| Compact mascot spinner | Single-line `[o.o]` wait while planning / model works |
+| Escalation panel | Orange-bordered box when Z needs a decision (plan, gate, drift) |
+
+**Design target (not fully implemented):** [terminal-ux-for-engineers.md](../uncertainty/terminal-ux-for-engineers.md) — signal tiers, compact plan confirm, mode chrome.
 
 ---
 
