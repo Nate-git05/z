@@ -282,15 +282,21 @@ def test_router_mode_needs_no_second_web_trip():
         "aider.z.onboarding.load_config", return_value=OnboardingConfig()
     ), patch(
         "aider.z.login_screen.prompt_auth_mode_choice", return_value="router"
+    ), patch(
+        "aider.z.login_screen.prompt_router_model_choice",
+        return_value="claude-sonnet-5",
     ), patch("aider.z.auth.open_web_setup") as setup, patch(
         "aider.z.onboarding.save_auth_mode"
-    ) as save_mode:
+    ) as save_mode, patch(
+        "aider.z.onboarding.save_selected_model"
+    ) as save_model:
         ok = ensure_agent_session(io)
 
     assert ok
     login.assert_not_called()
     setup.assert_not_called()
     save_mode.assert_called_once_with("router")
+    save_model.assert_called_once_with("claude-sonnet-5")
 
 
 def test_apply_web_setup_result_saves_credentials_when_present():

@@ -14,22 +14,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command")
 
-    login = sub.add_parser("login", help="Sign in to your Z account")
+    login = sub.add_parser(
+        "login",
+        help="Re-authenticate (normally just run `z` — sign-in happens if needed)",
+    )
     login.add_argument(
         "--provider",
         choices=["email", "phone", "google"],
         default=None,
-        help="Skip the menu and use this provider",
+        help=argparse.SUPPRESS,
     )
 
     auth = sub.add_parser(
         "auth",
-        help="Account auth (default: login) or re-choose BYOK vs Z router",
+        help="Re-authenticate or re-choose BYOK vs Z router (`z auth switch`)",
     )
     auth_sub = auth.add_subparsers(dest="auth_command")
     auth_sub.add_parser(
         "switch",
-        help="Re-choose between BYOK and Z router sign-in",
+        help="Re-choose between bring-your-own key and Z's model router",
     )
     sub.add_parser("logout", help="Sign out and clear ~/.z/credentials")
     sub.add_parser("whoami", help="Show the current Z account / workspace")
@@ -151,17 +154,49 @@ def _skip_account_gate() -> bool:
     return os.environ.get("Z_SKIP_ACCOUNT", "").strip().lower() in ("1", "true", "yes")
 
 
+def _complete_mode_setup(io, mode: str) -> bool:
+    """Finish BYOK key setup or router model preference after mode is chosen."""
+    from aider.z.onboarding import save_auth_mode, save_selected_model
+
+    if mode == "byok":
+        from aider.z.auth import open_web_setup
+
+        result = open_web_setup(io, "byok", skip_login=True)
+        if result is None:
+            return False
+        _apply_web_setup_result(result, mode="byok")
+        save_auth_mode(mode)
+        return True
+
+    if mode == "router":
+        from aider.z.login_screen import prompt_router_model_choice
+
+        io.tool_output("")
+        io.tool_output(
+            "Z's router runs on Z-hosted models. Pick a preferred model — "
+            "Z can still escalate to a stronger one when the task needs it."
+        )
+        model_id = prompt_router_model_choice(io)
+        if not model_id:
+            io.tool_output("Setup cancelled.")
+            return False
+        save_selected_model(model_id)
+        save_auth_mode(mode)
+        io.tool_output(f"Router preference saved: {model_id}")
+        return True
+
+    return False
+
+
 def ensure_agent_session(io) -> bool:
     """First-run / session gate for the coding agent.
 
-    Order: if not signed in, ask Google vs Z in the terminal, open the matching
-    web login page (credentials only in the browser — never CLI OTP), THEN
-    choose BYOK vs router in the terminal, THEN (BYOK only) finish model/key
-    setup via a second, skip_login web trip.
+    Bare ``z`` is the only first-run path:
+      1. If not signed in → Sign in / Sign up → Google or Z → browser auth
+      2. After account is live → BYOK vs Z router (terminal)
+      3. BYOK → browser model/key setup; router → choose preferred Z model
 
-    ``z login`` / ``z auth switch`` use the same Google-vs-Z → web login path.
-
-    Set Z_SKIP_ACCOUNT=1 to bypass (automation / tests).
+    ``z login`` is only for explicit re-auth. Set Z_SKIP_ACCOUNT=1 to bypass.
     """
     if _skip_account_gate():
         return True
@@ -174,11 +209,17 @@ def ensure_agent_session(io) -> bool:
         if not creds:
             return False
 
-    from aider.z.onboarding import load_config, save_auth_mode
+    from aider.z.onboarding import load_config
 
     config = load_config()
-    if config.auth_mode in ("byok", "router"):
+    if config.auth_mode == "byok":
         return True
+    if config.auth_mode == "router" and config.selected_model:
+        return True
+
+    # Signed in but mode (or router model) not finished yet.
+    if config.auth_mode == "router" and not config.selected_model:
+        return _complete_mode_setup(io, "router")
 
     from aider.z.login_screen import prompt_auth_mode_choice
 
@@ -186,17 +227,7 @@ def ensure_agent_session(io) -> bool:
     if mode is None:
         io.tool_output("Setup cancelled.")
         return False
-
-    if mode == "byok":
-        from aider.z.auth import open_web_setup
-
-        result = open_web_setup(io, "byok", skip_login=True)
-        if result is None:
-            return False
-        _apply_web_setup_result(result, mode="byok")
-
-    save_auth_mode(mode)
-    return True
+    return _complete_mode_setup(io, mode)
 
 
 def _apply_web_setup_result(result: dict, *, mode: str) -> None:
@@ -230,24 +261,21 @@ def _has_explicit_model_flag(argv: list[str]) -> bool:
 def _print_help() -> None:
     build_parser().print_help()
     print(
-        "\nRun `z` with no arguments to sign in (if needed) and start the coding agent.\n"
+        "\nAfter install, just run `z`. If you're not signed in, Z opens the browser\n"
+        "to sign up / sign in, then asks BYOK vs Z's router in the terminal.\n"
         "Any other arguments are passed through to the agent (same as `aider …`).\n"
         "Examples:\n"
         "  z\n"
-        "  z login\n"
         "  z auth switch\n"
+        "  z logout\n"
+        "  z whoami\n"
         "  z workspace create\n"
-        "  z workspace invite\n"
-        "  z workspace members\n"
         "  z models\n"
         "  z mcp list\n"
         "  z skill add\n"
         "  z skill create \"how this repo validates Stripe webhooks\"\n"
         "  z skill list\n"
-        "  z skill show stripe\n"
-        "  z skill accept stripe\n"
         "  z taxonomy review\n"
-        "  z uncertainty stats\n"
         "  z --model sonnet\n"
     )
 
@@ -264,13 +292,13 @@ def _start_agent(argv: list[str]) -> int | None:
     if not ensure_agent_session(io):
         return 1
 
-    # Inject persisted BYOK model — try_to_select_default_model() ignores
-    # AIDER_MODEL and hardcodes per-provider defaults (e.g. always "sonnet").
+    # Inject persisted preferred model (BYOK or router).
+    # try_to_select_default_model() ignores AIDER_MODEL and hardcodes defaults.
     if not _has_explicit_model_flag(argv):
         from aider.z.onboarding import load_config
 
         config = load_config()
-        if config.auth_mode == "byok" and config.selected_model:
+        if config.selected_model and config.auth_mode in ("byok", "router"):
             argv = list(argv) + ["--model", config.selected_model]
 
     from aider.main import main as agent_main
@@ -427,10 +455,8 @@ def cmd_mcp(io, args) -> int:
 
 
 def cmd_auth_switch(io) -> int:
-    """Re-choose BYOK vs router. Login (if needed) goes through the web page."""
-    from aider.z.auth import current_session, open_web_login, open_web_setup
-    from aider.z.login_screen import prompt_auth_mode_choice
-    from aider.z.onboarding import save_auth_mode
+    """Re-choose BYOK vs router. Login (if needed) happens via the web page."""
+    from aider.z.auth import current_session, open_web_login
 
     creds = current_session()
     if not (creds and creds.is_authenticated()):
@@ -438,21 +464,13 @@ def cmd_auth_switch(io) -> int:
         if not creds:
             return 1
 
+    from aider.z.login_screen import prompt_auth_mode_choice
+
     mode = prompt_auth_mode_choice(io)
     if mode is None:
         io.tool_output("Switch cancelled.")
         return 1
-
-    if mode == "byok":
-        result = open_web_setup(io, "byok", skip_login=True)
-        if result is None:
-            return 1
-        _apply_web_setup_result(result, mode="byok")
-
-    save_auth_mode(mode)
-    if mode == "router":
-        io.tool_output("Using Z's router for model access.")
-    return 0
+    return 0 if _complete_mode_setup(io, mode) else 1
 
 
 def cmd_workspace(io, args) -> int:
@@ -550,13 +568,30 @@ def cmd_workspace(io, args) -> int:
 
 
 def cmd_login(io, provider: str | None = None) -> int:
-    """Explicit re-auth via the web sign-in page (same as bare ``z`` login)."""
-    from aider.z.auth import open_web_login
+    """Optional re-auth. First-time sign-in is just bare ``z``."""
+    from aider.z.auth import current_session, open_web_login
 
-    # provider is ignored — Google / Email / Phone are chosen on the web page.
-    _ = provider
+    _ = provider  # Google / Z chosen in the terminal → web page
+    io.tool_output(
+        "Tip: after install you can just run `z` — sign-in only appears if needed."
+    )
     creds = open_web_login(io)
-    return 0 if creds else 1
+    if not creds:
+        return 1
+    # If mode was never chosen, finish the same post-auth prompts as bare `z`.
+    from aider.z.onboarding import load_config
+
+    config = load_config()
+    if config.auth_mode not in ("byok", "router") or (
+        config.auth_mode == "router" and not config.selected_model
+    ):
+        if not ensure_agent_session(io):
+            return 1
+    else:
+        who = current_session()
+        if who:
+            io.tool_output(f"Signed in as {who.display_name()}.")
+    return 0
 
 
 def cmd_models(io, search: str = "", show_all: bool = False) -> int:
