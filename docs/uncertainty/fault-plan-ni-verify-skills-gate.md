@@ -253,6 +253,9 @@ optional `aider/z/uncertainty/recipe_runner.py`.
 
 ### P1 — Skill retrieve + near-dup consolidation (`skill-retrieve`)
 
+**Status:** planning — thorough impl plan in
+[skill-retrieve-impl-plan.md](./skill-retrieve-impl-plan.md) (runtime not started)
+
 **Goals**
 
 1. **Fallback matcher** when Chroma empty/miss: token overlap on
