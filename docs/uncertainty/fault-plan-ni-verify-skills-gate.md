@@ -1,10 +1,15 @@
 # Spec: Non-interactive continuity, verify honesty, skill retrieval, gate UX
 
-**Status:** planning (no implementation in this doc’s first commit)  
+**Status:** planning — **runtime not implemented** (flags/`ni_contract`/cmake reconfigure
+exist only in docs; confirmed by repo grep on `main`)  
+**Deep dive + feature plan:** [fault-impl-deep-dive.md](./fault-impl-deep-dive.md)  
 **Triggered by:** Claude Code writeup of live faults on `miniregex` / `minilfu`  
 **Thesis (confirmed in code):** The model can write correct C++; the **orchestration /
 product layer** is where false-completion-shaped silence, wrong-suite “verify,”
 soft-blocked sanitizers, skill non-retrieval, and undiscoverable gate exits live.
+
+> **Not the coding-quality stack.** Compact skills, explore, plan interview, tool-loop,
+> and live P2 **are** on `main`. This fault set is a **separate** implement pass.
 
 ---
 
