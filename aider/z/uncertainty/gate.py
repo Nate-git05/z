@@ -628,6 +628,7 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
                 edited=edited_list,
                 verbose=bool(getattr(coder, "verbose", False)),
                 error_print=io.tool_error,
+                non_interactive=getattr(io, "yes", None) is True,
             )
             record.dynamic_comparisons = [c.to_dict() for c in comparisons]
             # Keep race_comparison populated for concurrency back-compat
