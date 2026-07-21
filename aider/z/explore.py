@@ -92,7 +92,13 @@ def _rg_available() -> bool:
     return which("rg") is not None
 
 
-def _search_rg(root: Path, keyword: str, *, max_hits: int = 8) -> List[Tuple[str, str]]:
+def _search_rg(
+    root: Path,
+    keyword: str,
+    *,
+    max_hits: int = 8,
+    timeout: float = 8.0,
+) -> List[Tuple[str, str]]:
     try:
         proc = subprocess.run(
             [
@@ -115,7 +121,7 @@ def _search_rg(root: Path, keyword: str, *, max_hits: int = 8) -> List[Tuple[str
             ],
             capture_output=True,
             text=True,
-            timeout=8,
+            timeout=max(0.5, float(timeout)),
             cwd=str(root),
         )
     except (OSError, subprocess.TimeoutExpired):
@@ -139,17 +145,57 @@ def _search_rg(root: Path, keyword: str, *, max_hits: int = 8) -> List[Tuple[str
     return hits
 
 
-def _search_path_names(root: Path, keyword: str, *, max_hits: int = 6) -> List[str]:
+def _search_path_names(
+    root: Path,
+    keyword: str,
+    *,
+    max_hits: int = 6,
+    max_files_scanned: int = 4000,
+    deadline: Optional[float] = None,
+) -> List[str]:
+    """Filename substring search with hard scan/time budgets.
+
+    Unbounded ``os.walk`` on a monorepo can hang for minutes after the
+    capability-plan lines and look like Z stopped. Cap both files visited
+    and wall clock so explore always returns.
+    """
+    import time
+
     key = keyword.lower()
     found: List[str] = []
-    skip_dirs = {".git", "node_modules", ".venv", "__pycache__", "dist", "build", ".tox"}
+    skip_dirs = {
+        ".git",
+        "node_modules",
+        ".venv",
+        "__pycache__",
+        "dist",
+        "build",
+        ".tox",
+        ".mypy_cache",
+        ".pytest_cache",
+        "vendor",
+        "third_party",
+    }
+    scanned = 0
     try:
+        root_res = root.resolve()
         for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = [d for d in dirnames if d not in skip_dirs and not d.startswith(".")]
+            if deadline is not None and time.monotonic() > deadline:
+                break
+            dirnames[:] = [
+                d for d in dirnames if d not in skip_dirs and not d.startswith(".")
+            ]
             for name in filenames:
+                scanned += 1
+                if scanned > max_files_scanned:
+                    return found
+                if deadline is not None and time.monotonic() > deadline:
+                    return found
                 if key in name.lower():
                     try:
-                        rel = str((Path(dirpath) / name).resolve().relative_to(root.resolve()))
+                        rel = str(
+                            (Path(dirpath) / name).resolve().relative_to(root_res)
+                        )
                     except Exception:
                         continue
                     found.append(rel)
@@ -240,15 +286,32 @@ def _rank_candidates(
     if not keywords:
         return [], []
 
+    import time
+
     in_chat = {str(x).replace("\\", "/") for x in (already_in_chat or [])}
     file_hits: Dict[str, List[str]] = {}
     use_rg = _rg_available()
+    # Whole-pass budget — prevents silent multi-minute stalls after skill lines.
+    pass_deadline = time.monotonic() + 12.0
 
     for kw in keywords:
+        remaining = pass_deadline - time.monotonic()
+        if remaining <= 0:
+            break
         if use_rg:
-            for rel, snip in _search_rg(root, kw, max_hits=5):
+            for rel, snip in _search_rg(
+                root, kw, max_hits=5, timeout=min(4.0, remaining)
+            ):
                 file_hits.setdefault(rel.replace("\\", "/"), []).append(f"{kw}: {snip}")
-        for rel in _search_path_names(root, kw, max_hits=4):
+            # rg already covers content; skip unbounded filename walks.
+            continue
+        for rel in _search_path_names(
+            root,
+            kw,
+            max_hits=4,
+            max_files_scanned=2500,
+            deadline=pass_deadline,
+        ):
             file_hits.setdefault(rel.replace("\\", "/"), []).append(f"filename~{kw}")
 
     ranked = sorted(

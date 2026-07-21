@@ -1136,13 +1136,25 @@ class Coder:
             # Skills always may run (read-only flagged for non-implement modes)
             self._maybe_pull_skills(user_text, checkpoint="turn")
 
-            # Compact read-only explore when chat is thin (OpenCode-inspired)
+            # Compact read-only explore when chat is thin (OpenCode-inspired).
+            # Announce so capability-gap warnings are not mistaken for a stop.
+            if mode.allows_explore_pass:
+                try:
+                    from aider.z.explore import explore_pass_enabled
+
+                    if explore_pass_enabled():
+                        self.io.tool_output(
+                            "Continuing — exploring related files…"
+                        )
+                except Exception:
+                    pass
             self._maybe_explore_pass(user_text)
 
             # House instructions (AGENTS.md) — once per session
             self._maybe_inject_house_instructions()
 
             if mode.allows_requirement_decomposition:
+                self.io.tool_output("Drafting approach checklist…")
                 self._maybe_begin_uncertainty_task(user_text)
 
             # PLAN mode: inject reminder; skip high-stakes *implement* plan confirm
@@ -1511,6 +1523,12 @@ class Coder:
                     f"Capability gaps ({len(cap_plan.coverage_gaps)}): "
                     "compensate with workflow — no skill ≠ skip verification."
                 )
+                # Gaps are informational — never a turn abort.
+                if not skills:
+                    self.io.tool_output(
+                        "No matching skill — continuing with native plan / "
+                        "verify workflow (not stopped)."
+                    )
             self.cur_messages += [
                 {"role": "user", "content": block},
                 {
