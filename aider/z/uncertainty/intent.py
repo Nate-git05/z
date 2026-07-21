@@ -1,7 +1,7 @@
 """Structured task intent — single upstream classification for planning/caps.
 
-Downstream systems (planner, capability inference) must consume ``TaskIntent``
-fields only. They must not re-scan the raw user prompt for domain keywords.
+P1.1 Path A: ``clauses`` is authoritative; classic bucket fields are synced
+from clauses after extraction so P0 consumers keep working.
 """
 
 from __future__ import annotations
@@ -11,6 +11,8 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import List, Optional, Sequence
 
+from .clause import CHECKLIST_KINDS, TaskClause, extract_clauses
+
 logger = logging.getLogger(__name__)
 
 
@@ -19,63 +21,57 @@ class TaskIntent:
     """What the user asked for — separated from background and exclusions."""
 
     mode: str = "implement"  # ask|investigate|review|verify|implement
+    clauses: List[TaskClause] = field(default_factory=list)
     requested_actions: List[str] = field(default_factory=list)
     prohibited_actions: List[str] = field(default_factory=list)
     observations: List[str] = field(default_factory=list)
     acceptance_criteria: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        return {
+            "mode": self.mode,
+            "clauses": [c.to_dict() for c in self.clauses],
+            "requested_actions": list(self.requested_actions),
+            "prohibited_actions": list(self.prohibited_actions),
+            "observations": list(self.observations),
+            "acceptance_criteria": list(self.acceptance_criteria),
+        }
 
     @property
     def planning_text(self) -> str:
-        """Only fields allowed to drive plan steps / template selection."""
         parts = list(self.requested_actions) + list(self.acceptance_criteria)
         return "\n".join(p for p in parts if p and p.strip())
 
     @property
     def capability_text(self) -> str:
-        """Only required requested actions may activate capabilities."""
         return "\n".join(p for p in self.requested_actions if p and p.strip())
 
+    def sync_buckets_from_clauses(self) -> None:
+        """Derive classic buckets from typed clauses (Path A)."""
+        if not self.clauses:
+            return
+        self.requested_actions = [
+            c.text
+            for c in self.clauses
+            if c.kind == "requested_action" and c.polarity != "prohibited"
+        ]
+        self.prohibited_actions = [
+            c.text for c in self.clauses if c.kind == "constraint"
+        ]
+        self.observations = [
+            c.text
+            for c in self.clauses
+            if c.kind in ("observation", "background", "external_assumption")
+        ]
+        self.acceptance_criteria = [
+            c.text for c in self.clauses if c.kind == "acceptance_criterion"
+        ]
 
-_PROHIBIT_RE = re.compile(
-    r"(?i)\b(?:"
-    r"do not|don't|do\s+not|"
-    r"without(?:\s+\w+){0,3}\s+(?:editing|changing|modifying|touching)|"
-    r"this is not (?:a |an )?"
-    r")\s*(?P<body>[^.;\n]+)"
-)
-_OUT_OF_SCOPE_RE = re.compile(
-    r"(?i)\b(?P<body>[\w][\w\s/-]{0,40}?)\s+(?:is|are)\s+(?:explicitly\s+)?out of scope\b"
-)
-_NOT_AN_X_RE = re.compile(
-    r"(?i)\bthis is not (?:a |an )?(?P<topic>[\w\s/-]+?)(?:\s+issue|\s+problem|;|,|\.|$)"
-)
-_OBSERVE_RE = re.compile(
-    r"(?i)^(?:"
-    r"the (?:report|log|error|stack(?:\s*trace)?|output)|"
-    r"(?:it|this|the api|the request) (?:fails|failed|errors|is broken)|"
-    r"error:|traceback|exception"
-    r")"
-)
+
 _INVESTIGATE_VERBS = re.compile(
     r"(?i)\b(investigate|diagnose|determine|explain|find out|figure out|"
     r"why does|why is|what causes|look into|trace)\b"
 )
-_IMPLEMENT_VERBS = re.compile(
-    r"(?i)\b(implement|build|add|create|fix|change|update|refactor|write|"
-    r"make|ship|introduce)\b"
-)
-_ACCEPT_RE = re.compile(
-    r"(?i)\b(?:done when|acceptance|should (?:pass|work|return)|"
-    r"must (?:pass|work)|verify that|so that)\b\s*(?P<body>.+)"
-)
-
-
-def _split_sentences(text: str) -> List[str]:
-    chunks = re.split(r"(?<=[.!;])\s+|\n+", text.strip())
-    return [c.strip() for c in chunks if c and c.strip()]
 
 
 def extract_intent(
@@ -85,138 +81,82 @@ def extract_intent(
     forced_mode: Optional[str] = None,
 ) -> TaskIntent:
     """
-    Classify a user turn into TaskIntent.
-
-    Deterministic heuristic extractor (CI-safe). Optional LLM extraction can
-    wrap this later; tests assert against this function's contract.
+    Classify a user turn into TaskIntent with TaskClause detail (P0.2 + P1.1).
     """
     text = (user_message or "").strip()
-    context = "\n".join(m for m in recent_messages if m).strip()
-    blob = f"{context}\n{text}".strip() if context else text
+    clauses = extract_clauses(text, recent_messages=recent_messages)
 
-    prohibited: List[str] = []
-    observations: List[str] = []
-    requested: List[str] = []
-    acceptance: List[str] = []
-
-    # Standing exclusions from recent context + current turn
-    for m in _PROHIBIT_RE.finditer(blob):
-        body = (m.group("body") or "").strip(" .")
-        if body and body.lower() not in {p.lower() for p in prohibited}:
-            prohibited.append(body)
-    for m in _OUT_OF_SCOPE_RE.finditer(blob):
-        body = (m.group("body") or "").strip(" .")
-        if body and body.lower() not in {p.lower() for p in prohibited}:
-            prohibited.append(f"{body} out of scope")
-    for m in _NOT_AN_X_RE.finditer(blob):
-        topic = (m.group("topic") or "").strip()
-        if topic:
-            phrase = f"not a {topic} issue"
-            if phrase.lower() not in {p.lower() for p in prohibited}:
-                prohibited.append(phrase)
-
-    for sent in _split_sentences(text):
-        lower = sent.lower()
-        # Acceptance criteria
-        am = _ACCEPT_RE.search(sent)
-        if am:
-            body = (am.group("body") or "").strip()
-            if body:
-                acceptance.append(body)
-
-        # Explicit prohibitions already captured; skip converting them to actions
-        if re.search(r"(?i)\b(do not|don't|out of scope|this is not)\b", lower):
-            # Still may hold an observation half ("…; investigate the API")
-            if _INVESTIGATE_VERBS.search(sent) or _IMPLEMENT_VERBS.search(sent):
-                # Keep the non-prohibited clause if semicolon-split
-                parts = re.split(r"[;]", sent)
-                for part in parts:
-                    pl = part.lower().strip()
-                    if re.search(r"(?i)\b(do not|don't|out of scope|this is not)\b", pl):
-                        continue
-                    if _INVESTIGATE_VERBS.search(part) or _IMPLEMENT_VERBS.search(part):
-                        if part.strip() and part.strip() not in requested:
-                            requested.append(part.strip())
-            continue
-
-        if _OBSERVE_RE.search(sent) and not _IMPLEMENT_VERBS.search(sent):
-            observations.append(sent)
-            continue
-
-        if _INVESTIGATE_VERBS.search(sent) or _IMPLEMENT_VERBS.search(sent):
-            requested.append(sent)
-            continue
-
-        # Background / descriptive sentences
-        if sent:
-            observations.append(sent)
-
-    # Mode resolution
     mode = forced_mode
     if not mode:
         from aider.z.task_mode import classify_task_mode
 
-        # Use heuristic mode from message; ask/context forced_mode set by caller
         tm = classify_task_mode(None, text)
-        # If only investigate verbs + prohibitions, force investigate
-        if _INVESTIGATE_VERBS.search(text) and not (
-            _IMPLEMENT_VERBS.search(text)
-            and not re.search(r"(?i)\b(do not|don't)\b", text)
-        ):
-            if re.search(
-                r"(?i)\b(do not|don't)\s+(?:edit|change|modify|touch|add|create)",
-                text,
-            ) or (
-                _INVESTIGATE_VERBS.search(text)
-                and not re.search(r"(?i)\b(fix|implement|add|create|build)\b", text)
-            ):
-                mode = "investigate"
-            else:
-                mode = tm.value
+        has_invest = any(c.kind == "investigation_target" for c in clauses) or bool(
+            _INVESTIGATE_VERBS.search(text)
+        )
+        has_action = any(c.kind == "requested_action" for c in clauses)
+        has_constraint = any(c.kind == "constraint" for c in clauses)
+        if has_invest and not has_action:
+            mode = "investigate"
+        elif has_constraint and not has_action and not has_invest:
+            mode = "investigate"
+        elif re.search(r"(?i)\bonly reproduce\b|\breproduce locally\b", text):
+            mode = "investigate"
         else:
             mode = tm.value
 
     resolved_mode = mode or "implement"
-    # Implement-mode with no parsed actions: treat the whole turn as the request
-    # unless the message is primarily exclusions / "do not X" with no edit ask.
-    if resolved_mode == "implement" and not requested and text.strip():
-        pure_exclusion = bool(prohibited) and not _IMPLEMENT_VERBS.search(
-            re.sub(
-                r"(?i)\b(do not|don't|out of scope|this is not)\b[^.;\n]*",
-                " ",
-                text,
-            )
-        )
-        if pure_exclusion:
-            resolved_mode = "investigate"
-        else:
-            # Soften "mentions production / only reproduce locally" style reports
-            if re.search(r"(?i)\bonly reproduce\b|\breproduce locally\b", text):
-                resolved_mode = "investigate"
-                observations.append(text.strip())
-            else:
-                requested = [text.strip()]
-                observations = [o for o in observations if o.strip() != text.strip()]
 
-    intent = TaskIntent(
-        mode=resolved_mode,
-        requested_actions=requested,
-        prohibited_actions=prohibited,
-        observations=observations,
-        acceptance_criteria=acceptance,
-    )
+    actionable = [c for c in clauses if c.kind in CHECKLIST_KINDS]
+    if resolved_mode == "implement" and not actionable and text.strip():
+        non_action = {c.kind for c in clauses}
+        if non_action and non_action <= {
+            "observation",
+            "background",
+            "constraint",
+            "process_rule",
+            "external_assumption",
+            "investigation_target",
+        }:
+            if "investigation_target" in non_action or "constraint" in non_action:
+                resolved_mode = "investigate"
+            elif re.search(r"(?i)\bonly reproduce\b|\breproduce locally\b", text):
+                resolved_mode = "investigate"
+            else:
+                clauses.append(
+                    TaskClause(
+                        text=text.strip(),
+                        kind="requested_action",
+                        polarity="required",
+                        confidence=0.55,
+                        source_span=(0, len(text)),
+                    )
+                )
+        elif not clauses:
+            clauses.append(
+                TaskClause(
+                    text=text.strip(),
+                    kind="requested_action",
+                    polarity="required",
+                    confidence=0.55,
+                    source_span=(0, len(text)),
+                )
+            )
+
+    intent = TaskIntent(mode=resolved_mode, clauses=list(clauses))
+    intent.sync_buckets_from_clauses()
     logger.info(
-        "TaskIntent mode=%s actions=%d prohibited=%d observations=%d",
+        "TaskIntent mode=%s clauses=%d actions=%d constraints=%d",
         intent.mode,
+        len(intent.clauses),
         len(intent.requested_actions),
         len(intent.prohibited_actions),
-        len(intent.observations),
     )
     return intent
 
 
 def intent_mentions_prohibited(intent: TaskIntent, topic: str) -> bool:
-    """True if ``topic`` appears in an explicit prohibition."""
+    """True if ``topic`` appears in an explicit prohibition/constraint."""
     t = topic.lower().strip()
     if not t:
         return False

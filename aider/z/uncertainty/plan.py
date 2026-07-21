@@ -497,6 +497,28 @@ def draft_plan_from_request(
         intent, checklist=checklist
     )
 
+    # P1.1 — active constraint check: drop / flag steps that violate constraints
+    try:
+        from .clause import clause_violates_constraints
+
+        clauses = list(getattr(intent, "clauses", None) or [])
+        if checklist is not None:
+            clauses = clauses or list(getattr(checklist, "clauses", None) or [])
+        filtered_steps = []
+        for step in steps:
+            viol = clause_violates_constraints(step, clauses)
+            if viol is not None:
+                out_of_scope.append(
+                    f"Blocked by constraint ({viol.text}): refused step «{step}»"
+                )
+                continue
+            filtered_steps.append(step)
+        steps = filtered_steps or [
+            "No safe steps remain under active constraints — clarify the request."
+        ]
+    except Exception:
+        pass
+
     contracts = [
         ValidationContract(
             input_name=name,

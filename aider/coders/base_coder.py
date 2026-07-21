@@ -2002,6 +2002,7 @@ class Coder:
         engine = getattr(self, "uncertainty_engine", None)
         if not engine or not user_message or not isinstance(user_message, str):
             return True
+        planning_required = True  # we only enter here when mode.allows_planning
         try:
             from aider.z.uncertainty.detectors import count_symbol_references
             from aider.z.uncertainty.plan import (
@@ -2091,9 +2092,31 @@ class Coder:
             self.io.tool_output("Plan approved — proceeding with implementation.")
             return True
         except Exception as err:
-            if getattr(self, "verbose", False):
-                self.io.tool_warning(f"Planning gate skipped: {err}")
-            return True
+            # P1.3 — planning failures are not silently "success"
+            try:
+                from aider.z.errors import (
+                    IntegrityGateError,
+                    OptionalSubsystemError,
+                    RecoverableAgentError,
+                    handle_classified,
+                )
+
+                if isinstance(err, OptionalSubsystemError):
+                    policy = handle_classified(err, context="planning", io=self.io)
+                    return True
+                wrapped = RecoverableAgentError(str(err))
+                policy = handle_classified(
+                    wrapped,
+                    context="planning",
+                    io=self.io,
+                    planning_required=planning_required,
+                )
+                if policy == "fail_closed":
+                    return False
+                return True
+            except Exception:
+                self.io.tool_warning(f"Planning gate error: {err}")
+                return False
 
     def check_and_open_urls(self, exc, friendly_msg=None):
         """Check exception for URLs, offer to open in a browser, with user-friendly error msgs."""
@@ -3925,6 +3948,20 @@ class Coder:
             exit_status, output = run_cmd(command, error_print=self.io.tool_error, cwd=self.root)
             if output:
                 accumulated_output += f"Output from {command}\n{output}\n"
+            # P1.2 — record command evidence for shell-approval auto-resolution
+            try:
+                eng = getattr(self, "uncertainty_engine", None)
+                if eng is not None and hasattr(eng, "record_execution"):
+                    if exit_status == 0:
+                        eng.record_execution(f"command_ok: {command.strip()[:240]}")
+                        eng.record_execution(
+                            f"command_success:{command.strip()[:240]}"
+                        )
+                        self._maybe_auto_resolve_shell_nodes(command.strip())
+                    else:
+                        eng.record_execution(f"command_failed:{command.strip()[:240]}")
+            except Exception:
+                pass
 
         # Auto-approved declared installs/checks: always fold output into chat
         add_output = bool(accumulated_output.strip()) and (
@@ -3972,9 +4009,54 @@ class Coder:
             status=NodeStatus.NEEDS_HUMAN_REVIEW,
             extra_signals={
                 "shell_approval_blocked": True,
+                "shell_approval_block": True,
+                "temporary_blocker": True,
+                "from_shell": True,
                 "blocked_commands": skipped_commands,
+                "blocked_command": (skipped_commands or "").strip().splitlines()[0]
+                if skipped_commands
+                else "",
+                "lifecycle": "temporary_blocker",
+                "expires_after_task": True,
             },
         )
         node.risk_tier = Tier.MEDIUM
         node.confidence_tier = Tier.LOW
+        if getattr(engine.ctx, "current_task_id", None):
+            node.task_id = engine.ctx.current_task_id
         engine.store.add(node)
+
+    def _maybe_auto_resolve_shell_nodes(self, command: str) -> None:
+        """P1.2: resolve shell-approval nodes when the exact command later succeeds."""
+        engine = getattr(self, "uncertainty_engine", None)
+        if engine is None or not command:
+            return
+        from aider.z.uncertainty.resolution import try_auto_resolve
+        from aider.z.uncertainty.schema import NodeStatus
+
+        evidence = []
+        if hasattr(engine.ctx, "execution_log"):
+            evidence = [
+                line.strip()
+                for line in (engine.ctx.execution_log or "").splitlines()
+                if line.strip()
+            ]
+        evidence.append(f"command_ok: {command}")
+        evidence.append(f"command_success:{command}")
+        for node in list(engine.store.list(include_resolved=False)):
+            signals = dict(node.signals or {})
+            if not (
+                signals.get("shell_approval_block")
+                or signals.get("shell_approval_blocked")
+            ):
+                continue
+            blocked = (
+                signals.get("blocked_command")
+                or (signals.get("blocked_commands") or "").splitlines()[0:1]
+            )
+            if isinstance(blocked, list):
+                blocked = blocked[0] if blocked else ""
+            if blocked and blocked.strip() not in command and command not in blocked:
+                continue
+            if try_auto_resolve(node, session_evidence=evidence):
+                engine.store.update_status(node.id, NodeStatus.RESOLVED)

@@ -266,6 +266,10 @@ class TaskChecklist:
     title: str
     items: list[RequirementItem] = field(default_factory=list)
     confirmed_by_user: bool = False
+    # P1.1 — typed clause context (not serialized; planners/gates consume these)
+    clauses: list[Any] = field(default_factory=list, repr=False)
+    constraint_clauses: list[Any] = field(default_factory=list, repr=False)
+    process_rule_clauses: list[Any] = field(default_factory=list, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {
