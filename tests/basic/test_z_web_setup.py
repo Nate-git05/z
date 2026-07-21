@@ -375,6 +375,8 @@ def test_open_web_login_never_uses_cli_credential_entry_in_dev_mode():
 
     io = FakeIO()
     with patch.object(z_auth, "auth_dev_mode", return_value=True), patch(
+        "aider.z.login_screen.prompt_auth_intent_choice", return_value="signin"
+    ), patch(
         "aider.z.login_screen.prompt_web_login_choice", return_value="z"
     ), patch.object(z_auth, "login_with_email") as email, patch.object(
         z_auth, "login_with_google"
@@ -385,7 +387,10 @@ def test_open_web_login_never_uses_cli_credential_entry_in_dev_mode():
 
     assert result is None
     web.assert_called_once()
-    assert web.call_args.kwargs.get("extra_params") == {"method": "z"}
+    assert web.call_args.kwargs.get("extra_params") == {
+        "method": "z",
+        "intent": "signin",
+    }
     email.assert_not_called()
     google.assert_not_called()
     terminal.assert_not_called()
@@ -431,6 +436,8 @@ def test_open_web_login_asks_google_vs_z_then_opens_method_url():
     with patch.object(z_auth, "auth_dev_mode", return_value=False), patch.object(
         z_auth, "get_auth_base_url", return_value="https://auth.example.test"
     ), patch.object(z_auth, "AUTH_TIMEOUT_SECONDS", 3), patch(
+        "aider.z.login_screen.prompt_auth_intent_choice", return_value="signin"
+    ), patch(
         "aider.z.login_screen.prompt_web_login_choice", return_value="google"
     ), patch.object(z_auth.webbrowser, "open", side_effect=capture_open), patch(
         "aider.z.auth.save_credentials"
@@ -440,6 +447,27 @@ def test_open_web_login_asks_google_vs_z_then_opens_method_url():
     assert creds is not None
     assert "auth.example.test/app/login" in opened["url"]
     assert "method=google" in opened["url"]
+    assert "intent=signin" in opened["url"]
+
+
+def test_open_web_signup_opens_signup_path():
+    from aider.z.auth import open_web_login
+
+    io = FakeIO()
+    opened = {}
+
+    with patch.object(z_auth, "auth_dev_mode", return_value=False), patch.object(
+        z_auth, "get_auth_base_url", return_value="https://auth.example.test"
+    ), patch.object(z_auth, "AUTH_TIMEOUT_SECONDS", 0.2), patch(
+        "aider.z.login_screen.prompt_auth_intent_choice", return_value="signup"
+    ), patch(
+        "aider.z.login_screen.prompt_web_login_choice", return_value="z"
+    ), patch.object(z_auth.webbrowser, "open", side_effect=lambda url: opened.update(url=url) or True):
+        open_web_login(io)
+
+    assert "auth.example.test/app/signup" in opened["url"]
+    assert "method=z" in opened["url"]
+    assert "intent=signup" in opened["url"]
 
 
 def test_auth_switch_uses_web_login_and_byok_skip_login():

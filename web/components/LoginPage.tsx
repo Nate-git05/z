@@ -9,6 +9,7 @@ type Props = {
   redirectUri?: string;
   callbackState?: string;
   method?: string;
+  intent?: "signin" | "signup";
 };
 
 type ZChannel = "email" | "phone";
@@ -18,7 +19,9 @@ export function LoginPage({
   redirectUri = "",
   callbackState = "",
   method = "",
+  intent = "signin",
 }: Props) {
+  const isSignup = intent === "signup";
   const initialMethod = method === "google" || method === "z" ? method : "";
   const [zOpen, setZOpen] = useState(initialMethod === "z");
   const [channel, setChannel] = useState<ZChannel>("email");
@@ -168,7 +171,9 @@ export function LoginPage({
       <div className="auth-card">
         {step === "done" ? (
           <div className="auth-success">
-            <p className="auth-title">Signed in.</p>
+            <p className="auth-title">
+              {isSignup ? "Account created." : "Signed in."}
+            </p>
             <p className="auth-sub">
               Return to your terminal — this tab will close.
             </p>
@@ -183,12 +188,20 @@ export function LoginPage({
         ) : (
           <>
             <h1 className="auth-title">
-              {initialMethod === "z" ? "Sign in with Z" : "Sign in to Z"}
+              {initialMethod === "z"
+                ? isSignup
+                  ? "Create your Z account"
+                  : "Sign in with Z"
+                : isSignup
+                  ? "Create your Z account"
+                  : "Sign in to Z"}
             </h1>
             <p className="auth-sub">
               {initialMethod === "z"
                 ? "Use email or phone to continue."
-                : "How would you like to sign in?"}
+                : isSignup
+                  ? "How would you like to sign up?"
+                  : "How would you like to sign in?"}
             </p>
 
             {error ? (
@@ -337,7 +350,16 @@ export function LoginPage({
             ) : null}
 
             <p className="auth-legal">
-              By continuing you agree to the{" "}
+              {isSignup ? (
+                <>
+                  Already have an account? <Link href="/login">Sign in</Link>
+                </>
+              ) : (
+                <>
+                  New here? <Link href="/signup">Create an account</Link>
+                </>
+              )}{" "}
+              · By continuing you agree to the{" "}
               <Link href="/#">Terms of Service</Link> and{" "}
               <Link href="/#">Privacy Notice</Link>.
             </p>

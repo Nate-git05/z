@@ -67,8 +67,48 @@ def get_auth_base_url() -> str:
     return os.environ.get("Z_AUTH_URL", DEFAULT_AUTH_URL).rstrip("/")
 
 
+def refresh_access_token(creds: Credentials) -> Credentials | None:
+    """Call POST /v1/auth/refresh and persist rotated tokens. Returns None on failure."""
+    if not creds or not creds.refresh_token:
+        return None
+    base = get_auth_base_url()
+    try:
+        resp = requests.post(
+            f"{base}/v1/auth/refresh",
+            json={"refresh_token": creds.refresh_token},
+            timeout=30,
+        )
+    except requests.RequestException:
+        return None
+    if resp.status_code >= 400:
+        return None
+    try:
+        data = resp.json()
+    except ValueError:
+        return None
+    try:
+        result = _credentials_from_api_payload(
+            data, provider=(creds.user.provider if creds.user else None) or "web"
+        )
+    except AuthError:
+        return None
+    if not result.ok or not result.credentials:
+        return None
+    save_credentials(result.credentials)
+    return result.credentials
+
+
 def current_session() -> Credentials | None:
-    return apply_credentials_to_env(load_credentials())
+    """Load credentials, auto-refreshing the access token when expired."""
+    creds = load_credentials()
+    if not creds or not creds.access_token:
+        return None
+    if not creds.is_expired():
+        return apply_credentials_to_env(creds)
+    refreshed = refresh_access_token(creds)
+    if not refreshed:
+        return None
+    return apply_credentials_to_env(refreshed)
 
 
 def require_account(io, *, feature: str = "this feature") -> Credentials | None:
@@ -693,33 +733,46 @@ def _persist_session_credentials(io, creds: Credentials, *, analytics=None) -> C
     return creds
 
 
-def open_web_login(io, analytics=None, *, method: str | None = None) -> Credentials | None:
-    """Terminal asks Google vs Z, then opens the matching web login page.
+def open_web_login(
+    io,
+    analytics=None,
+    *,
+    method: str | None = None,
+    intent: str | None = None,
+) -> Credentials | None:
+    """Terminal asks Sign in/Sign up, then Google vs Z, then opens the web page.
 
-    Sign-in credentials are collected only in the browser — never via CLI OTP
-    or in-terminal Google/email/phone flows. ``method``: ``\"google\"`` | ``\"z\"``.
-    When omitted, prompts in the terminal. After success, the page tells the user
-    to return to the terminal and attempts to close the tab.
+    Credentials are collected only in the browser. ``intent``: ``signin``|``signup``.
+    ``method``: ``google``|``z``. After success, the page tells the user to return
+    to the terminal and attempts to close the tab.
     """
-    from .login_screen import prompt_web_login_choice
+    from .login_screen import prompt_auth_intent_choice, prompt_web_login_choice
+
+    if intent not in ("signin", "signup"):
+        intent = prompt_auth_intent_choice(io)
+    if intent not in ("signin", "signup"):
+        io.tool_output("Cancelled.")
+        return None
 
     if method not in ("google", "z"):
-        method = prompt_web_login_choice(io)
+        method = prompt_web_login_choice(io, intent=intent)
     if method not in ("google", "z"):
-        io.tool_output("Login cancelled.")
+        io.tool_output("Cancelled.")
         return None
 
     label = "Google" if method == "google" else "Z"
+    path = "/app/signup" if intent == "signup" else "/app/login"
+    verb = "sign up" if intent == "signup" else "sign in"
     data = _open_web_page_for_post_callback(
         io,
-        path="/app/login",
-        extra_params={"method": method},
-        opening_message=f"Opening browser to sign in with {label}…",
+        path=path,
+        extra_params={"method": method, "intent": intent},
+        opening_message=f"Opening browser to {verb} with {label}…",
         success_html=(
-            "Signed in to Z. Return to your terminal — this tab can close."
+            "You're signed in to Z. Return to your terminal — this tab can close."
         ),
-        timeout_message="Timed out waiting for sign-in to complete in the browser.",
-        failure_label="Login",
+        timeout_message="Timed out waiting for the browser to finish.",
+        failure_label="Sign up" if intent == "signup" else "Sign in",
     )
     if data is None:
         return None

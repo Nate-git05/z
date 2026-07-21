@@ -95,6 +95,14 @@ class AppLoginPageTest(unittest.TestCase):
         # Choice buttons hidden when CLI already picked Z
         self.assertIn('id="auth-choice-buttons" hidden', body)
 
+    def test_app_signup_page_copy(self):
+        resp = self.client.get("/app/signup", params={"method": "z"})
+        self.assertEqual(resp.status_code, 200)
+        body = resp.text
+        self.assertIn("Create your Z account", body)
+        self.assertIn('data-intent="signup"', body)
+        self.assertIn("/app/login", body)  # link to sign in
+
     def test_app_login_static_assets(self):
         css = self.client.get("/static/css/app_login.css")
         self.assertEqual(css.status_code, 200)

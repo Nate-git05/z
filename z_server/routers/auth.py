@@ -24,6 +24,7 @@ from z_server.schemas.auth import (
     GoogleExchangeRequest,
     PhoneStartRequest,
     PhoneVerifyRequest,
+    RefreshRequest,
 )
 from z_server.services import email as email_service
 from z_server.services import google_oauth
@@ -34,6 +35,7 @@ from z_server.services.tokens import (
     find_or_create_user_by_phone,
     hash_token,
     issue_session,
+    refresh_session,
 )
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
@@ -335,6 +337,30 @@ def google_exchange(
         user_agent=request.headers.get("user-agent"),
         ip_address=request.client.host if request.client else None,
     )
+
+
+@router.post("/refresh")
+def refresh_tokens(
+    payload: RefreshRequest, request: Request, db: Session = Depends(get_db)
+):
+    """Exchange a refresh token for a new access + refresh token pair."""
+    tokens = refresh_session(
+        db,
+        payload.refresh_token,
+        user_agent=request.headers.get("user-agent"),
+        ip_address=request.client.host if request.client else None,
+    )
+    if not tokens:
+        raise HTTPException(401, "Invalid or revoked refresh token.")
+    response = JSONResponse(content=tokens)
+    response.set_cookie(
+        "z_session",
+        tokens["access_token"],
+        httponly=True,
+        samesite="lax",
+        max_age=get_settings().access_token_ttl_seconds,
+    )
+    return response
 
 
 @router.get("/me")
