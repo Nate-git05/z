@@ -1134,6 +1134,9 @@ class Coder:
             # Compact read-only explore when chat is thin (OpenCode-inspired)
             self._maybe_explore_pass(user_text)
 
+            # House instructions (AGENTS.md) — once per session
+            self._maybe_inject_house_instructions()
+
             if mode.allows_requirement_decomposition:
                 self._maybe_begin_uncertainty_task(user_text)
 
@@ -1519,6 +1522,32 @@ class Coder:
         except Exception as err:
             if getattr(self, "verbose", False):
                 self.io.tool_warning(f"Explore pass skipped: {err}")
+
+    def _maybe_inject_house_instructions(self) -> None:
+        if getattr(self, "_house_instructions_injected", False):
+            return
+        try:
+            from aider.z.house_instructions import load_house_instructions
+
+            block = load_house_instructions(getattr(self, "root", None) or ".")
+            if not block:
+                self._house_instructions_injected = True
+                return
+            self._house_instructions_injected = True
+            self.cur_messages += [
+                {"role": "user", "content": block},
+                {
+                    "role": "assistant",
+                    "content": (
+                        "I'll follow the house AGENTS.md instructions where they "
+                        "apply to this task."
+                    ),
+                },
+            ]
+            self.io.tool_output("Loaded house instructions (AGENTS.md).")
+        except Exception as err:
+            if getattr(self, "verbose", False):
+                self.io.tool_warning(f"House instructions skipped: {err}")
 
     def _inject_plan_mode_reminder(self) -> None:
         try:

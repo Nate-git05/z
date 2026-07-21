@@ -1,4 +1,4 @@
-# Coding quality (tranche 1 + 2)
+# Coding quality (tranche 1–3)
 
 Z keeps its differentiators (skills, uncertainty, verify gate) but stops them
 from crowding the **coding** turn. Patterns inspired by OpenCode / Claude Code
@@ -42,9 +42,38 @@ compact candidate-file list (rg/path heuristics) — not a second agent.
 If the model claims “done/fixed/ready” while High uncertainty nodes are open,
 verify failed, or completion is PARTIAL, Z reflects instead of accepting the claim.
 
+## Tranche 3
+
+| Mechanism | Default | Escape hatch |
+|-----------|---------|--------------|
+| Strict SEARCH (no cross-file fallback) | on | `Z_STRICT_SEARCH=0` |
+| AGENTS.md house instructions | on | `Z_HOUSE_INSTRUCTIONS=0` |
+| Live P2 adapter skeleton | opt-in | `Z_P2_LIVE=1` + `--adapter live` |
+
+### Strict SEARCH
+
+SEARCH/REPLACE applies only to the named file. The legacy “try every other file
+in chat” fallback is off by default.
+
+### House instructions
+
+Project (and ancestor) `AGENTS.md` plus optional `$Z_HOME/AGENTS.md` inject once
+per session as a compact coding-context block.
+
+### Live P2 adapter
+
+```bash
+Z_P2_LIVE=1 Z_P2_LIVE_HOOK=/path/to/hook.py \
+  python -m aider.z.benchmark run --adapter live --ids p2-011-bugfix-average
+```
+
+Without `Z_P2_LIVE=1`, selecting `--adapter live` returns a timed-out stub so CI
+never spends tokens accidentally. Default remains the scripted adapter.
+
 ## Related
 
 - Plans: [coding-quality-tranche1-plan.md](./coding-quality-tranche1-plan.md),
-  [coding-quality-tranche2-plan.md](./coding-quality-tranche2-plan.md)
+  [coding-quality-tranche2-plan.md](./coding-quality-tranche2-plan.md),
+  [coding-quality-tranche3-plan.md](./coding-quality-tranche3-plan.md)
 - Skills: [../skills/README.md](../skills/README.md)
 - Uncertainty: [README.md](./README.md)
