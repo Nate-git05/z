@@ -41,6 +41,12 @@ LOGIN_OPTIONS = [
     ("phone", "Continue with Phone"),
 ]
 
+# Terminal choice before opening the browser (CLI → web login).
+WEB_LOGIN_OPTIONS = [
+    ("google", "Sign up / sign in with Google"),
+    ("z", "Sign up / sign in with Z"),
+]
+
 AUTH_MODE_OPTIONS = [
     ("byok", "Bring your own API key"),
     ("router", "Sign up / sign in (use Z's router)"),
@@ -397,3 +403,33 @@ def prompt_auth_mode_choice(
         except Exception:
             return prompt_auth_mode_choice_plain(io)
     return prompt_auth_mode_choice_plain(io)
+
+
+def prompt_web_login_choice_plain(io) -> str | None:
+    return _plain_choice_menu(
+        io,
+        title="Sign in to Z",
+        options=WEB_LOGIN_OPTIONS,
+    )
+
+
+def prompt_web_login_choice(
+    io, *, version: str = "", status_message: str = ""
+) -> str | None:
+    """Ask Google vs Z, then the CLI opens the matching web login page."""
+    pretty = bool(getattr(io, "pretty", False))
+    is_tty = sys.stdin.isatty() and sys.stdout.isatty()
+
+    if pretty and is_tty:
+        console = Console(force_terminal=True, color_system="auto", soft_wrap=False)
+        try:
+            return interactive_login_select(
+                console,
+                version=version,
+                status_message=status_message,
+                options=WEB_LOGIN_OPTIONS,
+                prompt_text="How would you like to sign in?",
+            )
+        except Exception:
+            return prompt_web_login_choice_plain(io)
+    return prompt_web_login_choice_plain(io)

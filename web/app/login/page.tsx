@@ -7,7 +7,11 @@ export const metadata: Metadata = {
 };
 
 type Props = {
-  searchParams: Promise<{ redirect_uri?: string; state?: string }>;
+  searchParams: Promise<{
+    redirect_uri?: string;
+    state?: string;
+    method?: string;
+  }>;
 };
 
 export default async function Page({ searchParams }: Props) {
@@ -16,6 +20,7 @@ export default async function Page({ searchParams }: Props) {
     <LoginPage
       redirectUri={sp.redirect_uri || ""}
       callbackState={sp.state || ""}
+      method={sp.method || ""}
     />
   );
 }

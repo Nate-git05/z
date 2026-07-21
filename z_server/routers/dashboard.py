@@ -161,6 +161,7 @@ def _app_login_response(
     state: str | None = None,
     error: str | None = None,
     session_payload: dict | None = None,
+    method: str | None = None,
 ):
     params = {}
     if redirect_uri:
@@ -170,6 +171,7 @@ def _app_login_response(
     google_start = "/app/login/google/start"
     if params:
         google_start = f"{google_start}?{urlencode(params)}"
+    method_norm = (method or "").strip().lower()
     return templates.TemplateResponse(
         request,
         "app_login.html",
@@ -182,6 +184,7 @@ def _app_login_response(
             session_json=json.dumps(session_payload) if session_payload else "",
             signed_in=bool(session_payload),
             google_start_url=google_start,
+            login_method=method_norm,
         ),
     )
 
@@ -191,9 +194,30 @@ def app_login_page(
     request: Request,
     redirect_uri: str | None = Query(None),
     state: str | None = Query(None),
+    method: str | None = Query(None),
 ):
-    """CLI / browser sign-in page (Google + Continue with Z)."""
-    return _app_login_response(request, redirect_uri=redirect_uri, state=state)
+    """CLI / browser sign-in page.
+
+    ``method=google`` immediately starts Google OAuth.
+    ``method=z`` opens the Continue-with-Z (email/phone) panel.
+    """
+    method_norm = (method or "").strip().lower()
+    if method_norm == "google":
+        qs = {}
+        if redirect_uri:
+            qs["redirect_uri"] = redirect_uri
+        if state:
+            qs["state"] = state
+        target = "/app/login/google/start"
+        if qs:
+            target = f"{target}?{urlencode(qs)}"
+        return RedirectResponse(target, status_code=302)
+    return _app_login_response(
+        request,
+        redirect_uri=redirect_uri,
+        state=state,
+        method=method_norm,
+    )
 
 
 @router.get("/app/login/google/start")

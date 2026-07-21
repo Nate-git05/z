@@ -14,6 +14,7 @@
   data-state="{{ callback_state }}"
   data-signed-in="{{ '1' if signed_in else '0' }}"
   data-session="{{ session_json|e }}"
+  data-method="{{ login_method }}"
 >
   <div class="auth-shell">
     <div class="auth-mark" aria-hidden="true">Z</div>
@@ -21,12 +22,17 @@
       {% if signed_in %}
       <div class="auth-success" id="auth-success">
         <p class="auth-title">Signed in.</p>
-        <p class="auth-sub">You can close this tab and return to your terminal.</p>
+        <p class="auth-sub">Return to your terminal — this tab will close.</p>
       </div>
       {% else %}
       <div id="auth-form">
+        {% if login_method == "z" %}
+        <h1 class="auth-title">Sign in with Z</h1>
+        <p class="auth-sub">Use email or phone to continue.</p>
+        {% else %}
         <h1 class="auth-title">Sign in to Z</h1>
         <p class="auth-sub">How would you like to sign in?</p>
+        {% endif %}
 
         {% if error %}
         <div class="auth-error" role="alert">{{ error }}</div>
@@ -34,12 +40,13 @@
         <div class="auth-error" id="auth-error" hidden></div>
         {% endif %}
 
-        <a class="auth-btn" id="btn-google" href="{{ google_start_url }}"
-          >Continue with Google</a>
+        <div id="auth-choice-buttons" {% if login_method == "z" %}hidden{% endif %}>
+          <a class="auth-btn" id="btn-google" href="{{ google_start_url }}"
+            >Continue with Google</a>
+          <button type="button" class="auth-btn" id="btn-z">Continue with Z</button>
+        </div>
 
-        <button type="button" class="auth-btn" id="btn-z">Continue with Z</button>
-
-        <div class="auth-z-panel" id="z-panel" hidden>
+        <div class="auth-z-panel" id="z-panel" {% if login_method != "z" %}hidden{% endif %}>
           <div class="auth-tabs" role="tablist">
             <button type="button" class="auth-tab active" data-tab="email" role="tab">Email</button>
             <button type="button" class="auth-tab" data-tab="phone" role="tab">Phone</button>
@@ -78,7 +85,7 @@
       </div>
       <div class="auth-success" id="auth-success" hidden>
         <p class="auth-title">Signed in.</p>
-        <p class="auth-sub">You can close this tab and return to your terminal.</p>
+        <p class="auth-sub">Return to your terminal — this tab will close.</p>
       </div>
       {% endif %}
     </div>
