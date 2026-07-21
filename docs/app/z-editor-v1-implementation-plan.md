@@ -264,9 +264,9 @@ Marketing + login + MCP dashboard. **Not** the desktop editor. Reuse auth pages/
 | `usage/summary` | Proxy to gateway `requests` aggregate |
 | `auth/status` | Session state |
 
-### C. Tauri shell + Monaco + file tree
+### C. VS Code OSS shell (branded Z Editor)
 
-Standard editor chrome. Owns process lifecycle for `z-app-server`. Six panel groups per user doc.
+Fork/brand Code - OSS. Inherit editor chrome (Monaco, file tree, tabs). Own process lifecycle for `z-app-server`. Add six Z panel groups as workbench contributions / webviews.
 
 ### D. Uncertainty chain view
 
@@ -462,7 +462,7 @@ Exact schema lands in `apps/z-desktop/protocol/` as JSON Schema + generated TS t
 
 | Risk | Mitigation |
 |------|------------|
-| **“Fork Codex desktop” misconception** | This plan; build Tauri new; reuse protocol ideas only |
+| **“Fork Codex desktop” misconception** | Use VS Code for GUI; Codex for protocol only |
 | Five UI subsystems in one V1 | Ordered cuts in §7 |
 | Manual skills + loose triggers | D8 + near-dup on create |
 | MCP attack surface | D9 + security pass before broad ship |
@@ -480,7 +480,7 @@ Exact schema lands in `apps/z-desktop/protocol/` as JSON Schema + generated TS t
 | §0.1 Codex foundation | Amended — protocol/shell patterns, not GUI fork |
 | §0.2 Z sign-in | Locked Google + Z-native |
 | §0.3 Linked list | Locked chain-of-cards |
-| §1 Architecture | Kept; gateway + local Z; GUI is new Tauri |
+| §1 Architecture | Kept; gateway + local Z; GUI is VS Code OSS fork |
 | §2 Stack | Kept; uncertainty viz = CSS chain |
 | §3 Components | Kept; backed by EXISTING/MISSING audit in §2 |
 | §4 Data model | Kept; `requests` is **new**; skills `source` extend |
