@@ -146,12 +146,12 @@ Full guide: [docs/skills/README.md](../skills/README.md).
 
 ---
 
-### 3.5 Model routing (BYOK vs Z router)
+### 3.5 Model routing (Z router — V1 default)
 
 | Mode | Behavior |
 |------|----------|
-| **BYOK** | You pick provider/model; your keys; Z uses that model |
-| **Router** | Z classifies task difficulty, selects a tier, can escalate on failure within budget |
+| **Router** (default) | Pick a preferred Z model; router classifies difficulty and can escalate within budget |
+| **BYOK** | Escape only: set `Z_ALLOW_BYOK=1` to restore bring-your-own key |
 
 Reconfigure anytime: `z reset` or `z auth switch`. List models: `z models` / `z models --all`.
 

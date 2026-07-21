@@ -20,12 +20,27 @@ Full decision: [`docs/app/z-desktop-north-star.md`](../../docs/app/z-desktop-nor
 V1 ships in the existing Z CLI/agent with **router-only** model setup.
 This directory is reserved for the Codex-based app implementation.
 
-## Bootstrap (when app work starts)
+## Codex upstream (local vendor)
+
+Upstream: [openai/codex](https://github.com/openai/codex) (Apache-2.0).
 
 ```bash
-# From repo root — shallow clone OpenAI Codex (Apache-2.0) as reference shell
+# From repo root
 git clone --depth 1 https://github.com/openai/codex.git apps/z-desktop/vendor/codex
+# or: gh repo clone openai/codex apps/z-desktop/vendor/codex
 ```
 
-Then strip/replace Codex branding and wire Z’s uncertainty / skills / verify APIs.
-Do not commit the full vendor tree until the app slice is actively built.
+Local path (gitignored — do not commit the vendor tree):
+
+`apps/z-desktop/vendor/codex/`
+
+Layout of interest for the Z app shell:
+
+| Path | Role |
+|------|------|
+| `codex-rs/` | Rust agent / app core |
+| `codex-cli/` | CLI packaging |
+| `sdk/` | SDK surfaces |
+| `docs/` | Upstream docs |
+
+Next: strip/replace Codex branding and wire Z uncertainty / skills / verify / router APIs.

@@ -24,3 +24,6 @@ web/.next/
 web/.env*.local
 .vercel/
 
+
+# Codex OSS clone for Z desktop (local only — do not vendor into git)
+apps/z-desktop/vendor/
