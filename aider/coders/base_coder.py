@@ -1386,6 +1386,11 @@ class Coder:
                 pull_skills_for_checkpoint,
             )
             from aider.z.task_mode import TaskMode
+            from aider.z.control_plane_budget import (
+                capability_plan_fingerprint,
+                control_plane_compact_enabled,
+                format_capability_directive,
+            )
             from aider.z.uncertainty.capabilities import (
                 build_capability_plan,
                 format_capability_plan,
@@ -1431,11 +1436,23 @@ class Coder:
                 skill_block = format_skills_for_context(skills, checkpoint=checkpoint)
                 if skill_block:
                     blocks.append(skill_block)
-            # Always surface capability gaps when specialized verification is needed
+            # Surface capability gaps when specialized verification is needed.
+            # Compact mode: thin directive; skip re-inject when fingerprint unchanged.
             if cap_plan.required and (
                 cap_plan.coverage_gaps or checkpoint == "turn"
             ):
-                blocks.append(format_capability_plan(cap_plan))
+                fp = capability_plan_fingerprint(cap_plan)
+                prev_fp = getattr(self, "_capability_plan_fingerprint", None)
+                if control_plane_compact_enabled() and fp and fp == prev_fp:
+                    pass  # already injected this gap set
+                else:
+                    if control_plane_compact_enabled():
+                        cap_block = format_capability_directive(cap_plan)
+                    else:
+                        cap_block = format_capability_plan(cap_plan)
+                    if cap_block:
+                        blocks.append(cap_block)
+                        self._capability_plan_fingerprint = fp
 
             if not blocks:
                 return
