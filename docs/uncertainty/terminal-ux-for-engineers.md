@@ -201,6 +201,8 @@ Document this next to NI gate UX (`fault-plan-ni-verify-skills-gate.md`).
 2. Compact-first plan confirm (+ optional View)  
 3. Collapse pre-turn prints into preamble / spinner  
 
+**Extensive implementation plan (no code yet):** [terminal-ux-p0-plan.md](./terminal-ux-p0-plan.md)
+
 ### P1 — Orientation
 
 4. Prompt mode chrome + `/plan` in mode help  
@@ -241,6 +243,7 @@ Document this next to NI gate UX (`fault-plan-ni-verify-skills-gate.md`).
 
 ## 15. Open questions
 
+Resolved for P0 in [terminal-ux-p0-plan.md](./terminal-ux-p0-plan.md) §2 (View letter, status hex `#D8D8D8`, thin checklist in panel). Remaining for P1+:
+
 1. Should ambiguous noun phrases (`users and sessions`) stay IMPLEMENT or become ASK? (Today: IMPLEMENT.)  
-2. Is `(V)iew` worth a fourth confirm letter, or only print full plan on Change?  
-3. Off-white status color: pick one hex that stays readable on black *and* solarized dark — bake into `theme.py` + screenshot fixtures.
+2. Prompt chrome exact strings (`PLAN›` vs `plan |`).
