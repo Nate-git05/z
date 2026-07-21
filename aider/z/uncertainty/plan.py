@@ -64,6 +64,9 @@ class PlanningArtifact:
     capability_plan: Optional[CapabilityPlan] = None
     architecture: Optional[ArchitectureCheckpoint] = None
     journeys: Optional[JourneyPlan] = None
+    ux_model: Optional[object] = None
+    transition_table: Optional[object] = None
+    multi_session_plan: Optional[object] = None
     approved: bool = False
     skipped: bool = False  # True when triage said planning not required
 
@@ -89,6 +92,23 @@ class PlanningArtifact:
                 self.architecture.to_dict() if self.architecture else None
             ),
             "journeys": self.journeys.to_dict() if self.journeys else None,
+            "ux_model": (
+                self.ux_model.to_dict()
+                if self.ux_model is not None and hasattr(self.ux_model, "to_dict")
+                else None
+            ),
+            "transition_table": (
+                self.transition_table.to_dict()
+                if self.transition_table is not None
+                and hasattr(self.transition_table, "to_dict")
+                else None
+            ),
+            "multi_session_plan": (
+                self.multi_session_plan.to_dict()
+                if self.multi_session_plan is not None
+                and hasattr(self.multi_session_plan, "to_dict")
+                else None
+            ),
         }
 
 
@@ -353,8 +373,11 @@ def draft_plan_from_request(
 
     # --- Reliability-9: capabilities / architecture / journeys ---------------
     from .architecture import draft_architecture_checkpoint
+    from .assertions import infer_transition_table
+    from .browser_sessions import draft_multi_session_plan
     from .capabilities import build_capability_plan
     from .journeys import infer_critical_journeys
+    from .ux_states import draft_ux_model
 
     req_blob = blob_for_est or user_message or ""
     cap_plan = build_capability_plan(
@@ -364,6 +387,12 @@ def draft_plan_from_request(
     )
     arch = draft_architecture_checkpoint(req_blob)
     journeys = infer_critical_journeys(req_blob)
+    ux = draft_ux_model(req_blob)
+    transitions = infer_transition_table(req_blob)
+    multi = draft_multi_session_plan(
+        req_blob,
+        journey=journeys.journeys[0] if journeys.journeys else None,
+    )
 
     for tip in cap_plan.compensation:
         if tip not in invariants:
@@ -381,6 +410,9 @@ def draft_plan_from_request(
         capability_plan=cap_plan,
         architecture=arch if arch.items else None,
         journeys=journeys if journeys.journeys else None,
+        ux_model=ux if ux.applicable else None,
+        transition_table=transitions,
+        multi_session_plan=multi if multi.required else None,
         approved=False,
         skipped=False,
     )
@@ -462,6 +494,24 @@ def format_plan_for_user(plan: PlanningArtifact) -> str:
 
         lines.append(format_journey_plan(plan.journeys))
 
+    if plan.ux_model:
+        lines.append("")
+        from .ux_states import format_ux_model
+
+        lines.append(format_ux_model(plan.ux_model))
+
+    if plan.transition_table:
+        lines.append("")
+        from .assertions import format_transition_table
+
+        lines.append(format_transition_table(plan.transition_table))
+
+    if plan.multi_session_plan:
+        lines.append("")
+        from .browser_sessions import format_multi_session
+
+        lines.append(format_multi_session(plan.multi_session_plan))
+
     lines.append("")
     lines.append(
         "Confirm this plan to proceed. Reject to stop before any diff is written."
@@ -528,6 +578,27 @@ def format_plan_for_context(plan: PlanningArtifact) -> str:
         lines.append("")
         lines.append("## Critical user journeys")
         lines.append(format_journey_plan(plan.journeys))
+    if plan.ux_model:
+        from .ux_states import format_ux_model
+
+        lines.append("")
+        lines.append("## UX visible-state model")
+        lines.append(format_ux_model(plan.ux_model))
+    if plan.transition_table:
+        from .assertions import format_transition_table, generate_transition_tests
+
+        lines.append("")
+        lines.append("## State transition table")
+        lines.append(format_transition_table(plan.transition_table))
+        lines.append("")
+        lines.append("## Suggested exact-assertion tests")
+        lines.append(generate_transition_tests(plan.transition_table))
+    if plan.multi_session_plan:
+        from .browser_sessions import format_multi_session
+
+        lines.append("")
+        lines.append("## Multi-session browser plan")
+        lines.append(format_multi_session(plan.multi_session_plan))
     lines.append("")
     lines.append(
         "Implement only what this plan authorizes. "

@@ -75,6 +75,11 @@ def evaluate_completion(
     smoke_ok: Optional[bool] = None,
     unresolved_critical_nodes: int = 0,
     unintended_artifacts: Sequence[str] = (),
+    ux_applicable: bool = False,
+    ux_verification_pending: int = 0,
+    multi_session_required: bool = False,
+    multi_session_verified: bool = False,
+    evidence_stale: bool = False,
 ) -> CompletionReport:
     """
     Only declare completion when all critical items are satisfied.
@@ -279,8 +284,42 @@ def evaluate_completion(
         "artifact_hygiene",
         "Working tree contains no unintended agent artifacts",
         not artifacts,
-        critical=False,
+        critical=bool(artifacts),
         detail="Clean" if not artifacts else f"Artifacts: {', '.join(artifacts[:5])}",
+    )
+
+    if ux_applicable:
+        add(
+            "ux_verification",
+            "UX viewport / a11y / state checklist addressed",
+            ux_verification_pending == 0,
+            critical=False,
+            detail=(
+                "UX checks done"
+                if ux_verification_pending == 0
+                else f"{ux_verification_pending} UX check(s) still pending"
+            ),
+        )
+
+    if multi_session_required:
+        add(
+            "multi_session",
+            "Multi-session browser journey verified",
+            multi_session_verified,
+            critical=True,
+            detail=(
+                "Multi-session evidence present"
+                if multi_session_verified
+                else "Two-user journey unverified — PARTIAL only"
+            ),
+        )
+
+    add(
+        "evidence_fresh",
+        "Evidence is current for the final code state",
+        not evidence_stale,
+        critical=evidence_stale,
+        detail="Evidence fresh" if not evidence_stale else "Evidence stale after later edits",
     )
 
     critical_items = [i for i in items if i.critical]

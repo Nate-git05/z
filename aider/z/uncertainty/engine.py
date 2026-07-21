@@ -97,6 +97,11 @@ class SessionContext:
     journey_plan: Optional[object] = None
     architecture_checkpoint: Optional[object] = None
     completion_report: Optional[object] = None
+    evidence_ledger: Optional[object] = None
+    ux_model: Optional[object] = None
+    last_backtrack: Optional[object] = None
+    cleanroom_result: Optional[object] = None
+    multi_session_result: Optional[object] = None
 
 
 class UncertaintyEngine:
@@ -122,6 +127,11 @@ class UncertaintyEngine:
         self.ctx.journey_plan = None
         self.ctx.architecture_checkpoint = None
         self.ctx.completion_report = None
+        self.ctx.evidence_ledger = None
+        self.ctx.ux_model = None
+        self.ctx.last_backtrack = None
+        self.ctx.cleanroom_result = None
+        self.ctx.multi_session_result = None
         return checklist
 
     def maybe_require_plan(
@@ -180,6 +190,7 @@ class UncertaintyEngine:
         self.ctx.capability_plan = plan.capability_plan
         self.ctx.journey_plan = plan.journeys
         self.ctx.architecture_checkpoint = plan.architecture
+        self.ctx.ux_model = plan.ux_model
         if self.ctx.checklist:
             merge_plan_invariants_into_checklist(self.ctx.checklist, plan)
         self.record_execution(f"planning required: {reason}")

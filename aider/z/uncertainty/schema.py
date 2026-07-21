@@ -79,6 +79,16 @@ class NodeType(str, enum.Enum):
     ARCHITECTURE_GAP = "Architecture Gap"
     # Required capability has no skill and no compensation workflow yet
     CAPABILITY_GAP = "Capability Coverage Gap"
+    # Causal backtrack to earliest unsupported assumption
+    CAUSAL_BACKTRACK = "Causal Backtrack"
+    # Weak / permissive unit assertions
+    WEAK_ASSERTION = "Weak Assertion"
+    # UX states incomplete or viewport/a11y unchecked
+    UX_GAP = "UX Completeness Gap"
+    # Agent artifact leaked into product tree
+    ARTIFACT_HYGIENE = "Artifact Hygiene"
+    # Clean-room verification incomplete
+    CLEANROOM_GAP = "Clean-Room Verification Gap"
 
 
 # Older persisted display strings → current NodeType
@@ -115,6 +125,11 @@ _NODE_TYPE_ALIASES = {
     "False Completion Risk": NodeType.FALSE_COMPLETION_RISK,
     "Architecture Gap": NodeType.ARCHITECTURE_GAP,
     "Capability Coverage Gap": NodeType.CAPABILITY_GAP,
+    "Causal Backtrack": NodeType.CAUSAL_BACKTRACK,
+    "Weak Assertion": NodeType.WEAK_ASSERTION,
+    "UX Completeness Gap": NodeType.UX_GAP,
+    "Artifact Hygiene": NodeType.ARTIFACT_HYGIENE,
+    "Clean-Room Verification Gap": NodeType.CLEANROOM_GAP,
 }
 
 

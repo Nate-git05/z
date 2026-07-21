@@ -103,32 +103,70 @@ Commit may still proceed for journey-only gaps (so work is not stranded), but
 | Hook | Behavior |
 |------|----------|
 | `plan.triage_for_planning` | Also fires on architecture / CUJ signals |
-| `draft_plan_from_request` | Fills capability + architecture + journeys |
+| `draft_plan_from_request` | Fills capability + architecture + journeys + UX + transitions + multi-session |
 | `base_coder._maybe_pull_skills` | Always builds capability plan |
-| `gate.prepare_commit` | Integrity scan + completion evaluation |
-| Reflect messages | Include failure layer + backtrack target |
+| `gate.prepare_commit` | Integrity + artifacts + weak assertions + backtrack + clean-room + multi-session + completion |
+| Reflect messages | Include failure layer + causal backtrack target |
 
 ---
 
-## Next slices (P1 / P2)
+## What shipped in P1 (this follow-up)
 
-Ordered for fastest false-completion reduction:
+### 7. Evidence ledger (`evidence.py`)
 
-1. **Clean-room completion** — remove node_modules/dist → install from lockfile →
-   typecheck → lint → unit → integration → build → start → smoke; store evidence
-   records (command, cwd, exit, tree hash, staleness).
-2. **Causal backtracking store** — parent/child uncertainty nodes; reopen earliest
-   contradicted assumption; invalidate dependent evidence.
-3. **UX visible-state model** — per-user state machine prompts + viewport /
-   a11y checklist for UI tasks.
-4. **Exact unit assertion detector** — flag `toBeTruthy` / `a \|\| b` alternatives
-   on new tests; prefer transition-table generation for state machines.
-5. **Multi-session browser automation** — separate contexts for collaborative
-   features when tools exist; otherwise honest partial completion.
-6. **Artifact hygiene** — block agent histories/caches from product commits.
-7. **Benchmark suite** — new apps, feature adds, concurrency, migrations, auth,
-   misleading bugs, dep failures, wrong-tests-vs-wrong-code, multi-user,
-   process-instruction tasks, stop-and-ask tasks.
+Every check stores command, cwd, exit code, output excerpt, tree hash, env
+assumptions, timestamp. Edits after a pass mark evidence **stale**.
+
+### 8. Clean-room verification (`cleanroom.py`)
+
+Discovers (and optionally runs with `Z_RUN_CLEANROOM=1`):
+
+wipe → install from lockfile → typecheck → lint → unit → integration → build →
+start → HTTP smoke.
+
+### 9. Causal backtracking (`backtrack.py`)
+
+Assumption chain: env → deps → types → behavior → build → journey.
+Failure walks to the **earliest** unsupported parent. Proposed repairs that
+touch the detector set `weaken_blocked`. `reopen_on_contradiction` clears
+resolved nodes when new evidence conflicts.
+
+### 10. UX visible-state model (`ux_states.py`)
+
+Multiplayer/generic web state machines with per-state prompts (sees / can do /
+loading / disabled / slow network / leave / timeout) plus viewport/a11y/
+overflow checklist.
+
+### 11. Exact assertions + transition tables (`assertions.py`)
+
+Flags `a\|\|b` / `toBeTruthy` / `@ts-ignore` in tests. Infers challenge/match
+transition tables and generates exact `toEqual` stubs.
+
+### 12. Multi-session browser hooks (`browser_sessions.py`)
+
+Plans two independent contexts. If tools unavailable or
+`Z_MULTI_SESSION_E2E_CMD` unset → honest PARTIAL (never claim journey works).
+When set, runs the project E2E and binds `multi_session_e2e` evidence.
+
+### 13. Artifact hygiene (`artifacts.py`)
+
+Blocks `.z/`, aider history, caches, scratch dumps from product commits.
+
+### 14. Benchmark catalog (`benchmark.py` + `tests/reliability_benchmark/`)
+
+12-task taxonomy with `score_task` / `false_completion_rate` aggregation —
+not a single RPS tune.
+
+---
+
+## Remaining for production hardening (P2)
+
+1. Drive clean-room by default on deploy-tagged tasks (not only `Z_RUN_CLEANROOM`).
+2. Real Playwright multi-context runner when the project has no E2E script.
+3. Auto-fill UX state answers from DOM inspection.
+4. Property-based tests for compact rule systems.
+5. Live calibration of detector noise (TP/FP/reopen rates) into thresholds.
+6. Expand benchmark from stubs to full interactive agent evals.
 
 ---
 
@@ -142,3 +180,12 @@ Do **not** tune Z to pass one multiplayer example. Measure across a benchmark:
 - Correct evidence-type resolution rate
 - Reopened-node rate after contradictions
 - Rate of correctly asking for human help
+
+Env knobs:
+
+| Env | Effect |
+|-----|--------|
+| `Z_RUN_CLEANROOM=1` | Execute clean-room install/build/smoke at commit gate |
+| `Z_SKIP_CLEANROOM=1` | Skip clean-room execution |
+| `Z_BROWSER_TOOL` | Force browser tool name, or `none` |
+| `Z_MULTI_SESSION_E2E_CMD` | Project command that drives two-context E2E |

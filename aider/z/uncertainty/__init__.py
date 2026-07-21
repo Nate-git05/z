@@ -74,6 +74,14 @@ from .journeys import infer_critical_journeys, mark_journey_evidence
 from .completion import evaluate_completion
 from .integrity import scan_verification_integrity
 from .failure_classify import classify_failure
+from .evidence import EvidenceLedger, EvidenceRecord, tree_hash
+from .cleanroom import discover_cleanroom_plan, run_cleanroom
+from .backtrack import backtrack_failure
+from .ux_states import draft_ux_model
+from .assertions import generate_transition_tests, infer_transition_table, scan_weak_assertions
+from .browser_sessions import detect_browser_tools, draft_multi_session_plan, run_multi_session
+from .artifacts import scan_artifacts
+from .benchmark import BENCHMARK_TASKS, aggregate_false_completion_rate, score_task
 
 __all__ = [
     "Area",
@@ -150,4 +158,21 @@ __all__ = [
     "evaluate_completion",
     "scan_verification_integrity",
     "classify_failure",
+    "EvidenceLedger",
+    "EvidenceRecord",
+    "tree_hash",
+    "discover_cleanroom_plan",
+    "run_cleanroom",
+    "backtrack_failure",
+    "draft_ux_model",
+    "generate_transition_tests",
+    "infer_transition_table",
+    "scan_weak_assertions",
+    "detect_browser_tools",
+    "draft_multi_session_plan",
+    "run_multi_session",
+    "scan_artifacts",
+    "BENCHMARK_TASKS",
+    "aggregate_false_completion_rate",
+    "score_task",
 ]
