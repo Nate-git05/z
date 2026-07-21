@@ -105,6 +105,7 @@ Any other arguments pass through to the coding agent (same surface as Aider).
 | **Architecture** | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | **Uncertainty tree** | [docs/uncertainty/README.md](docs/uncertainty/README.md) |
 | **Skills guide** | [docs/skills/README.md](docs/skills/README.md) |
+| **Codex brief (features + how to use)** | [docs/codex/z-features-and-usage.md](docs/codex/z-features-and-usage.md) |
 | **Docs** | _Coming soon_ |
 | **Community** | _Coming soon_ |
 | **Waitlist / landing** | Run the `z_server` web app and open `/`, or check the repo for updates |
