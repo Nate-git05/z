@@ -293,9 +293,14 @@ export function LoginPage({
                         inputMode="numeric"
                         required
                         autoComplete="one-time-code"
+                        placeholder="123456"
                         value={code}
                         onChange={(e) => setCode(e.target.value)}
                       />
+                      <p className="auth-hint">
+                        Until SMS/email delivery is live, use code{" "}
+                        <code>123456</code>.
+                      </p>
                       <button
                         className="auth-btn auth-btn-primary"
                         type="submit"
@@ -334,9 +339,13 @@ export function LoginPage({
                       inputMode="numeric"
                       required
                       autoComplete="one-time-code"
+                      placeholder="123456"
                       value={code}
                       onChange={(e) => setCode(e.target.value)}
                     />
+                    <p className="auth-hint">
+                      Until SMS delivery is live, use code <code>123456</code>.
+                    </p>
                     <button
                       className="auth-btn auth-btn-primary"
                       type="submit"

@@ -72,6 +72,26 @@ class Settings:
             "Z_MCP_GITHUB_CLIENT_SECRET"
         )
 
+        # Fixed OTP accepted while Twilio/SMS delivery is not wired yet.
+        # Default ON until Twilio Verify is fully configured; set
+        # Z_PROVISIONAL_OTP=0 to disable once Twilio is live.
+        self.provisional_otp: str = "123456"
+        flag = os.environ.get("Z_PROVISIONAL_OTP", "").strip().lower()
+        twilio_ready = bool(
+            self.twilio_account_sid
+            and self.twilio_auth_token
+            and self.twilio_verify_service_sid
+        )
+        if flag in ("0", "false", "no", "off"):
+            self.provisional_otp_enabled: bool = False
+        elif flag in ("1", "true", "yes", "on"):
+            self.provisional_otp_enabled = True
+        else:
+            self.provisional_otp_enabled = self.dev_mode or not twilio_ready
+
+    def accepts_provisional_otp(self, code: str) -> bool:
+        return self.provisional_otp_enabled and code.strip() == self.provisional_otp
+
 
 def _normalize_database_url(url: str) -> str:
     """Accept common Supabase/Postgres URLs and make them usable with SQLAlchemy.

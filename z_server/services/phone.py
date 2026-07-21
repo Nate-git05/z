@@ -47,8 +47,8 @@ def check_phone_verification(phone: str, code: str) -> bool:
         and settings.twilio_auth_token
         and settings.twilio_verify_service_sid
     ):
-        # Dev fallback
-        return code == "123456" or (code.isdigit() and len(code) >= 4)
+        # Until Twilio is configured: only the provisional code 123456.
+        return settings.accepts_provisional_otp(code)
 
     try:
         from twilio.rest import Client
@@ -57,6 +57,11 @@ def check_phone_verification(phone: str, code: str) -> bool:
         result = client.verify.v2.services(
             settings.twilio_verify_service_sid
         ).verification_checks.create(to=phone, code=code)
-        return result.status == "approved"
+        if result.status == "approved":
+            return True
+        # Optional escape hatch while rolling out Twilio
+        return settings.accepts_provisional_otp(code)
     except Exception as err:
+        if settings.accepts_provisional_otp(code):
+            return True
         raise PhoneVerifyError(f"Twilio Verify check failed: {err}") from err
