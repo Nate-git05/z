@@ -113,6 +113,7 @@ class AppLoginPageTest(unittest.TestCase):
         self.assertIn("/v1/auth/email/start", js.text)
         self.assertIn("/v1/auth/phone/start", js.text)
         self.assertIn("notifyCli", js.text)
+        self.assertIn("/v1/auth/cli/complete", js.text)
 
     def test_google_start_without_creds_shows_error_page(self):
         resp = self.client.get("/app/login/google/start", follow_redirects=False)

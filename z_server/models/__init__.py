@@ -3,6 +3,7 @@
 from z_server.models.auth_session import (
     AuthSession,
     ChallengePurpose,
+    CliAuthBridge,
     OAuthState,
     VerificationChallenge,
     new_opaque_token,
@@ -31,6 +32,7 @@ __all__ = [
     "VerificationChallenge",
     "ChallengePurpose",
     "OAuthState",
+    "CliAuthBridge",
     "new_opaque_token",
     "McpConnection",
     "McpConnectionType",

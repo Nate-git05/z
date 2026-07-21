@@ -37,7 +37,19 @@
   }
 
   async function notifyCli(session) {
-    if (!redirectUri || !callbackState) return;
+    if (!callbackState || !session) return;
+    // Server bridge: CLI polls /v1/auth/cli/poll (works when localhost is blocked).
+    try {
+      await fetch("/v1/auth/cli/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ state: callbackState, data: session }),
+      });
+    } catch (_) {
+      /* ignore — still try localhost */
+    }
+    if (!redirectUri) return;
     try {
       await fetch(redirectUri, {
         method: "POST",
@@ -45,7 +57,7 @@
         body: JSON.stringify({ state: callbackState, data: session }),
       });
     } catch (_) {
-      /* CLI may have closed; page still shows success */
+      /* CLI may have closed or browser blocked loopback; poll bridge covers it */
     }
   }
 
@@ -70,6 +82,23 @@
     await notifyCli(session);
     showSuccessAndClose();
   }
+
+  // Keep CLI redirect_uri/state when switching signup ↔ sign-in.
+  (function preserveCliParamsOnSwitch() {
+    const link = document.getElementById("auth-switch-link");
+    if (!link) return;
+    try {
+      const url = new URL(link.getAttribute("href"), window.location.origin);
+      const cur = new URL(window.location.href);
+      ["redirect_uri", "state", "method"].forEach(function (key) {
+        const v = cur.searchParams.get(key);
+        if (v) url.searchParams.set(key, v);
+      });
+      link.setAttribute("href", url.pathname + url.search);
+    } catch (_) {
+      /* ignore */
+    }
+  })();
 
   // Server-rendered Google success path
   if (body.dataset.signedIn === "1") {

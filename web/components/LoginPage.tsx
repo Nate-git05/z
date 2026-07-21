@@ -34,7 +34,17 @@ export function LoginPage({
   const [busy, setBusy] = useState(false);
 
   async function notifyCli(session: ZSession) {
-    if (!redirectUri || !callbackState) return;
+    if (!callbackState) return;
+    // Server bridge so the CLI can poll when localhost POST is blocked.
+    try {
+      await postJson("/v1/auth/cli/complete", {
+        state: callbackState,
+        data: { ...session },
+      });
+    } catch {
+      /* ignore — still try localhost */
+    }
+    if (!redirectUri) return;
     try {
       await fetch(redirectUri, {
         method: "POST",
@@ -42,8 +52,17 @@ export function LoginPage({
         body: JSON.stringify({ state: callbackState, data: session }),
       });
     } catch {
-      /* CLI may have closed */
+      /* CLI polls /v1/auth/cli/poll as fallback */
     }
+  }
+
+  function switchHref(path: "/login" | "/signup") {
+    const params = new URLSearchParams();
+    if (redirectUri) params.set("redirect_uri", redirectUri);
+    if (callbackState) params.set("state", callbackState);
+    if (method) params.set("method", method);
+    const q = params.toString();
+    return q ? `${path}?${q}` : path;
   }
 
   async function finish(session: ZSession) {
@@ -361,11 +380,13 @@ export function LoginPage({
             <p className="auth-legal">
               {isSignup ? (
                 <>
-                  Already have an account? <Link href="/login">Sign in</Link>
+                  Already have an account?{" "}
+                  <Link href={switchHref("/login")}>Sign in</Link>
                 </>
               ) : (
                 <>
-                  New here? <Link href="/signup">Create an account</Link>
+                  New here?{" "}
+                  <Link href={switchHref("/signup")}>Create an account</Link>
                 </>
               )}{" "}
               · By continuing you agree to the{" "}

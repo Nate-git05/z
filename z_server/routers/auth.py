@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -15,10 +16,12 @@ from z_server.db import get_db
 from z_server.models import (
     AuthProvider,
     ChallengePurpose,
+    CliAuthBridge,
     OAuthState,
     VerificationChallenge,
 )
 from z_server.schemas.auth import (
+    CliBridgeCompleteRequest,
     EmailStartRequest,
     EmailVerifyRequest,
     GoogleExchangeRequest,
@@ -220,6 +223,7 @@ def phone_start(payload: PhoneStartRequest, db: Session = Depends(get_db)):
         status="pending",
     )
     db.add(challenge)
+    db.flush()
     return {"ok": True, "session_id": str(challenge.id)}
 
 
@@ -361,6 +365,63 @@ def refresh_tokens(
         max_age=get_settings().access_token_ttl_seconds,
     )
     return response
+
+
+@router.post("/cli/complete")
+def cli_bridge_complete(payload: CliBridgeCompleteRequest, db: Session = Depends(get_db)):
+    """Browser → server handoff after signup/login so the CLI can poll.
+
+    Used when the page cannot POST to ``http://127.0.0.1`` (mixed content /
+    private-network blocks from the HTTPS auth host).
+    """
+    state = payload.state.strip()
+    data = payload.data or {}
+    if not isinstance(data, dict) or not data.get("access_token"):
+        raise HTTPException(400, "Session payload missing access_token.")
+
+    row = (
+        db.execute(select(CliAuthBridge).where(CliAuthBridge.state == state))
+        .scalars()
+        .first()
+    )
+    expires = _utcnow() + timedelta(minutes=10)
+    if row is None:
+        row = CliAuthBridge(state=state, expires_at=expires)
+        db.add(row)
+    elif row.consumed_at is not None:
+        raise HTTPException(409, "CLI auth state already consumed.")
+    elif _as_utc(row.expires_at) < _utcnow():
+        raise HTTPException(410, "CLI auth state expired.")
+
+    row.payload_json = json.dumps(data)
+    row.expires_at = expires
+    row.consumed_at = None
+    return {"ok": True}
+
+
+@router.get("/cli/poll")
+def cli_bridge_poll(state: str = Query(..., min_length=8, max_length=128), db: Session = Depends(get_db)):
+    """CLI polls until the browser posts ``/cli/complete`` for this state."""
+    state = state.strip()
+    row = (
+        db.execute(select(CliAuthBridge).where(CliAuthBridge.state == state))
+        .scalars()
+        .first()
+    )
+    if row is None:
+        return {"status": "pending"}
+    if row.consumed_at is not None:
+        return {"status": "consumed"}
+    if _as_utc(row.expires_at) < _utcnow():
+        return {"status": "expired"}
+    if not row.payload_json:
+        return {"status": "pending"}
+    try:
+        data = json.loads(row.payload_json)
+    except (TypeError, ValueError) as err:
+        raise HTTPException(500, "Corrupt CLI auth payload.") from err
+    row.consumed_at = _utcnow()
+    return {"status": "ready", "data": data}
 
 
 @router.get("/me")

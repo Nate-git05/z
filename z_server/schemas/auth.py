@@ -36,6 +36,13 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class CliBridgeCompleteRequest(BaseModel):
+    """Browser posts session payload so the CLI can poll when localhost is blocked."""
+
+    state: str = Field(..., min_length=8, max_length=128)
+    data: dict
+
+
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str | None = None
