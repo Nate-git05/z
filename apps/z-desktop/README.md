@@ -6,10 +6,10 @@
 
 ## Foundations (two upstreams)
 
-| Upstream | Path (gitignored) | Role for Z |
-|----------|-------------------|------------|
-| [microsoft/vscode](https://github.com/microsoft/vscode) (MIT) | `apps/z-desktop/vendor/vscode` | **Editor shell** — workbench, file tree, tabs, Monaco, Electron |
-| [openai/codex](https://github.com/openai/codex) (Apache-2.0) | `apps/z-desktop/vendor/codex` | **Agent protocol patterns** — app-server JSON-RPC, MCP, session lifecycle |
+| Upstream / our fork | Path (gitignored) | Role for Z |
+|---------------------|-------------------|------------|
+| [microsoft/vscode](https://github.com/microsoft/vscode) → fork [Nate-git05/Seam](https://github.com/Nate-git05/Seam) | `apps/z-desktop/vendor/vscode` | **Editor shell** — workbench, file tree, tabs, Monaco, Electron |
+| [openai/codex](https://github.com/openai/codex) → fork [Nate-git05/codex](https://github.com/Nate-git05/codex) | `apps/z-desktop/vendor/codex` | **Agent protocol patterns** — app-server JSON-RPC, MCP, session lifecycle |
 
 ## Layout
 
@@ -19,6 +19,16 @@
 | `product.z.json` | Brand overlay for Code - OSS `product.json` |
 | `extension/` | Z activity-bar contribution + lifecycle manager |
 | `vendor/` | Local clones only — **gitignored** |
+
+## Clone vendors (your forks)
+
+```bash
+# From repo root — trees stay gitignored under apps/z-desktop/vendor/
+rm -rf apps/z-desktop/vendor/vscode apps/z-desktop/vendor/codex
+gh repo clone Nate-git05/Seam apps/z-desktop/vendor/vscode -- --depth 1
+gh repo clone Nate-git05/codex apps/z-desktop/vendor/codex -- --depth 1
+# remotes: origin = your fork, upstream = microsoft/vscode | openai/codex
+```
 
 ## Phase 3 — shell lifecycle
 

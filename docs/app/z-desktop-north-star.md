@@ -42,8 +42,10 @@ Ship **current Z agent features** with:
 
 **Foundations:**
 - **Editor shell:** [microsoft/vscode](https://github.com/microsoft/vscode) (Code - OSS, MIT) →
+  fork [Nate-git05/Seam](https://github.com/Nate-git05/Seam) →
   `apps/z-desktop/vendor/vscode` (gitignored). Electron workbench + Monaco.
 - **Agent protocol reference:** [openai/codex](https://github.com/openai/codex) →
+  fork [Nate-git05/codex](https://github.com/Nate-git05/codex) →
   `apps/z-desktop/vendor/codex` (gitignored). CLI/TUI/`app-server` — not a GUI.
 - **Brain:** Z (existing Python agent) + routing gateway.
 
