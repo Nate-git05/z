@@ -18,7 +18,7 @@ process design — not a clone of their runtimes.
 | Mechanism | Default | Escape hatch |
 |-----------|---------|--------------|
 | `/plan` permission mode | on | `Z_PLAN_MODE=0` |
-| Explore pass (thin chat) | on | `Z_EXPLORE_PASS=0` |
+| Explore pass (thin chat) | on (deep scout default) | `Z_EXPLORE_PASS=0`; `Z_EXPLORE_DEPTH=thin` |
 | Done soft-stop | on | `Z_DONE_SOFT_STOP=0` |
 
 ### Plan mode
@@ -35,7 +35,8 @@ Product SEARCH/REPLACE is blocked while `TaskMode.PLAN` is active.
 ### Explore pass
 
 When fewer than 3 files are in chat, IMPLEMENT/PLAN/INVESTIGATE turns get a
-compact candidate-file list (rg/path heuristics) — not a second agent.
+bounded **explore scout** (rg/path heuristics + signature peeks + related-test
+hints) — not a second agent. Set `Z_EXPLORE_DEPTH=thin` for the path-only list.
 
 ### Done soft-stop
 
@@ -95,6 +96,7 @@ detectors still see the full artifact. Only `cur_messages` injects get thinner.
 - Plans: [coding-quality-tranche1-plan.md](./coding-quality-tranche1-plan.md),
   [coding-quality-tranche2-plan.md](./coding-quality-tranche2-plan.md),
   [coding-quality-tranche3-plan.md](./coding-quality-tranche3-plan.md),
-  [coding-quality-tranche4-plan.md](./coding-quality-tranche4-plan.md)
+  [coding-quality-tranche4-plan.md](./coding-quality-tranche4-plan.md),
+  [coding-quality-explore-deep-plan.md](./coding-quality-explore-deep-plan.md)
 - Skills: [../skills/README.md](../skills/README.md)
 - Uncertainty: [README.md](./README.md)

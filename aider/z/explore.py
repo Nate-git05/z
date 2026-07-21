@@ -1,7 +1,7 @@
-"""Read-only explore pass — compact findings for a thin coding turn.
+"""Read-only explore pass — thin list or bounded deep scout.
 
-Not a second peer agent: runs locally (rg/path heuristics), injects a short
-block into cur_messages, then the main coder continues.
+Not a second peer agent: runs locally (rg / path / signature peek), injects a
+short block into ``cur_messages``, then the main coder continues.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 _STOP = frozenset(
     """
@@ -20,10 +20,48 @@ _STOP = frozenset(
     """.split()
 )
 
+_SIG_RE = re.compile(
+    r"^(?:async\s+)?def\s+\w+\s*\([^)]*\)\s*(?:->[^:]+)?:|"
+    r"^class\s+\w+|"
+    r"^export\s+(?:default\s+)?(?:async\s+)?function\s+\w+|"
+    r"^(?:export\s+)?(?:async\s+)?function\s+\w+|"
+    r"^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+\w+|"
+    r"^(?:export\s+)?(?:const|let|var)\s+\w+\s*=\s*(?:async\s*)?\(",
+    re.MULTILINE,
+)
+
+DEFAULT_SCOUT_CHARS = 2800
+DEFAULT_SCOUT_FILES = 5
+
 
 def explore_pass_enabled() -> bool:
     raw = os.environ.get("Z_EXPLORE_PASS", "1").strip().lower()
     return raw not in ("0", "false", "no", "off")
+
+
+def explore_depth() -> str:
+    """
+    ``deep`` (default) peeks signatures / related tests.
+    ``thin`` restores the path-only list from tranche 2.
+    """
+    raw = (os.environ.get("Z_EXPLORE_DEPTH") or "deep").strip().lower()
+    if raw in ("0", "thin", "shallow", "basic", "list"):
+        return "thin"
+    return "deep"
+
+
+def scout_char_budget() -> int:
+    raw = os.environ.get("Z_EXPLORE_SCOUT_CHARS", "").strip()
+    if raw.isdigit():
+        return max(800, int(raw))
+    return DEFAULT_SCOUT_CHARS
+
+
+def scout_file_limit() -> int:
+    raw = os.environ.get("Z_EXPLORE_SCOUT_FILES", "").strip()
+    if raw.isdigit():
+        return max(1, min(12, int(raw)))
+    return DEFAULT_SCOUT_FILES
 
 
 def extract_keywords(task: str, *, limit: int = 8) -> List[str]:
@@ -86,7 +124,6 @@ def _search_rg(root: Path, keyword: str, *, max_hits: int = 8) -> List[Tuple[str
     for line in (proc.stdout or "").splitlines():
         if not line.strip():
             continue
-        # path:line:content
         parts = line.split(":", 2)
         if len(parts) < 2:
             continue
@@ -123,46 +160,106 @@ def _search_path_names(root: Path, keyword: str, *, max_hits: int = 6) -> List[s
     return found
 
 
-def run_explore_pass(
-    task: str,
+def peek_signatures(
+    path: Path,
     *,
-    root: Path | str,
-    already_in_chat: Optional[Sequence[str]] = None,
-    max_keywords: int = 5,
-    max_files: int = 12,
-) -> str:
+    max_sigs: int = 8,
+    max_bytes: int = 12000,
+) -> List[str]:
+    """Extract a few top-level-ish signatures from a source file."""
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    if len(raw) > max_bytes:
+        raw = raw[:max_bytes]
+    found: List[str] = []
+    for m in _SIG_RE.finditer(raw):
+        sig = m.group(0).strip()
+        if len(sig) > 140:
+            sig = sig[:140] + "…"
+        if sig not in found:
+            found.append(sig)
+        if len(found) >= max_sigs:
+            break
+    return found
+
+
+def suggest_related_paths(root: Path, rel: str) -> List[str]:
     """
-    Return a compact markdown findings block (may be empty).
+    Cheap related-file guesses that exist on disk (tests / sibling init).
     """
-    if not explore_pass_enabled():
-        return ""
-    root_p = Path(root)
-    if not root_p.is_dir():
-        return ""
+    root = Path(root)
+    p = Path(rel)
+    stem = p.stem
+    parent = p.parent
+    candidates = [
+        parent / "tests" / f"test_{stem}.py",
+        parent / f"test_{stem}.py",
+        parent / f"{stem}_test.py",
+        parent / f"{stem}.test.ts",
+        parent / f"{stem}.test.js",
+        parent / f"{stem}.spec.ts",
+        parent / "__tests__" / f"{stem}.test.ts",
+        Path("tests") / f"test_{stem}.py",
+        Path("tests") / "test_visible.py",
+        parent / "__init__.py",
+    ]
+    # Also: hidden_tests neighbor for benchmark-ish trees
+    if parent.name not in ("", "."):
+        candidates.append(Path("tests") / f"test_{parent.name}.py")
+
+    out: List[str] = []
+    seen = {rel.replace("\\", "/")}
+    for c in candidates:
+        abs_c = root / c
+        if not abs_c.is_file():
+            continue
+        try:
+            r = str(abs_c.resolve().relative_to(root.resolve())).replace("\\", "/")
+        except Exception:
+            continue
+        if r in seen:
+            continue
+        seen.add(r)
+        out.append(r)
+        if len(out) >= 3:
+            break
+    return out
+
+
+def _rank_candidates(
+    task: str,
+    root: Path,
+    *,
+    already_in_chat: Optional[Sequence[str]],
+    max_keywords: int,
+    max_files: int,
+) -> Tuple[List[str], List[Tuple[str, List[str]]]]:
     keywords = extract_keywords(task, limit=max_keywords)
     if not keywords:
-        return ""
+        return [], []
 
     in_chat = {str(x).replace("\\", "/") for x in (already_in_chat or [])}
-    file_hits: dict[str, List[str]] = {}
+    file_hits: Dict[str, List[str]] = {}
     use_rg = _rg_available()
 
     for kw in keywords:
         if use_rg:
-            for rel, snip in _search_rg(root_p, kw, max_hits=5):
-                file_hits.setdefault(rel, []).append(f"{kw}: {snip}")
-        for rel in _search_path_names(root_p, kw, max_hits=4):
-            file_hits.setdefault(rel, []).append(f"filename~{kw}")
+            for rel, snip in _search_rg(root, kw, max_hits=5):
+                file_hits.setdefault(rel.replace("\\", "/"), []).append(f"{kw}: {snip}")
+        for rel in _search_path_names(root, kw, max_hits=4):
+            file_hits.setdefault(rel.replace("\\", "/"), []).append(f"filename~{kw}")
 
-    # Prefer files not already in chat
     ranked = sorted(
         file_hits.items(),
         key=lambda kv: (kv[0] in in_chat, -len(kv[1]), kv[0]),
     )
     ranked = [kv for kv in ranked if kv[0] not in in_chat][:max_files] or ranked[:max_files]
-    if not ranked:
-        return ""
+    return keywords, ranked
 
+
+def _format_thin(ranked: List[Tuple[str, List[str]]]) -> str:
     lines = [
         "# Explore pass (read-only findings)",
         "Candidate files for this task (not yet in chat — `/add` before editing):",
@@ -177,3 +274,93 @@ def run_explore_pass(
         "not in the chat."
     )
     return "\n".join(lines)
+
+
+def _format_deep(
+    root: Path,
+    keywords: List[str],
+    ranked: List[Tuple[str, List[str]]],
+    *,
+    budget: int,
+    peek_n: int,
+) -> str:
+    lines = [
+        "# Explore scout (read-only, deep)",
+        "Bounded local scout — not a second agent. `/add` before editing.",
+        "",
+    ]
+    if keywords:
+        lines.append("Keywords: " + ", ".join(f"`{k}`" for k in keywords[:6]))
+        lines.append("")
+
+    for i, (rel, notes) in enumerate(ranked):
+        lines.append(f"### `{rel}`")
+        if notes:
+            lines.append(f"- hit: {notes[0]}")
+        if i < peek_n:
+            abs_path = root / rel
+            if abs_path.is_file():
+                sigs = peek_signatures(abs_path)
+                if sigs:
+                    lines.append("- signatures:")
+                    for sig in sigs[:6]:
+                        lines.append(f"  - `{sig}`")
+                related = suggest_related_paths(root, rel)
+                if related:
+                    lines.append("- related: " + ", ".join(f"`{r}`" for r in related))
+        lines.append("")
+
+    lines.append(
+        "Investigate the top candidates next. Do not invent SEARCH/REPLACE for "
+        "files that are not in the chat."
+    )
+    text = "\n".join(lines).rstrip() + "\n"
+    if len(text) <= budget:
+        return text
+    cut = text[: budget - 40]
+    nl = cut.rfind("\n")
+    if nl > budget // 2:
+        cut = cut[:nl]
+    return cut.rstrip() + "\n… [explore scout truncated]\n"
+
+
+def run_explore_pass(
+    task: str,
+    *,
+    root: Path | str,
+    already_in_chat: Optional[Sequence[str]] = None,
+    max_keywords: int = 5,
+    max_files: int = 12,
+    depth: Optional[str] = None,
+) -> str:
+    """
+    Return a compact markdown findings block (may be empty).
+
+    ``depth`` overrides ``Z_EXPLORE_DEPTH`` when provided (``thin`` / ``deep``).
+    """
+    if not explore_pass_enabled():
+        return ""
+    root_p = Path(root)
+    if not root_p.is_dir():
+        return ""
+
+    keywords, ranked = _rank_candidates(
+        task,
+        root_p,
+        already_in_chat=already_in_chat,
+        max_keywords=max_keywords,
+        max_files=max_files,
+    )
+    if not ranked:
+        return ""
+
+    mode = (depth or explore_depth()).strip().lower()
+    if mode in ("0", "thin", "shallow", "basic", "list"):
+        return _format_thin(ranked)
+    return _format_deep(
+        root_p,
+        keywords,
+        ranked,
+        budget=scout_char_budget(),
+        peek_n=scout_file_limit(),
+    )
