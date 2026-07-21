@@ -783,111 +783,118 @@ def verify_edits(
         )
         return record, relevant
 
-    record = run_test_suite(
-        root, cmd, verbose=verbose, error_print=error_print, cwd=test_cwd
-    )
-    record.prechecks = precheck_dicts
-    record.failure_kind = "test"
-    record.relevant_tests = list(relevant)
-    record.relevant_preexisting = list(preexisting)
-    record.relevant_newly_written = list(newly_written)
-    if cmake_result is not None:
-        apply_cmake_result_to_record(record, cmake_result)
-
-    # Root monorepo guard: don't treat "don't run npm test from root" as a
-    # normal test failure — surface as runner/routing problem.
     from .package_checks import looks_like_compiler_output, looks_like_root_test_guard
 
-    if (
-        not record.passed
-        and looks_like_root_test_guard(record.output_excerpt or "")
-        and not looks_like_compiler_output(record.output_excerpt or "")
-    ):
-        record.failure_kind = "root_guard"
-        record.error = (
-            record.error
-            or "Root test command looks like a monorepo guard — "
-            "run package-local typecheck/tests near the edited files."
-        )
+    # --- 3/4) Tests: relevant-first fail-fast when pre-existing coverage exists
+    # (T3 AGENTS.md idea: focused verification first; still run broad suite when green)
+    run_relevant_first = (
+        relevant_tests_first_enabled()
+        and not skip_relevant_execution
+        and bool(preexisting)
+    )
 
-    # --- 4) Mandatory: execute pre-existing relevant tests -----------------
-    # Writing new tests in another directory must not skip the established ones.
-    if (
-        not skip_relevant_execution
-        and preexisting
-        and record.state
-        not in (
-            VerifyState.RUNNER_MISSING,
-            VerifyState.TIMED_OUT,
-            *COMPILER_VERIFY_STATES,
+    if run_relevant_first:
+        # Placeholder record so relevant helper can attach metadata
+        record = VerificationRecord(
+            ran=True,
+            command=cmd,
+            exit_code=0,
+            passed=True,
+            state=VerifyState.TESTS_PASSED,
+            failure_kind="test",
+            prechecks=precheck_dicts,
+            relevant_tests=list(relevant),
+            relevant_preexisting=list(preexisting),
+            relevant_newly_written=list(newly_written),
         )
-        and record.failure_kind != "root_guard"
-    ):
-        rel_cmd = build_relevant_test_command(cmd, preexisting)
-        record.relevant_command = rel_cmd
-        if not rel_cmd:
-            record.relevant_ran = False
-            record.relevant_passed = False
-            record.passed = False
-            record.state = VerifyState.TESTS_FAILED
-            record.failure_kind = "relevant_tests"
-            record.error = (
-                "Found pre-existing relevant test file(s) but cannot build a "
-                "targeted command for this runner — will not mark verification "
-                f"complete without running: {', '.join(preexisting[:8])}"
-            )
+        if cmake_result is not None:
+            apply_cmake_result_to_record(record, cmake_result)
+        record = _run_preexisting_relevant(
+            root,
+            record,
+            preexisting,
+            cmd,
+            test_cwd=test_cwd,
+            verbose=verbose,
+            error_print=error_print,
+        )
+        if not record.relevant_passed:
+            # Fail fast — skip expensive broad suite; smoke runs below.
+            pass
         else:
-            # Always run the targeted command — even if the broad suite was green
-            # (suite may have been scoped / missed nested paths).
-            rel_record = run_test_suite(
-                root, rel_cmd, verbose=verbose, error_print=error_print, cwd=test_cwd
+            # Relevant green → still run broad suite (Z verify-before-commit)
+            suite = run_test_suite(
+                root, cmd, verbose=verbose, error_print=error_print, cwd=test_cwd
             )
-            record.relevant_ran = True
-            record.relevant_output_excerpt = rel_record.output_excerpt or ""
-            # File-targeted runs often omit "collected N" — exit 0 without a
-            # zero-test signal is enough; non-zero exit is always a failure.
-            if rel_record.exit_code != 0 or rel_record.zero_tests:
-                rel_ok = False
-            elif (rel_record.tests_discovered or 0) > 0:
-                rel_ok = True
-            elif rel_record.tests_discovered is None and not _ZERO_TEST_RE.search(
-                rel_record.output_excerpt or ""
+            # Preserve relevant_* fields from the first pass
+            suite.prechecks = precheck_dicts
+            suite.failure_kind = "test"
+            suite.relevant_tests = list(relevant)
+            suite.relevant_preexisting = list(preexisting)
+            suite.relevant_newly_written = list(newly_written)
+            suite.relevant_ran = record.relevant_ran
+            suite.relevant_passed = record.relevant_passed
+            suite.relevant_command = record.relevant_command
+            suite.relevant_output_excerpt = record.relevant_output_excerpt
+            if cmake_result is not None:
+                apply_cmake_result_to_record(suite, cmake_result)
+            record = suite
+            if (
+                not record.passed
+                and looks_like_root_test_guard(record.output_excerpt or "")
+                and not looks_like_compiler_output(record.output_excerpt or "")
             ):
-                rel_ok = True
-            else:
-                rel_ok = False
-            record.relevant_passed = rel_ok
-            if not rel_ok:
-                record.passed = False
-                record.state = VerifyState.TESTS_FAILED
-                record.failure_kind = "relevant_tests"
-                record.exit_code = rel_record.exit_code
-                record.command = rel_cmd
-                if rel_record.tests_discovered is not None:
-                    record.tests_discovered = rel_record.tests_discovered
-                if rel_record.tests_failed is not None:
-                    record.tests_failed = rel_record.tests_failed
-                if rel_record.tests_passed is not None:
-                    record.tests_passed = rel_record.tests_passed
-                record.output_excerpt = (
-                    f"Pre-existing relevant tests FAILED (mandatory).\n"
-                    f"Files: {', '.join(preexisting[:12])}\n"
-                    f"{rel_record.output_excerpt or rel_record.error or ''}"
-                )[-4000:]
+                record.failure_kind = "root_guard"
                 record.error = (
-                    "Pre-existing relevant tests failed — a new test file in "
-                    "another directory does not replace them. "
-                    f"Failing/covered: {', '.join(preexisting[:8])}"
+                    record.error
+                    or "Root test command looks like a monorepo guard — "
+                    "run package-local typecheck/tests near the edited files."
                 )
-            else:
-                # Ensure discovery count reflects that real tests ran
-                if record.tests_discovered is None or record.tests_discovered == 0:
-                    record.tests_discovered = max(
-                        len(preexisting), rel_record.tests_discovered or 0, 1
-                    )
-                    record.zero_tests = False
-                if record.exit_code == 0 and record.passed:
-                    record.state = VerifyState.TESTS_PASSED
+    else:
+        record = run_test_suite(
+            root, cmd, verbose=verbose, error_print=error_print, cwd=test_cwd
+        )
+        record.prechecks = precheck_dicts
+        record.failure_kind = "test"
+        record.relevant_tests = list(relevant)
+        record.relevant_preexisting = list(preexisting)
+        record.relevant_newly_written = list(newly_written)
+        if cmake_result is not None:
+            apply_cmake_result_to_record(record, cmake_result)
+
+        if (
+            not record.passed
+            and looks_like_root_test_guard(record.output_excerpt or "")
+            and not looks_like_compiler_output(record.output_excerpt or "")
+        ):
+            record.failure_kind = "root_guard"
+            record.error = (
+                record.error
+                or "Root test command looks like a monorepo guard — "
+                "run package-local typecheck/tests near the edited files."
+            )
+
+        # --- 4) Mandatory: execute pre-existing relevant tests -------------
+        if (
+            not skip_relevant_execution
+            and preexisting
+            and record.state
+            not in (
+                VerifyState.RUNNER_MISSING,
+                VerifyState.TIMED_OUT,
+                *COMPILER_VERIFY_STATES,
+            )
+            and record.failure_kind != "root_guard"
+        ):
+            record = _run_preexisting_relevant(
+                root,
+                record,
+                preexisting,
+                cmd,
+                test_cwd=test_cwd,
+                verbose=verbose,
+                error_print=error_print,
+            )
 
     if not skip_smoke:
         try:
@@ -939,6 +946,93 @@ def verify_edits(
         record.state = derive_verify_state(record)
 
     return record, relevant
+
+
+def relevant_tests_first_enabled() -> bool:
+    """
+    Run pre-existing relevant tests before the broad suite (fail-fast).
+
+    Default ON — when those tests fail we skip the expensive full suite.
+    When they pass we still run the broad suite (verify-before-commit intact).
+    Set Z_VERIFY_RELEVANT_FIRST=0 to restore suite-then-relevant order.
+    """
+    raw = os.environ.get("Z_VERIFY_RELEVANT_FIRST", "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def _run_preexisting_relevant(
+    root: Path,
+    record: "VerificationRecord",
+    preexisting: Sequence[str],
+    cmd,
+    *,
+    test_cwd: Optional[Path],
+    verbose: bool,
+    error_print,
+) -> "VerificationRecord":
+    """Execute mandatory pre-existing relevant tests; mutate ``record``."""
+    rel_cmd = build_relevant_test_command(cmd, preexisting)
+    record.relevant_command = rel_cmd
+    if not rel_cmd:
+        record.relevant_ran = False
+        record.relevant_passed = False
+        record.passed = False
+        record.state = VerifyState.TESTS_FAILED
+        record.failure_kind = "relevant_tests"
+        record.error = (
+            "Found pre-existing relevant test file(s) but cannot build a "
+            "targeted command for this runner — will not mark verification "
+            f"complete without running: {', '.join(list(preexisting)[:8])}"
+        )
+        return record
+
+    rel_record = run_test_suite(
+        root, rel_cmd, verbose=verbose, error_print=error_print, cwd=test_cwd
+    )
+    record.relevant_ran = True
+    record.relevant_output_excerpt = rel_record.output_excerpt or ""
+    if rel_record.exit_code != 0 or rel_record.zero_tests:
+        rel_ok = False
+    elif (rel_record.tests_discovered or 0) > 0:
+        rel_ok = True
+    elif rel_record.tests_discovered is None and not _ZERO_TEST_RE.search(
+        rel_record.output_excerpt or ""
+    ):
+        rel_ok = True
+    else:
+        rel_ok = False
+    record.relevant_passed = rel_ok
+    if not rel_ok:
+        record.passed = False
+        record.state = VerifyState.TESTS_FAILED
+        record.failure_kind = "relevant_tests"
+        record.exit_code = rel_record.exit_code
+        record.command = rel_cmd
+        if rel_record.tests_discovered is not None:
+            record.tests_discovered = rel_record.tests_discovered
+        if rel_record.tests_failed is not None:
+            record.tests_failed = rel_record.tests_failed
+        if rel_record.tests_passed is not None:
+            record.tests_passed = rel_record.tests_passed
+        record.output_excerpt = (
+            f"Pre-existing relevant tests FAILED (mandatory).\n"
+            f"Files: {', '.join(list(preexisting)[:12])}\n"
+            f"{rel_record.output_excerpt or rel_record.error or ''}"
+        )[-4000:]
+        record.error = (
+            "Pre-existing relevant tests failed — a new test file in "
+            "another directory does not replace them. "
+            f"Failing/covered: {', '.join(list(preexisting)[:8])}"
+        )
+    else:
+        if record.tests_discovered is None or record.tests_discovered == 0:
+            record.tests_discovered = max(
+                len(preexisting), rel_record.tests_discovered or 0, 1
+            )
+            record.zero_tests = False
+        if record.exit_code == 0 and record.passed:
+            record.state = VerifyState.TESTS_PASSED
+    return record
 
 
 def gate_enabled() -> bool:

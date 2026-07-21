@@ -58,11 +58,24 @@ def _sync_local_to_chroma(store: LocalSkillStore) -> None:
         pass
 
 
+def _sync_local_to_chroma_async(store: LocalSkillStore) -> None:
+    """T3-style: fork non-critical I/O off the session/turn critical path."""
+    try:
+        from aider.z.latency import latency_overlap_enabled, submit_background
+
+        if not latency_overlap_enabled():
+            _sync_local_to_chroma(store)
+            return
+        submit_background(_sync_local_to_chroma, store)
+    except Exception:
+        _sync_local_to_chroma(store)
+
+
 def load_skills_for_session(io=None) -> list[SkillIndexEntry]:
     """
     Build a lightweight skill index at session start:
       - scan ~/.z/skills/ (metadata only)
-      - upsert into ChromaDB
+      - upsert into ChromaDB (background — does not block first turn)
       - fetch workspace/personal index from z_server when signed in
     Full content is loaded later via metadata.path after a match.
     """
@@ -73,7 +86,7 @@ def load_skills_for_session(io=None) -> list[SkillIndexEntry]:
     merged = merge_index(local, remote)
     _SESSION_INDEX = merged
     _INJECTED_IDS.clear()
-    _sync_local_to_chroma(store)
+    _sync_local_to_chroma_async(store)
 
     if io and merged:
         io.tool_output(f"Skills: {len(merged)} available")
