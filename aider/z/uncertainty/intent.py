@@ -107,6 +107,20 @@ def extract_intent(
 
     resolved_mode = mode or "implement"
 
+    # Never fabricate a coding action from a greeting / small-talk turn.
+    try:
+        from aider.z.task_mode import looks_like_casual_chat, looks_like_ask_question
+
+        if looks_like_casual_chat(text) or (
+            looks_like_ask_question(text) and not forced_mode
+        ):
+            resolved_mode = "ask"
+            intent = TaskIntent(mode="ask", clauses=list(clauses))
+            intent.sync_buckets_from_clauses()
+            return intent
+    except Exception:
+        pass
+
     actionable = [c for c in clauses if c.kind in CHECKLIST_KINDS]
     if resolved_mode == "implement" and not actionable and text.strip():
         non_action = {c.kind for c in clauses}
@@ -133,15 +147,22 @@ def extract_intent(
                     )
                 )
         elif not clauses:
-            clauses.append(
-                TaskClause(
-                    text=text.strip(),
-                    kind="requested_action",
-                    polarity="required",
-                    confidence=0.55,
-                    source_span=(0, len(text)),
+            # Bare text with no clauses: only invent an action when it looks
+            # like a real coding request, not chat.
+            from aider.z.task_mode import has_implement_signal
+
+            if has_implement_signal(text) or len(text) > 40:
+                clauses.append(
+                    TaskClause(
+                        text=text.strip(),
+                        kind="requested_action",
+                        polarity="required",
+                        confidence=0.55,
+                        source_span=(0, len(text)),
+                    )
                 )
-            )
+            else:
+                resolved_mode = "ask"
 
     intent = TaskIntent(mode=resolved_mode, clauses=list(clauses))
     intent.sync_buckets_from_clauses()
