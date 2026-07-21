@@ -61,49 +61,51 @@ class TestZMascot(unittest.TestCase):
         spinner.start()
         spinner.stop()
 
-    def test_waiting_game_fallback_without_tty(self):
-        from aider.z.waiting_game import AgentRunnerGame, waiting_display
+    def test_waiting_spiral_fallback_without_tty(self):
+        from aider.z.waiting_game import SpiralWaiting, waiting_display
 
-        game = AgentRunnerGame("waiting")
-        game.is_tty = False
-        game.fancy = False
-        game.start()
-        self.assertIsNotNone(game._fallback)
-        game.stop()
+        spiral = SpiralWaiting("waiting")
+        spiral.is_tty = False
+        spiral.fancy = False
+        spiral.start()
+        self.assertIsNotNone(spiral._fallback)
+        spiral.stop()
         disp = waiting_display("x", interactive=False)
         self.assertIsInstance(disp, MascotSpinner)
         disp.is_tty = False
         disp.start()
         disp.stop()
 
-    def test_agent_runner_soft_finish_api(self):
-        from aider.z.waiting_game import AgentRunnerGame
+    def test_spiral_soft_finish_api(self):
+        from aider.z.waiting_game import SpiralWaiting
 
-        game = AgentRunnerGame("waiting")
-        game.fancy = False  # use fallback path so we don't touch the TTY
+        spiral = SpiralWaiting("waiting")
+        spiral.fancy = False  # use fallback path so we don't touch the TTY
         finished = []
-        game.onEndComplete(lambda: finished.append(1))
-        game.start()
-        game.notifyFinish()
+        spiral.onEndComplete(lambda: finished.append(1))
+        spiral.start()
+        spiral.notifyFinish()
         # Fallback notifyFinish fires end immediately
         self.assertTrue(finished)
-        game.stop()
+        spiral.stop()
 
-    def test_half_block_render_and_jump(self):
-        from aider.z.waiting_game import AgentRunnerGame, _render_half_block
+    def test_spiral_frame_renders_and_rotates(self):
+        from aider.z.waiting_game import render_spiral_frame, spiral_cells
 
-        lines = _render_half_block(
-            [["#F5A623", None], [None, "#161A2E"]]
-        )
-        self.assertEqual(len(lines), 1)
-        self.assertIn("▀", lines[0] + "▄")  # either half-block glyph used
+        cells = spiral_cells(0.0, size=7)
+        self.assertGreaterEqual(len(cells), 5)
+        frame_a = render_spiral_frame(0.0, "working", color=False, unicode_ok=False)
+        frame_b = render_spiral_frame(1.7, "working", color=False, unicode_ok=False)
+        self.assertEqual(len(frame_a), 8)  # 7 rows + label
+        self.assertTrue(any("@" in line or "*" in line or "." in line for line in frame_a[:7]))
+        # Rotation should move at least one cell
+        self.assertNotEqual("\n".join(frame_a[:7]), "\n".join(frame_b[:7]))
+        # Thin arm — should not fill most of the canvas
+        self.assertLess(len(cells), 22)
 
-        game = AgentRunnerGame("waiting")
-        game.state.phase = "running"
-        game._jump()
-        self.assertGreater(game.state.vel_y, 0)
-        game._physics(0.08, spawning=False)
-        self.assertGreaterEqual(game.state.score, 0)
+        from aider.z.waiting_game import AgentRunnerGame, SpiralWaiting
+
+        self.assertIs(AgentRunnerGame, SpiralWaiting)
 
 
 class TestZBanner(unittest.TestCase):
