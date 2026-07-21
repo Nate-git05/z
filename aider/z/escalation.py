@@ -28,12 +28,14 @@ def render_escalation(
     context: str | None = None,
     options: list[str] | None = None,
     pretty: bool = True,
+    accent_context: bool = False,
 ) -> None:
     """
     Render an escalation prompt as an orange-bordered box.
 
     Distinct from normal tool output so the user immediately sees that
-    attention is required. Plan/context body uses off-white, not warning orange.
+    attention is required. Compact plan/context body uses off-white by default;
+    pass ``accent_context=True`` for View-full-plan (developer asked for orange).
     """
     console = console or Console()
 
@@ -58,13 +60,14 @@ def render_escalation(
     body.append((question or "").strip() + "\n", style=Style(color=TEXT))
     if context:
         body.append("\n", style=Style(color=TEXT))
-        # Status/off-white — not accent (so the plan body is not a wall of orange)
-        body.append((context or "").strip() + "\n", style=Style(color=TEXT_MUTED))
+        ctx_style = Style(color=ACCENT) if accent_context else Style(color=TEXT_MUTED)
+        body.append((context or "").strip() + "\n", style=ctx_style)
     if options:
         body.append("\n", style=Style(color=TEXT))
         for opt in options:
             body.append("  ▸ ", style=Style(color=ACCENT))
-            body.append(opt + "\n", style=Style(color=TEXT))
+            # Option labels stay accent so Y/N/C/V affordances read as part of the ask
+            body.append(opt + "\n", style=Style(color=ACCENT_BRIGHT))
 
     console.print(
         Panel(

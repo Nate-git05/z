@@ -73,7 +73,6 @@ def _ansi_color(hex_color: str) -> str:
 
 
 _ANSI_RESET = "\033[0m"
-_ANSI_DIM = "\033[38;2;201;106;43m"  # accent orange — grey was unreadable
 
 
 class MascotSpinner:
@@ -82,6 +81,7 @@ class MascotSpinner:
 
     Drop-in replacement for WaitingSpinner: start()/stop() and context manager.
     Used by ``waiting_display`` for model waits; drop-in for WaitingSpinner.
+    Plain orange foreground only — no reverse/highlight background.
     """
 
     def __init__(self, text: str = "Working", delay: float = 0.18):
@@ -133,26 +133,31 @@ class MascotSpinner:
                 plain = frame[:max_width]
 
         padding = " " * max(0, self.last_display_len - len(plain))
-        colored = (
-            f"{self._accent}{frame}{_ANSI_RESET}"
-            f"{_ANSI_DIM}{plain[len(frame):]}{_ANSI_RESET}"
-        )
+        # Entire status line = orange FG only (no reverse / no bgcolor).
+        colored = f"{self._accent}{plain}{_ANSI_RESET}"
         sys.stdout.write(f"\r{colored}{padding}")
         sys.stdout.flush()
         self.last_display_len = len(plain)
 
     def end(self) -> None:
-        if self.visible and self.is_tty:
-            sys.stdout.write("\r" + " " * self.last_display_len + "\r")
+        if self.is_tty:
+            # Always clear the status row — even if visible was False mid-race —
+            # so confirm prompts never share a line with a stale Planning frame.
+            clear_len = max(self.last_display_len, 80)
+            sys.stdout.write("\r" + " " * clear_len + "\r\n")
             sys.stdout.flush()
-            self.console.show_cursor(True)
+            try:
+                self.console.show_cursor(True)
+            except Exception:
+                pass
         self.visible = False
+        self.last_display_len = 0
 
     def _spin(self):
         while not self._stop_event.is_set():
             self.step()
             time.sleep(self.delay)
-        self.end()
+        # end() is called from stop() after join — avoid double-clear here
 
     def start(self):
         if self._thread is not None and self._thread.is_alive():
@@ -165,8 +170,10 @@ class MascotSpinner:
     def stop(self):
         self._stop_event.set()
         if self._thread is not None and self._thread.is_alive():
-            self._thread.join(timeout=self.delay * 2)
+            # Join long enough that a mid-frame write cannot land after clear
+            self._thread.join(timeout=max(1.0, self.delay * 6))
         self.end()
+        self._thread = None
 
     def __enter__(self):
         self.start()

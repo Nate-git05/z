@@ -601,14 +601,25 @@ class InputOutput:
         return orch.pop_queued()
 
     def _ensure_prompt_ready(self, kind: str = "confirm"):
-        """Stop agent busy chrome before any interactive prompt (WaitingInput)."""
-        orch = getattr(self, "turn_orchestrator", None)
-        if orch is not None:
-            from aider.z.turn_ux import TurnState
+        """
+        Enter WaitingInput and kill Busy chrome before any interactive prompt.
 
-            if orch.state == TurnState.BUSY:
-                self.stop_busy_queue_reader()
-                orch.enter_waiting_input(kind)
+        Never leave a Planning / Ctrl+C spinner running over a Y/N panel —
+        that collision is what made Create-file confirms look still-running.
+        """
+        self._resume_queue_after_prompt = False
+        check = getattr(self, "_busy_spinner_active", None)
+        if callable(check):
+            try:
+                self._resume_queue_after_prompt = bool(check())
+            except Exception:
+                self._resume_queue_after_prompt = False
+
+        # Always halt queue reader + spinner, regardless of orchestrator state.
+        try:
+            self.stop_busy_queue_reader()
+        except Exception:
+            pass
         self.agent_busy = False
         stopper = getattr(self, "_stop_agent_busy", None)
         if callable(stopper):
@@ -616,9 +627,30 @@ class InputOutput:
                 stopper()
             except Exception:
                 pass
+        # Belt-and-suspenders: clear any leftover \r status row
+        try:
+            import sys
+
+            sys.stdout.write("\r\n")
+            sys.stdout.flush()
+        except Exception:
+            pass
+
+        orch = getattr(self, "turn_orchestrator", None)
+        if orch is not None:
+            try:
+                orch.enter_waiting_input(kind)
+            except Exception:
+                pass
 
     def _restore_after_prompt(self):
-        """Leave WaitingInput → Busy (queue kept); restart queue reader if needed."""
+        """
+        Leave WaitingInput → Busy (queue kept).
+
+        Do **not** restart the mascot spinner here — that reintroduced
+        "Planning · Ctrl+C" over the next Create-file confirm. Only resume
+        the queue reader when a live Busy spinner was active before the ask.
+        """
         orch = getattr(self, "turn_orchestrator", None)
         if orch is None:
             return
@@ -627,8 +659,23 @@ class InputOutput:
         if orch.state != TurnState.WAITING_INPUT:
             return
         phase = orch.leave_waiting_input()
-        if phase and turn_queue_enabled(z_theme=bool(getattr(self, "z_theme", True))):
-            self.start_busy_queue_reader()
+        resume = bool(getattr(self, "_resume_queue_after_prompt", False))
+        self._resume_queue_after_prompt = False
+        if (
+            resume
+            and phase
+            and turn_queue_enabled(z_theme=bool(getattr(self, "z_theme", True)))
+        ):
+            # Only if a spinner is still the live Busy owner
+            check = getattr(self, "_busy_spinner_active", None)
+            still = False
+            if callable(check):
+                try:
+                    still = bool(check())
+                except Exception:
+                    still = False
+            if still:
+                self.start_busy_queue_reader()
 
     def _waiting_input_scope(self, kind: str = "confirm"):
         """Context manager: Busy → WaitingInput → restore Busy (queue frozen)."""
@@ -1227,6 +1274,8 @@ class InputOutput:
                     pretty=True,
                 )
                 escalation_shown = True
+                # Orange affordance line so Y/N/C/V isn't lost in status chrome
+                self.tool_warning("(Y)es  (N)o  (C)hange  (V)iew")
             elif "\n" in subject:
                 lines = subject.splitlines()
                 max_length = max(len(line) for line in lines)
@@ -1420,7 +1469,10 @@ class InputOutput:
         if self.pretty:
             if self.tool_output_color:
                 style["color"] = ensure_hash_prefix(self.tool_output_color)
-            style["reverse"] = bold
+            # Bold = brighter weight only. Never reverse/invert — that reads as a
+            # yellow highlight bar instead of orange text.
+            if bold:
+                style["bold"] = True
 
         style = RichStyle(**style)
         self.console.print(*messages, style=style)
