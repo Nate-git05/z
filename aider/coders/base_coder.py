@@ -48,7 +48,6 @@ from aider.repomap import RepoMap
 from aider.run_cmd import run_cmd
 from aider.utils import format_content, format_messages, format_tokens, is_image_file
 from aider.waiting import WaitingSpinner
-from aider.z.mascot import MascotSpinner
 from aider.z.waiting_game import waiting_display
 
 from ..dump import dump  # noqa: F401
