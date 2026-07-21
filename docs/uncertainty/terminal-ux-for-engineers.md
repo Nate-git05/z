@@ -1,6 +1,6 @@
 # Terminal UX for software engineers
 
-**Status:** design — not implemented  
+**Status:** design — P0/P1 implemented (see tranche links); P2 open  
 **Audience:** people shipping product code with Z in a TTY  
 **Non-goals:** landing page, marketing, web dashboard
 
@@ -201,13 +201,15 @@ Document this next to NI gate UX (`fault-plan-ni-verify-skills-gate.md`).
 2. Compact-first plan confirm (+ optional View)  
 3. Collapse pre-turn prints into preamble / spinner  
 
-**Extensive implementation plan (no code yet):** [terminal-ux-p0-plan.md](./terminal-ux-p0-plan.md)
+**Extensive plan:** [terminal-ux-p0-plan.md](./terminal-ux-p0-plan.md) · **Implemented:** #133
 
 ### P1 — Orientation
 
 4. Prompt mode chrome + `/plan` in mode help  
 5. Usage report opt-in  
 6. History mirroring filter  
+
+**Extensive plan:** [terminal-ux-p1-plan.md](./terminal-ux-p1-plan.md) · **Implemented:** this PR (on top of P0)
 
 ### P2 — Triage polish
 
@@ -243,7 +245,7 @@ Document this next to NI gate UX (`fault-plan-ni-verify-skills-gate.md`).
 
 ## 15. Open questions
 
-Resolved for P0 in [terminal-ux-p0-plan.md](./terminal-ux-p0-plan.md) §2 (View letter, status hex `#D8D8D8`, thin checklist in panel). Remaining for P1+:
+Resolved for P0 in [terminal-ux-p0-plan.md](./terminal-ux-p0-plan.md) §2 (View letter, status hex `#D8D8D8`, thin checklist in panel).  
+Resolved for P1 in [terminal-ux-p1-plan.md](./terminal-ux-p1-plan.md) §2 (`PLAN›`/`ASK›`/`›`, usage default-off, history filter). Remaining:
 
-1. Should ambiguous noun phrases (`users and sessions`) stay IMPLEMENT or become ASK? (Today: IMPLEMENT.)  
-2. Prompt chrome exact strings (`PLAN›` vs `plan |`).
+1. Should ambiguous noun phrases (`users and sessions`) stay IMPLEMENT or become ASK? (Today: IMPLEMENT.)

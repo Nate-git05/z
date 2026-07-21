@@ -792,6 +792,12 @@ def get_parser(default_config_files, git_root):
         default=False,
     )
     group.add_argument(
+        "--show-cost",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Show token/cost usage after each LLM round (default: False; also Z_SHOW_USAGE=1)",
+    )
+    group.add_argument(
         "--load",
         metavar="LOAD_FILE",
         help="Load and execute /commands from a file on launch",

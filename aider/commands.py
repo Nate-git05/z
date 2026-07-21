@@ -158,6 +158,13 @@ class Commands:
                 ("ask", "Ask questions about your code without making any changes."),
                 ("code", "Ask for changes to your code (using the best edit format)."),
                 (
+                    "plan",
+                    (
+                        "Plan interview (clarify → draft → approve); product edits"
+                        " blocked until /plan-exit."
+                    ),
+                ),
+                (
                     "architect",
                     (
                         "Work with an architect model to design code changes, and an editor to make"
@@ -188,14 +195,30 @@ class Commands:
 
             return
 
+        if ef == "plan":
+            return self._enter_plan_mode()
+
         summarize_from_coder = True
         edit_format = ef
 
         if ef == "code":
             edit_format = self.coder.main_model.edit_format
             summarize_from_coder = False
+            self.coder.forced_task_mode = None
+            self._emit_mode_status("CODE")
         elif ef == "ask":
             summarize_from_coder = False
+            self.coder.forced_task_mode = None
+            self._emit_mode_status("ASK")
+        elif ef == "context":
+            self.coder.forced_task_mode = None
+            self._emit_mode_status("ASK")
+        elif ef == "help":
+            self.coder.forced_task_mode = None
+            self._emit_mode_status("HELP")
+        else:
+            # Leaving sticky plan when switching to another edit format
+            self.coder.forced_task_mode = None
 
         raise SwitchCoder(
             edit_format=edit_format,
@@ -1283,27 +1306,39 @@ class Commands:
 
         return self._generic_chat_command(args, "ask", task_mode=TaskMode.ASK)
 
+    def _emit_mode_status(self, mode, plan_stage=None):
+        from aider.z.ux_prompt import format_mode_status_line
+
+        self.io.session_note(
+            format_mode_status_line(mode=mode, plan_stage=plan_stage)
+        )
+
+    def _enter_plan_mode(self):
+        """Sticky plan mode shared by `/plan` and `/chat-mode plan`."""
+        from aider.z.plan_interview import PlanInterviewStage, plan_interview_enabled
+        from aider.z.task_mode import TaskMode
+
+        self.coder.forced_task_mode = TaskMode.PLAN
+        self.coder.task_mode = TaskMode.PLAN
+        stage = None
+        if plan_interview_enabled():
+            self.coder._plan_interview_stage = PlanInterviewStage.CLARIFY
+            self.coder._plan_clarify_asked = False
+            stage = PlanInterviewStage.CLARIFY.value
+        try:
+            self.coder._inject_plan_mode_reminder()
+        except Exception:
+            pass
+        self._emit_mode_status("PLAN", plan_stage=stage)
+        return
+
     def cmd_plan(self, args):
         """Enter plan interview (clarify → draft → approve). Product edits blocked until `/plan-exit`."""  # noqa
         from aider.z.plan_interview import PlanInterviewStage, plan_interview_enabled
         from aider.z.task_mode import TaskMode
 
         if not (args or "").strip():
-            self.coder.forced_task_mode = TaskMode.PLAN
-            self.coder.task_mode = TaskMode.PLAN
-            if plan_interview_enabled():
-                self.coder._plan_interview_stage = PlanInterviewStage.CLARIFY
-                self.coder._plan_clarify_asked = False
-            try:
-                self.coder._inject_plan_mode_reminder()
-            except Exception:
-                pass
-            self.io.tool_output(
-                "Switched to plan mode (product edits blocked). "
-                "Interview: clarify → draft → /plan-exit. "
-                "Describe the task, then `/plan-exit` when the plan is ready."
-            )
-            return
+            return self._enter_plan_mode()
 
         if plan_interview_enabled():
             self.coder._plan_interview_stage = PlanInterviewStage.CLARIFY
@@ -1409,6 +1444,8 @@ class Commands:
         self.coder._plan_interview_stage = None
         self.coder._plan_clarify_asked = False
 
+        self._emit_mode_status("CODE")
+
         if plan_text:
             block = format_plan_exit_context(plan_text, plan_path=plan_path)
             self.coder.cur_messages += [
@@ -1425,8 +1462,8 @@ class Commands:
             if eng is not None and getattr(eng, "ctx", None) is not None:
                 eng.ctx.plan_approved = True
                 eng.ctx.plan_required = False
-            self.io.tool_output(
-                f"Plan exit — loaded {plan_path or '(inline)'}; switching to code mode."
+            self.io.session_note(
+                f"Plan exit — loaded {plan_path or '(inline)'}"
             )
 
         prompt = extra or "Implement the approved plan."

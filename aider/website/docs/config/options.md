@@ -719,6 +719,12 @@ Aliases:
   - `-v`
   - `--verbose`
 
+### `--show-cost`
+Show token/cost usage after each LLM round  
+Default: False  
+Environment variable: `AIDER_SHOW_COST`  
+Also enabled by `Z_SHOW_USAGE=1`.
+
 ### `--load LOAD_FILE`
 Load and execute /commands from a file on launch  
 Environment variable: `AIDER_LOAD`  

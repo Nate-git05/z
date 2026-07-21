@@ -122,8 +122,9 @@ class Coder:
     commit_language = None
     file_watcher = None
     task_mode = None  # aider.z.task_mode.TaskMode — per-message, not sticky
-    forced_task_mode = None  # set only by explicit /ask|/context command path
+    forced_task_mode = None  # sticky TaskMode from /plan (and one-shot /ask|/plan with args)
     task_intent = None  # aider.z.uncertainty.intent.TaskIntent
+    show_cost = False  # P1: print Tokens/Cost when True (also Z_SHOW_USAGE / io.show_cost)
     _shell_class_approvals = None  # session: risk_class → bool
 
     @classmethod
@@ -196,6 +197,20 @@ class Coder:
             if hasattr(coder, "edit_format") and coder.edit_format == edit_format:
                 res = coder(main_model, io, **kwargs)
                 res.original_kwargs = dict(kwargs)
+                # Preserve sticky plan / cost chrome across SwitchCoder
+                if from_coder is not None:
+                    ft = getattr(from_coder, "forced_task_mode", None)
+                    if ft is not None:
+                        res.forced_task_mode = ft
+                    if getattr(from_coder, "show_cost", False):
+                        res.show_cost = True
+                    for attr in (
+                        "_plan_interview_stage",
+                        "_plan_clarify_asked",
+                        "_active_plan_path",
+                    ):
+                        if hasattr(from_coder, attr):
+                            setattr(res, attr, getattr(from_coder, attr))
                 return res
 
         valid_formats = [
@@ -1138,6 +1153,14 @@ class Coder:
         read_only_files = [self.get_rel_fname(fname) for fname in self.abs_read_only_fnames]
         all_files = sorted(set(inchat_files + read_only_files))
         edit_format = "" if self.edit_format == self.main_model.edit_format else self.edit_format
+        from aider.z.ux_prompt import resolve_prompt_chrome
+
+        prompt_chrome = resolve_prompt_chrome(
+            forced_task_mode=getattr(self, "forced_task_mode", None),
+            edit_format=self.edit_format,
+            default_edit_format=getattr(self.main_model, "edit_format", None),
+            multiline=bool(getattr(self.io, "multiline_mode", False)),
+        )
         return self.io.get_input(
             self.root,
             all_files,
@@ -1145,6 +1168,7 @@ class Coder:
             self.commands,
             self.abs_read_only_fnames,
             edit_format=edit_format,
+            prompt_chrome=prompt_chrome,
         )
 
     def preproc_user_input(self, inp):
@@ -4146,7 +4170,10 @@ class Coder:
         self.total_tokens_sent += self.message_tokens_sent
         self.total_tokens_received += self.message_tokens_received
 
-        self.io.tool_output(self.usage_report)
+        from aider.z.ux_flags import show_usage_enabled
+
+        if show_usage_enabled(coder=self, io=self.io):
+            self.io.tool_output(self.usage_report)
 
         prompt_tokens = self.message_tokens_sent
         completion_tokens = self.message_tokens_received
