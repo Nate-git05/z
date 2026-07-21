@@ -1,0 +1,29 @@
+{
+  "id": "p2-009-review-config-api",
+  "task_type": "review",
+  "fixture_repo": "configpkg",
+  "task_prompt": "Review whether Config.get_value naming is clear for new callers. Read-only.",
+  "hidden_tests": [],
+  "expected_edit_scope": "none",
+  "ground_truth_root_cause": null,
+  "known_traps": [],
+  "intended_clauses": [
+    {
+      "kind": "requested_action",
+      "text": "review code"
+    },
+    {
+      "kind": "constraint",
+      "text": "do not edit"
+    }
+  ],
+  "scripted": {
+    "review_findings": [
+      "Found maintainability / correctness concern"
+    ],
+    "shell_commands": [
+      "git status"
+    ],
+    "claim_complete": true
+  }
+}

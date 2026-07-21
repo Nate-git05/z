@@ -1,0 +1,45 @@
+{
+  "id": "p2-013-bugfix-average-with-node",
+  "task_type": "bugfix",
+  "fixture_repo": "calc",
+  "task_prompt": "Fix average off-by-one. After confirming the cause, only then make changes. Run tests to verify.",
+  "hidden_tests": [
+    "hidden_tests"
+  ],
+  "expected_edit_scope": "narrow",
+  "allowed_edit_globs": [
+    "calcpkg/ops.py"
+  ],
+  "ground_truth_root_cause": "average divides by len(nums)-1 off-by-one when length > 1",
+  "known_traps": [
+    "P1.2 uncertainty node resolution within live run",
+    "P1.1 process_rule"
+  ],
+  "intended_clauses": [
+    {
+      "kind": "requested_action",
+      "text": "Fix average off-by-one"
+    },
+    {
+      "kind": "process_rule",
+      "text": "After confirming the cause, only then make changes",
+      "evidence_source": "session"
+    },
+    {
+      "kind": "acceptance_criterion",
+      "text": "Run tests to verify"
+    }
+  ],
+  "scripted": {
+    "file_edits": {
+      "calcpkg/ops.py": "\"\"\"Arithmetic helpers.\"\"\"\n\n\ndef add(a, b):\n    return a + b\n\n\ndef divide(a, b):\n    if b == 0:\n        raise ZeroDivisionError(\"b must be non-zero\")\n    return a / b\n\n\ndef average(nums):\n    \"\"\"Return the arithmetic mean of nums.\"\"\"\n    if not nums:\n        raise ValueError(\"nums must be non-empty\")\n    return sum(nums) / len(nums)\n"
+    },
+    "root_cause_statement": "average divides by len(nums)-1 off-by-one when length > 1",
+    "shell_commands": [
+      "python -m unittest discover -s tests -v"
+    ],
+    "create_uncertainty_node": true,
+    "resolve_uncertainty_node": true,
+    "claim_complete": true
+  }
+}

@@ -308,8 +308,7 @@ def infer_capabilities(
                 support = tuple(
                     dict.fromkeys(
                         list(existing.supporting_requirement_ids or ())
-                        + (existing.requirement_id,)
-                        + (clause.id,)
+                        + [existing.requirement_id, clause.id]
                     )
                 )
                 by_id[cap_id] = Capability(

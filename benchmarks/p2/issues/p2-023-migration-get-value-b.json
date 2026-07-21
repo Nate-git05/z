@@ -1,0 +1,35 @@
+{
+  "id": "p2-023-migration-get-value-b",
+  "task_type": "migration",
+  "fixture_repo": "configpkg",
+  "task_prompt": "Rename get_value to get on Config and update cfg/app.py call sites. Use rg/git status freely; run unittest discover after edits.",
+  "hidden_tests": [
+    "hidden_tests"
+  ],
+  "expected_edit_scope": "broad",
+  "allowed_edit_globs": [
+    "cfg/*.py"
+  ],
+  "known_traps": [
+    "P0.5 read-only commands should not interrupt"
+  ],
+  "intended_clauses": [
+    {
+      "kind": "requested_action",
+      "text": "Rename get_value to get"
+    }
+  ],
+  "scripted": {
+    "file_edits": {
+      "cfg/settings.py": "\"\"\"Config API \u2014 get() is the supported accessor.\"\"\"\n\n\nclass Config:\n    def __init__(self, data=None):\n        self._data = dict(data or {})\n\n    def get(self, key, default=None):\n        return self._data.get(key, default)\n\n    # Keep alias briefly for external callers outside this fixture package\n    get_value = get\n\n    def set_value(self, key, value):\n        self._data[key] = value\n",
+      "cfg/app.py": "from .settings import Config\n\n\ndef load_port():\n    c = Config({\"port\": 8080})\n    return c.get(\"port\")\n\n\ndef load_host():\n    c = Config({\"host\": \"localhost\"})\n    return c.get(\"host\", \"127.0.0.1\")\n"
+    },
+    "shell_commands": [
+      "git status",
+      "rg get_value cfg",
+      "rg get_value",
+      "python -m unittest discover -s tests -v"
+    ],
+    "claim_complete": true
+  }
+}

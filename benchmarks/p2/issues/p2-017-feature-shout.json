@@ -1,0 +1,38 @@
+{
+  "id": "p2-017-feature-shout",
+  "task_type": "feature",
+  "fixture_repo": "greeter",
+  "task_prompt": "Add shout(name) to greetpkg.hello that returns the uppercased name with a trailing '!'. Do not change greet().",
+  "hidden_tests": [
+    "hidden_tests"
+  ],
+  "expected_edit_scope": "narrow",
+  "allowed_edit_globs": [
+    "greetpkg/hello.py"
+  ],
+  "ground_truth_root_cause": null,
+  "known_traps": [],
+  "intended_clauses": [
+    {
+      "kind": "requested_action",
+      "text": "Add shout(name)"
+    },
+    {
+      "kind": "acceptance_criterion",
+      "text": "uppercased with trailing !"
+    },
+    {
+      "kind": "constraint",
+      "text": "Do not change greet()"
+    }
+  ],
+  "scripted": {
+    "file_edits": {
+      "greetpkg/hello.py": "\"\"\"Greeting helpers \u2014 feature work targets this module.\"\"\"\n\n\ndef greet(name: str) -> str:\n    return f\"Hello, {name}!\"\n\n\ndef shout(name: str) -> str:\n    return f\"{name.upper()}!\"\n"
+    },
+    "shell_commands": [
+      "python -m unittest discover -s tests -v"
+    ],
+    "claim_complete": true
+  }
+}

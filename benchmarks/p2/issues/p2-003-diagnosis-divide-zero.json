@@ -1,0 +1,28 @@
+{
+  "id": "p2-003-diagnosis-divide-zero",
+  "task_type": "diagnosis",
+  "fixture_repo": "calc",
+  "task_prompt": "Explain how divide handles b=0. Read-only \u2014 do not implement a fix.",
+  "hidden_tests": [],
+  "expected_edit_scope": "none",
+  "ground_truth_root_cause": "divide raises ZeroDivisionError when b is zero",
+  "known_traps": [],
+  "intended_clauses": [
+    {
+      "kind": "investigation_target",
+      "text": "how divide handles b=0",
+      "evidence_source": "code"
+    },
+    {
+      "kind": "constraint",
+      "text": "do not implement a fix"
+    }
+  ],
+  "scripted": {
+    "root_cause_statement": "divide raises ZeroDivisionError when b is zero",
+    "shell_commands": [
+      "rg ZeroDivisionError calcpkg"
+    ],
+    "claim_complete": true
+  }
+}

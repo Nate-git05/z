@@ -1,0 +1,49 @@
+{
+  "id": "p2-011-bugfix-average",
+  "task_type": "bugfix",
+  "fixture_repo": "calc",
+  "task_prompt": "average([2,4]) returns 4.0. I also noticed the API docs mention auth. Fix the average bug only \u2014 do not change divide, and do not touch auth.",
+  "hidden_tests": [
+    "hidden_tests"
+  ],
+  "expected_edit_scope": "narrow",
+  "allowed_edit_globs": [
+    "calcpkg/ops.py"
+  ],
+  "ground_truth_root_cause": "average divides by len(nums)-1 off-by-one when length > 1",
+  "known_traps": [
+    "P1.1 clause classification: observation + constraint + requested_action under noisy phrasing"
+  ],
+  "intended_clauses": [
+    {
+      "kind": "observation",
+      "text": "average([2,4]) returns 4.0"
+    },
+    {
+      "kind": "observation",
+      "text": "API docs mention auth"
+    },
+    {
+      "kind": "requested_action",
+      "text": "Fix the average bug"
+    },
+    {
+      "kind": "constraint",
+      "text": "do not change divide"
+    },
+    {
+      "kind": "constraint",
+      "text": "do not touch auth"
+    }
+  ],
+  "scripted": {
+    "file_edits": {
+      "calcpkg/ops.py": "\"\"\"Arithmetic helpers.\"\"\"\n\n\ndef add(a, b):\n    return a + b\n\n\ndef divide(a, b):\n    if b == 0:\n        raise ZeroDivisionError(\"b must be non-zero\")\n    return a / b\n\n\ndef average(nums):\n    \"\"\"Return the arithmetic mean of nums.\"\"\"\n    if not nums:\n        raise ValueError(\"nums must be non-empty\")\n    return sum(nums) / len(nums)\n"
+    },
+    "root_cause_statement": "average divides by len(nums)-1 off-by-one when length > 1",
+    "shell_commands": [
+      "python -m unittest discover -s tests -v"
+    ],
+    "claim_complete": true
+  }
+}

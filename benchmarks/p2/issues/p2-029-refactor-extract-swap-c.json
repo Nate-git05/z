@@ -1,0 +1,32 @@
+{
+  "id": "p2-029-refactor-extract-swap-c",
+  "task_type": "refactor",
+  "fixture_repo": "sorter",
+  "task_prompt": "Extract swap from the inline temp exchange in bubble.sort_list. Do not change sort order semantics. Re-run tests.",
+  "hidden_tests": [
+    "hidden_tests"
+  ],
+  "expected_edit_scope": "narrow",
+  "allowed_edit_globs": [
+    "sortpkg/bubble.py"
+  ],
+  "intended_clauses": [
+    {
+      "kind": "requested_action",
+      "text": "Extract swap"
+    },
+    {
+      "kind": "constraint",
+      "text": "Do not change sort order semantics"
+    }
+  ],
+  "scripted": {
+    "file_edits": {
+      "sortpkg/bubble.py": "\"\"\"Bubble sort with extracted swap helper \u2014 behavior unchanged.\"\"\"\n\n\ndef swap(xs, i, j):\n    xs[i], xs[j] = xs[j], xs[i]\n\n\ndef sort_list(items):\n    xs = list(items)\n    n = len(xs)\n    for i in range(n):\n        for j in range(0, n - i - 1):\n            if xs[j] > xs[j + 1]:\n                swap(xs, j, j + 1)\n    return xs\n"
+    },
+    "shell_commands": [
+      "python -m unittest discover -s tests -v"
+    ],
+    "claim_complete": true
+  }
+}

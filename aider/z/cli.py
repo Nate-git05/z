@@ -93,6 +93,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show per-detector disposition rates (ignored / force-commit / resolved)",
     )
 
+    bench = sub.add_parser(
+        "benchmark",
+        help="P2 software-engineering behavior benchmark (run/score/list)",
+    )
+    bench_sub = bench.add_subparsers(dest="bench_command")
+    bench_run = bench_sub.add_parser("run", help="Run the P2 benchmark suite")
+    bench_run.add_argument("--ids", nargs="*", default=None)
+    bench_run.add_argument("--no-baseline", action="store_true")
+    bench_run.add_argument("--parallel", type=int, default=1)
+    bench_run.add_argument("--results-dir", default=None)
+    bench_run.add_argument("--report", action="store_true")
+    bench_score = bench_sub.add_parser(
+        "score", help="Score a persisted run without re-executing"
+    )
+    bench_score.add_argument("results_path")
+    bench_list = bench_sub.add_parser("list", help="List benchmark issues")
+    bench_list.add_argument("--by-type", action="store_true")
+
     taxonomy = sub.add_parser(
         "taxonomy",
         help="Bug-concept taxonomy blind-spot candidates (read-only)",
@@ -360,6 +378,7 @@ def _print_help() -> None:
         "  z skill create \"how this repo validates Stripe webhooks\"\n"
         "  z skill list\n"
         "  z taxonomy review\n"
+        "  z benchmark run\n"
         "  z --model sonnet\n"
     )
 
@@ -434,6 +453,7 @@ def main(argv: list[str] | None = None) -> int | None:
         "skill",
         "taxonomy",
         "uncertainty",
+        "benchmark",
     }
 
     # Bare `z` (or agent flags) → login if needed, then start the coding agent
@@ -483,7 +503,35 @@ def dispatch(args) -> int:
         return cmd_taxonomy(io, args)
     if args.command == "uncertainty":
         return cmd_uncertainty(io, args)
+    if args.command == "benchmark":
+        return cmd_benchmark(io, args)
     return 1
+
+
+def cmd_benchmark(io, args) -> int:
+    from aider.z.benchmark.__main__ import main as bench_main
+
+    # Rebuild argv for the benchmark module parser
+    sub = getattr(args, "bench_command", None) or "run"
+    argv = [sub]
+    if sub == "run":
+        if getattr(args, "ids", None):
+            argv.append("--ids")
+            argv.extend(list(args.ids))
+        if getattr(args, "no_baseline", False):
+            argv.append("--no-baseline")
+        if getattr(args, "parallel", None):
+            argv.extend(["--parallel", str(args.parallel)])
+        if getattr(args, "results_dir", None):
+            argv.extend(["--results-dir", str(args.results_dir)])
+        if getattr(args, "report", False):
+            argv.append("--report")
+    elif sub == "score":
+        argv.append(args.results_path)
+    elif sub == "list":
+        if getattr(args, "by_type", False):
+            argv.append("--by-type")
+    return int(bench_main(argv) or 0)
 
 
 def cmd_taxonomy(io, args) -> int:

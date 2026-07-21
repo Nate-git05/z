@@ -163,6 +163,14 @@ it does not auto-tune thresholds yet.
 
 See [reliability-9.md](./reliability-9.md) for the Codex-gap roadmap.
 
+Control-flow and evidence phases:
+
+| Doc | Scope |
+|-----|--------|
+| [p0-control-flow.md](./p0-control-flow.md) | Modes, intent, async sync, shell risk |
+| [p1-evidence-lifecycle.md](./p1-evidence-lifecycle.md) | Clauses, resolution contracts, exceptions |
+| [p2-benchmark.md](./p2-benchmark.md) | Behavior benchmark harness + scoring |
+
 P0 subsystems:
 
 | Module | Role |

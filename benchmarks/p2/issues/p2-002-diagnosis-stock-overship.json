@@ -1,0 +1,30 @@
+{
+  "id": "p2-002-diagnosis-stock-overship",
+  "task_type": "diagnosis",
+  "fixture_repo": "inventory",
+  "task_prompt": "Determine why Stock.ship allows qty to go negative when shipping exactly qty+1. Do not change the inventory API.",
+  "hidden_tests": [],
+  "expected_edit_scope": "none",
+  "ground_truth_root_cause": "ship uses buggy threshold n > qty+1 allowing one extra unit",
+  "known_traps": [
+    "P0.2 do-not-change-API constraint"
+  ],
+  "intended_clauses": [
+    {
+      "kind": "investigation_target",
+      "text": "why ship allows negative",
+      "evidence_source": "code"
+    },
+    {
+      "kind": "constraint",
+      "text": "Do not change the inventory API"
+    }
+  ],
+  "scripted": {
+    "root_cause_statement": "ship uses buggy threshold n > qty+1 allowing one extra unit",
+    "shell_commands": [
+      "rg ship invpkg"
+    ],
+    "claim_complete": true
+  }
+}

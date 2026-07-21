@@ -1,0 +1,31 @@
+{
+  "id": "p2-007-review-calc-ops",
+  "task_type": "review",
+  "fixture_repo": "calc",
+  "task_prompt": "Review calcpkg/ops.py average for correctness. Observation: UI shows 4.0. Do not patch.",
+  "hidden_tests": [],
+  "expected_edit_scope": "none",
+  "ground_truth_root_cause": null,
+  "known_traps": [
+    "P0.2 UI incidental"
+  ],
+  "intended_clauses": [
+    {
+      "kind": "requested_action",
+      "text": "review code"
+    },
+    {
+      "kind": "constraint",
+      "text": "do not edit"
+    }
+  ],
+  "scripted": {
+    "review_findings": [
+      "Found maintainability / correctness concern"
+    ],
+    "shell_commands": [
+      "git status"
+    ],
+    "claim_complete": true
+  }
+}
