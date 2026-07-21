@@ -26,7 +26,17 @@ z benchmark run
 z benchmark score benchmarks/p2/results/run-<id>.jsonl
 ```
 
-CI uses the **scripted agent adapter**: real P0/P1 mode, intent, clause, and shell-risk classifiers, plus authored solutions per issue. A live LLM adapter can be plugged in later without changing scoring.
+CI uses the **scripted agent adapter**: real P0/P1 mode, intent, clause, and shell-risk classifiers, plus authored solutions per issue.
+
+Opt-in **live adapter skeleton** (tranche 3):
+
+```bash
+Z_P2_LIVE=1 Z_P2_LIVE_HOOK=/path/to/hook.py \
+  python -m aider.z.benchmark run --adapter live --ids <issue-id>
+```
+
+Without `Z_P2_LIVE=1`, `--adapter live` returns a timed-out stub so accidental CI
+selection cannot spend tokens. Scoring is unchanged.
 
 ## Design notes
 

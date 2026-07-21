@@ -1,5 +1,6 @@
 import difflib
 import math
+import os
 import re
 import sys
 from difflib import SequenceMatcher
@@ -43,6 +44,15 @@ class EditBlockCoder(Coder):
         passed = []
         updated_edits = []
 
+        # OpenCode-style: SEARCH applies to the named file only (default on).
+        # Disable with Z_STRICT_SEARCH=0 to restore cross-file chat fallback.
+        strict_search = os.environ.get("Z_STRICT_SEARCH", "1").strip().lower() not in (
+            "0",
+            "false",
+            "no",
+            "off",
+        )
+
         for edit in edits:
             path, original, updated = edit
             full_path = self.abs_root_path(path)
@@ -55,8 +65,8 @@ class EditBlockCoder(Coder):
             # If the edit failed, and
             # this is not a "create a new file" with an empty original...
             # https://github.com/Aider-AI/aider/issues/2258
-            if not new_content and original.strip():
-                # try patching any of the other files in the chat
+            if not new_content and original.strip() and not strict_search:
+                # Legacy: try patching any of the other files in the chat
                 for full_path in self.abs_fnames:
                     content = self.io.read_text(full_path)
                     new_content = do_replace(full_path, content, original, updated, self.fence)
