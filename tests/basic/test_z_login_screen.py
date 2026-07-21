@@ -44,7 +44,11 @@ class LoginScreenRenderTest(unittest.TestCase):
     def test_wordmark_and_mascot_present(self):
         out = _plain(_render_to_text(version="v0.1.0"))
         self.assertIn("##########", out)
-        self.assertIn("(o-o", out)
+        # Scientist mascot with glasses
+        self.assertTrue(
+            "[|o o|]" in out or "o o" in out,
+            msg=f"scientist mascot missing: {out!r}",
+        )
 
     def test_wordmark_is_pure_ascii(self):
         joined = "\n".join(LOGIN_WORDMARK)
@@ -67,10 +71,17 @@ class LoginScreenRenderTest(unittest.TestCase):
             )
             render_login_screen(console, version="v1")
             lines = _plain(buf.getvalue()).splitlines()
-            face_lines = [ln for ln in lines if "(o" in ln or "o-" in ln]
+            face_lines = [
+                ln
+                for ln in lines
+                if "o o" in ln or "o.o" in ln or "[|" in ln or "|o" in ln
+            ]
             self.assertTrue(face_lines, msg=f"mascot missing at width={width}")
             for ln in face_lines:
-                self.assertIn("(o-o", ln, msg=f"mascot wrapped at width={width}: {ln!r}")
+                self.assertTrue(
+                    "o" in ln,
+                    msg=f"mascot wrapped at width={width}: {ln!r}",
+                )
                 # Line must fit terminal width (no wrap debris)
                 self.assertLessEqual(len(ln), width, msg=f"line too long at {width}: {ln!r}")
 

@@ -49,6 +49,7 @@ from aider.run_cmd import run_cmd
 from aider.utils import format_content, format_messages, format_tokens, is_image_file
 from aider.waiting import WaitingSpinner
 from aider.z.mascot import MascotSpinner
+from aider.z.waiting_game import waiting_display
 
 from ..dump import dump  # noqa: F401
 from .chat_chunks import ChatChunks
@@ -2520,7 +2521,7 @@ class Coder:
         if self.show_pretty():
             spinner_text = "Waiting for " + self.main_model.name
             if getattr(self.io, "z_theme", True):
-                self.waiting_spinner = MascotSpinner(spinner_text)
+                self.waiting_spinner = waiting_display(spinner_text)
             else:
                 self.waiting_spinner = WaitingSpinner(spinner_text)
             self.waiting_spinner.start()
