@@ -165,6 +165,27 @@ class TaskModeTests(unittest.TestCase):
     def test_ambiguous_defaults_to_implement(self):
         self.assertEqual(classify_task_mode(None, "users and sessions"), TaskMode.IMPLEMENT)
 
+    def test_casual_chat_is_ask_not_plan(self):
+        from aider.z.task_mode import looks_like_casual_chat
+        from aider.z.uncertainty.intent import extract_intent
+
+        for msg in ("hello", "hi", "hey!", "thanks", "ok", "good morning"):
+            self.assertTrue(looks_like_casual_chat(msg), msg)
+            self.assertEqual(classify_task_mode(None, msg), TaskMode.ASK, msg)
+            intent = extract_intent(msg)
+            self.assertEqual(intent.mode, "ask", msg)
+            self.assertFalse(intent.requested_actions, msg)
+            self.assertFalse(TaskMode.ASK.allows_planning)
+            self.assertFalse(TaskMode.ASK.allows_requirement_decomposition)
+
+    def test_pure_question_is_ask(self):
+        self.assertEqual(
+            classify_task_mode(None, "What is an LRU cache?"),
+            TaskMode.ASK,
+        )
+        intent = extract_intent("What is an LRU cache?")
+        self.assertEqual(intent.mode, "ask")
+
     def test_mode_policy_properties(self):
         self.assertFalse(TaskMode.ASK.allows_planning)
         self.assertFalse(TaskMode.INVESTIGATE.allows_planning)

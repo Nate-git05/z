@@ -96,6 +96,60 @@ _IMPLEMENT_RE = re.compile(
     r")\b"
 )
 
+# Casual chat / small-talk — must NOT open the implementation plan UX.
+_CASUAL_CHAT_RE = re.compile(
+    r"(?i)^\s*("
+    r"hi|hello|hey|yo|sup|howdy|"
+    r"good\s+(?:morning|afternoon|evening|night)|"
+    r"how\s+are\s+you(?:\s+doing)?|what'?s\s+up|whats\s+up|"
+    r"thanks|thank\s+you|thx|ty|"
+    r"ok|okay|cool|nice|great|awesome|got\s+it|sounds?\s+good|"
+    r"bye|goodbye|see\s+ya|later"
+    r")(?:\s*[!.?]*)?\s*$"
+)
+_PURE_QUESTION_RE = re.compile(
+    r"(?i)^\s*(what|who|when|where|why|how|is|are|can|could|should|would|do|does|did)\b"
+)
+
+
+def has_implement_signal(user_message: str) -> bool:
+    """True when the message includes an implement/build/fix-style verb."""
+    return bool(_IMPLEMENT_RE.search(user_message or ""))
+
+
+def looks_like_casual_chat(user_message: str) -> bool:
+    """True for greetings / small-talk that should stay in ASK (no plan gate)."""
+    text = (user_message or "").strip()
+    if not text:
+        return False
+    if _CASUAL_CHAT_RE.match(text):
+        return True
+    # Ultra-short filler without any implement/investigate signal
+    if (
+        len(text) <= 16
+        and len(text.split()) <= 3
+        and not _IMPLEMENT_RE.search(text)
+        and not _INVESTIGATE_RE.search(text)
+        and not _VERIFY_RE.search(text)
+        and not _REVIEW_RE.search(text)
+        and not re.search(r"[/\\.`]", text)
+    ):
+        return True
+    return False
+
+
+def looks_like_ask_question(user_message: str) -> bool:
+    """Informational question with no implement/verify signal → ASK."""
+    text = (user_message or "").strip()
+    if not text or not _PURE_QUESTION_RE.match(text):
+        return False
+    if _IMPLEMENT_RE.search(text) or _VERIFY_RE.search(text) or _REVIEW_RE.search(text):
+        return False
+    # "why does X fail" investigate path handles separately
+    if _INVESTIGATE_RE.search(text):
+        return False
+    return True
+
 
 def classify_task_mode(
     edit_format: Optional[str],
@@ -109,7 +163,8 @@ def classify_task_mode(
     Priority:
       1. Explicit command via edit_format (ask/context → ASK)
       2. Intent.mode from structured extraction when provided
-      3. Conservative prompt heuristics; default IMPLEMENT
+      3. Conservative prompt heuristics; default IMPLEMENT for coding work,
+         but greetings / pure questions stay ASK (no plan UX)
     """
     fmt = (edit_format or "").strip().lower()
     if fmt in ("ask", "context"):
@@ -121,15 +176,24 @@ def classify_task_mode(
     if fmt == "plan":
         return TaskMode.PLAN
 
+    text = (user_message or "").strip()
+
+    # Greetings / small-talk win over a stale intent_mode=implement from
+    # fabricated clauses (see extract_intent).
+    if looks_like_casual_chat(text):
+        return TaskMode.ASK
+
     if intent_mode:
         try:
             return TaskMode(intent_mode)
         except ValueError:
             pass
 
-    text = (user_message or "").strip()
     if not text:
         return TaskMode.IMPLEMENT
+
+    if looks_like_ask_question(text):
+        return TaskMode.ASK
 
     # Explicit read-only / investigate without a competing implement request
     if _INVESTIGATE_RE.search(text) and not (
