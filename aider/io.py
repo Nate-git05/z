@@ -859,6 +859,17 @@ class InputOutput:
         else:
             question += options + f" [{default}]: "
 
+        # After a Rich escalation panel, keep the prompt_toolkit prompt SHORT.
+        # Feeding the full "Possible drift: …" string into prompt_session causes
+        # catastrophic wrap/redraw garble on terminal resize (SIGWINCH).
+        escalation_shown = False
+        if default.lower().startswith("y"):
+            short_cli_prompt = f"{options.strip()} [Yes]: "
+        elif default.lower().startswith("n"):
+            short_cli_prompt = f"{options.strip()} [No]: "
+        else:
+            short_cli_prompt = f"{options.strip()} [{default}]: "
+
         if subject:
             self.tool_output()
             if getattr(self, "z_theme", False) and self.pretty:
@@ -870,6 +881,7 @@ class InputOutput:
                     context=subject if isinstance(subject, str) else None,
                     pretty=True,
                 )
+                escalation_shown = True
             elif "\n" in subject:
                 lines = subject.splitlines()
                 max_length = max(len(line) for line in lines)
@@ -884,6 +896,9 @@ class InputOutput:
 
             q_display = question.split(" (Y)es")[0].strip() if " (Y)es" in question else question
             render_escalation(q_display, console=self.console, pretty=True)
+            escalation_shown = True
+
+        cli_prompt = short_cli_prompt if escalation_shown else question
 
         style = self._get_style()
 
@@ -908,12 +923,12 @@ class InputOutput:
                 try:
                     if self.prompt_session:
                         res = self.prompt_session.prompt(
-                            question,
+                            cli_prompt,
                             style=style,
                             complete_while_typing=False,
                         )
                     else:
-                        res = input(question)
+                        res = input(cli_prompt)
                 except EOFError:
                     # Non-interactive / piped stdin: fail loud instead of
                     # silently accepting the default and then exiting on the
@@ -1000,11 +1015,15 @@ class InputOutput:
         options = " (Y)es/(N)o/(C)hange/(V)iew"
         if default.lower().startswith("y"):
             prompt = f"{question}{options} [Yes]: "
+            short_cli_prompt = f"{options.strip()} [Yes]: "
         elif default.lower().startswith("n"):
             prompt = f"{question}{options} [No]: "
+            short_cli_prompt = f"{options.strip()} [No]: "
         else:
             prompt = f"{question}{options} [{default}]: "
+            short_cli_prompt = f"{options.strip()} [{default}]: "
 
+        escalation_shown = False
         if subject:
             self.tool_output()
             if getattr(self, "z_theme", False) and self.pretty:
@@ -1022,6 +1041,7 @@ class InputOutput:
                     ],
                     pretty=True,
                 )
+                escalation_shown = True
             elif "\n" in subject:
                 lines = subject.splitlines()
                 max_length = max(len(line) for line in lines)
@@ -1029,6 +1049,8 @@ class InputOutput:
                 self.tool_output("\n".join(padded_lines), bold=True)
             else:
                 self.tool_output(subject, bold=True)
+
+        cli_prompt = short_cli_prompt if escalation_shown else prompt
 
         valid = ("yes", "no", "change", "view")
         if self.yes is True:
@@ -1041,12 +1063,12 @@ class InputOutput:
                 try:
                     if self.prompt_session:
                         res = self.prompt_session.prompt(
-                            prompt,
+                            cli_prompt,
                             style=style,
                             complete_while_typing=False,
                         )
                     else:
-                        res = input(prompt)
+                        res = input(cli_prompt)
                 except EOFError:
                     interactive = False
                     try:

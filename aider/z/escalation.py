@@ -10,6 +10,17 @@ from rich.text import Text
 from .theme import ACCENT, ACCENT_BRIGHT, TEXT, TEXT_MUTED
 
 
+def _panel_width(console: Console) -> int | None:
+    """Fit the panel to the live terminal width so wrap matches the TTY."""
+    try:
+        w = int(getattr(console, "width", 0) or 0)
+    except Exception:
+        w = 0
+    if w < 40:
+        return None
+    return max(40, w - 1)
+
+
 def render_escalation(
     question: str,
     *,
@@ -42,12 +53,13 @@ def render_escalation(
     title.append("⚠ ", style=Style(color=ACCENT_BRIGHT, bold=True))
     title.append("Z needs your input", style=Style(color=ACCENT, bold=True))
 
-    body = Text()
-    body.append(question.strip() + "\n", style=Style(color=TEXT))
+    # Soft-fold long drift/plan lines so they wrap with the panel, not the CLI prompt
+    body = Text(overflow="fold", no_wrap=False)
+    body.append((question or "").strip() + "\n", style=Style(color=TEXT))
     if context:
         body.append("\n", style=Style(color=TEXT))
         # Status/off-white — not accent (so the plan body is not a wall of orange)
-        body.append(context.strip() + "\n", style=Style(color=TEXT_MUTED))
+        body.append((context or "").strip() + "\n", style=Style(color=TEXT_MUTED))
     if options:
         body.append("\n", style=Style(color=TEXT))
         for opt in options:
@@ -62,6 +74,7 @@ def render_escalation(
             padding=(1, 2),
             subtitle=Text("awaiting reply", style=Style(color=TEXT_MUTED, italic=True)),
             subtitle_align="right",
+            width=_panel_width(console),
         )
     )
 
@@ -74,5 +87,6 @@ def escalate_ask(io, question: str, *, context: str | None = None, default: str 
     pretty = getattr(io, "pretty", True)
     render_escalation(question, console=console, context=context, pretty=pretty)
     if hasattr(io, "prompt_ask"):
+        # Short prompt — long text already in the panel (avoids SIGWINCH garble)
         return io.prompt_ask("Your reply", default=default)
     return input("Your reply: ")
