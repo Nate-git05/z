@@ -59,6 +59,15 @@ class UncertaintyStore:
             node.created_by_session = self.created_by_session
         if not node.created_by_user and self.created_by_user:
             node.created_by_user = self.created_by_user
+        # P1.2 — every node gets a resolution contract at creation
+        try:
+            from .resolution import attach_contract_to_node
+
+            if not (node.signals or {}).get("resolution_contract"):
+                attach_contract_to_node(node)
+        except Exception:
+            # Contract attach is integrity-adjacent but must not drop the node
+            logger.debug("resolution contract attach failed for %s", node.id)
         is_new = node.id not in self.nodes
         self.nodes[node.id] = node
         self.save_local()
@@ -195,12 +204,27 @@ class UncertaintyStore:
             pass
 
     def merge_remote(self, remote_nodes: Iterable[dict]) -> int:
+        """
+        Merge workspace history. Temporary blockers are excluded (P1.2);
+        persistent risks are labeled as carried-over context.
+        """
         added = 0
         for raw in remote_nodes:
             try:
                 node = UncertaintyNode.from_dict(raw)
             except (KeyError, ValueError, TypeError):
                 continue
+            signals = dict(node.signals or {})
+            lifecycle = signals.get("lifecycle") or ""
+            expires = bool(signals.get("expires_after_task"))
+            # Temporary execution blockers must not leak across sessions
+            if lifecycle == "temporary_blocker" or (
+                expires and signals.get("shell_approval_block")
+            ):
+                continue
+            node.signals = signals
+            node.signals["carried_over"] = True
+            node.signals["lifecycle"] = signals.get("lifecycle") or "persistent_risk"
             existing = self.nodes.get(node.id)
             if not existing:
                 self.nodes[node.id] = node

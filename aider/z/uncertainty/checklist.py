@@ -458,22 +458,56 @@ def classify_requirement_kind(text: str) -> str:
     return "product"
 
 
-def decompose_request(title: str, user_message: str) -> TaskChecklist:
+def _clause_kind_to_requirement_kind(clause_kind: str) -> Optional[str]:
     """
-    Heuristic decomposition of a user request into discrete sub-requirements.
+    Map P1.1 TaskClause kinds onto checklist RequirementItem kinds.
 
-    Prefer explicit numbered/bulleted lists in the user message; otherwise split
-    on conjunctions and sentence boundaries into actionable checklist items.
+    Only checklist-eligible clause kinds return a value. Observations,
+    constraints, process rules, background, etc. are excluded (P1.1).
+    """
+    if clause_kind == "requested_action":
+        return "product"
+    if clause_kind == "acceptance_criterion":
+        return "quality"
+    if clause_kind == "investigation_target":
+        # Tracked separately for findings — not a completion checklist product item
+        return "investigation"
+    return None
 
-    Investigative clauses ("also check the vector-reallocation race in X") are
-    always lifted into their own ``investigation`` items even when embedded in
-    a longer bug-fix paragraph — so they cannot be silently skipped.
+
+def decompose_request(
+    title: str,
+    user_message: str,
+    *,
+    intent=None,
+    recent_messages: Optional[Sequence[str]] = None,
+) -> TaskChecklist:
+    """
+    Decompose a user request into checklist items from typed TaskClauses (P1.1).
+
+    Completion checklist includes only ``requested_action`` /
+    ``acceptance_criterion`` clauses. Observations, constraints, process rules,
+    and background never become checklist items.
     """
     text = (user_message or "").strip()
     items: List[RequirementItem] = []
     seen_texts: set[str] = set()
 
-    def _add(chunk: str, *, force_kind: Optional[str] = None) -> None:
+    # Prefer structured clauses from intent / extractor
+    try:
+        from .clause import CHECKLIST_KINDS, extract_clauses
+        from .intent import extract_intent
+
+        if intent is None:
+            intent = extract_intent(
+                text, recent_messages=list(recent_messages or ())
+            )
+        clauses = list(getattr(intent, "clauses", None) or extract_clauses(text))
+    except Exception:
+        clauses = []
+        intent = None
+
+    def _add_item(chunk: str, *, kind: str) -> None:
         chunk = (chunk or "").strip()
         if len(chunk) < 8:
             return
@@ -481,36 +515,90 @@ def decompose_request(title: str, user_message: str) -> TaskChecklist:
         if key in seen_texts:
             return
         seen_texts.add(key)
-        kind = force_kind or classify_requirement_kind(chunk)
         items.append(RequirementItem(text=chunk, kind=kind))
 
-    for line in text.splitlines():
-        m = re.match(r"^\s*(?:[-*]|\d+[.)])\s+(.+)$", line)
-        if m:
-            _add(m.group(1).strip())
+    if clauses:
+        for c in clauses:
+            # Checklist: only requested_action / acceptance_criterion
+            if getattr(c, "kind", None) in CHECKLIST_KINDS and getattr(
+                c, "polarity", "required"
+            ) != "prohibited":
+                rk = _clause_kind_to_requirement_kind(c.kind) or "product"
+                _add_item(c.text, kind=rk)
+            # Investigation targets become investigation items (finding-resolved)
+            elif getattr(c, "kind", None) == "investigation_target":
+                _add_item(c.text, kind="investigation")
+        # Stash non-checklist clauses on the checklist for downstream consumers
+        extras = [
+            c
+            for c in clauses
+            if c.kind
+            in (
+                "constraint",
+                "process_rule",
+                "observation",
+                "background",
+                "external_assumption",
+            )
+        ]
+    else:
+        # Legacy fallback if clause extraction unavailable
+        extras = []
 
-    if not items:
-        parts = re.split(r"(?:;|\.(?:\s|$)|(?:,\s*and\s+)|\band\bthen\b)", text)
-        for part in parts:
-            part = part.strip(" \n\t-")
-            if len(part) < 8:
-                continue
-            if part.lower() in {"please", "thanks", "thank you"}:
-                continue
-            chunk = part[0].upper() + part[1:]
-            _add(chunk)
+        def _add(chunk: str, *, force_kind: Optional[str] = None) -> None:
+            chunk = (chunk or "").strip()
+            if len(chunk) < 8:
+                return
+            key = chunk.lower()
+            if key in seen_texts:
+                return
+            seen_texts.add(key)
+            kind = force_kind or classify_requirement_kind(chunk)
+            # P1.1: never add observations/process-as-product via legacy path
+            if kind in ("process", "external_assumption") and force_kind is None:
+                return
+            if kind == "product" and re.search(
+                r"(?i)\bcurrently\s+(?:returns?|works?|fails?)\b|"
+                r"\bwas\s+reported\b|\bdo\s+not\b|\bonly\s+make\s+changes\s+after\b",
+                chunk,
+            ):
+                return
+            items.append(RequirementItem(text=chunk, kind=kind))
 
-    if not items and text:
-        _add(text[:500])
+        for line in text.splitlines():
+            m = re.match(r"^\s*(?:[-*]|\d+[.)])\s+(.+)$", line)
+            if m:
+                _add(m.group(1).strip())
+        if not items:
+            parts = re.split(r"(?:;|\.(?:\s|$)|(?:,\s*and\s+)|\band\bthen\b)", text)
+            for part in parts:
+                part = part.strip(" \n\t-")
+                if len(part) < 8:
+                    continue
+                if part.lower() in {"please", "thanks", "thank you"}:
+                    continue
+                chunk = part[0].upper() + part[1:]
+                _add(chunk)
+        if not items and text:
+            _add(text[:500])
+        for clause in extract_investigation_clauses(text):
+            _add(
+                clause[0].upper() + clause[1:] if clause else clause,
+                force_kind="investigation",
+            )
 
-    # Lift investigative hints even when the main sentence was classified product
-    for clause in extract_investigation_clauses(text):
-        _add(clause[0].upper() + clause[1:] if clause else clause, force_kind="investigation")
-
+    clause_list = list(clauses) if clauses else []
     return TaskChecklist(
         task_id=str(uuid.uuid4()),
         title=(title or text[:60] or "Task").strip(),
         items=items,
+        clauses=clause_list,
+        constraint_clauses=[
+            c for c in clause_list if getattr(c, "kind", None) == "constraint"
+        ],
+        process_rule_clauses=[
+            c for c in clause_list if getattr(c, "kind", None) == "process_rule"
+        ],
     )
 
 

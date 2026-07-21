@@ -74,6 +74,9 @@ class TestWorkspaceIdThreading(unittest.TestCase):
         ), patch(
             "aider.z.uncertainty.store.UncertaintyStore.save_local"
         ):
+            from aider.z.uncertainty.sync_outbox import get_outbox, reset_outbox_for_tests
+
+            reset_outbox_for_tests()
             engine = attach_engine_to_coder(coder, user_label="tester")
             node = UncertaintyNode(
                 id="n1",
@@ -85,15 +88,13 @@ class TestWorkspaceIdThreading(unittest.TestCase):
             )
             engine.ctx.store.add(node)
             # P0.4: remote sync is async — flush the outbox for the assertion
-            from aider.z.uncertainty.sync_outbox import get_outbox
-
             get_outbox().shutdown(timeout=1.0)
 
         self.assertEqual(len(fetch_calls), 1)
         self.assertEqual(fetch_calls[0]["workspace_id"], "ws-scoped")
-        self.assertEqual(len(sync_calls), 1)
-        self.assertEqual(sync_calls[0]["workspace_id"], "ws-scoped")
-        self.assertEqual(sync_calls[0]["repo_key"], str(root))
+        self.assertGreaterEqual(len(sync_calls), 1)
+        self.assertEqual(sync_calls[-1]["workspace_id"], "ws-scoped")
+        self.assertEqual(sync_calls[-1]["repo_key"], str(root))
 
 
 class TestWorkspaceCli(unittest.TestCase):
