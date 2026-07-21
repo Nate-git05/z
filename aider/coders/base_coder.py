@@ -3135,12 +3135,26 @@ class Coder:
                     self.reflected_message = gate_result.reflect_message
                     return
                 if not gate_result.allow_commit:
+                    from aider.z.uncertainty.gate import format_commit_blocked_message
+
                     detail = gate_result.reason or (
                         "Resolve high-risk issues, acknowledge medium-risk, "
-                        "or use --force-commit."
+                        "or use --force-commit / Z_FORCE_COMMIT."
                     )
-                    blocked_msg = f"Commit blocked by Z verification gate. {detail}"
-                    self.io.tool_error(blocked_msg)
+                    if getattr(gate_result, "block_ui_emitted", False):
+                        blocked_msg = (
+                            gate_result.block_message
+                            or format_commit_blocked_message(
+                                detail,
+                                dirty_count=len(commit_edited or []),
+                            )
+                        )
+                    else:
+                        blocked_msg = format_commit_blocked_message(
+                            detail,
+                            dirty_count=len(commit_edited or []),
+                        )
+                        self.io.tool_error(blocked_msg)
                     self.move_back_cur_messages(blocked_msg)
                     return
 

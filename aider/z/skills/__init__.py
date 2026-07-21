@@ -25,7 +25,7 @@ from .session import (
     select_relevant_skills,
 )
 from .store import LocalSkillStore, skills_dir
-from .vector import SkillVectorIndex, get_skill_vector_index
+from .vector import SkillVectorIndex, configure_chroma_telemetry, get_skill_vector_index
 
 __all__ = [
     "Skill",
@@ -40,6 +40,7 @@ __all__ = [
     "format_bug_pattern_hypothesis",
     "LocalSkillStore",
     "SkillVectorIndex",
+    "configure_chroma_telemetry",
     "skills_dir",
     "generate_skill",
     "load_skills_for_session",
