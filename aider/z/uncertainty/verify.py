@@ -114,6 +114,12 @@ class VerificationRecord:
     race_comparison: Optional[dict] = None
     # Full dynamic-risk taxonomy comparisons (concurrency / memory_safety / leaks)
     dynamic_comparisons: Optional[list] = None
+    # CMake / ctest honesty (verify-cmake slice)
+    reconfigured: bool = False
+    discovered_tests: List[str] = field(default_factory=list)
+    matched_change_tests: List[str] = field(default_factory=list)
+    cmake_reconfigure_command: Optional[str] = None
+    cmake_expected_tests: List[str] = field(default_factory=list)
     at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
@@ -130,6 +136,7 @@ class VerificationRecord:
             "build",
             "lint",
             "type_member",
+            "cmake_reconfigure",
         )
 
     @property
@@ -144,12 +151,22 @@ class VerificationRecord:
             "race_detection",
             "dynamic_analysis",
             "sanitizer",
+            "cmake_stale_suite",
+            "cmake_reconfigure",
         ):
             return False
         if self.relevant_preexisting:
             # New tests alone cannot substitute — pre-existing must have run green
             if not self.relevant_ran or self.relevant_passed is not True:
                 return False
+        # Change-scoped cmake tests required but missing → not a meaningful pass
+        if self.failure_kind == "cmake_stale_suite":
+            return False
+        if self.cmake_expected_tests and self.matched_change_tests is not None:
+            # When we recorded expected tests and none matched, fail closed
+            if self.cmake_expected_tests and not self.matched_change_tests:
+                if self.failure_kind == "cmake_stale_suite" or self.reconfigured:
+                    return False
         return (
             self.ran
             and self.state == VerifyState.TESTS_PASSED
@@ -249,6 +266,9 @@ def detect_test_command(root: Path) -> Optional[str]:
         return "swift test"
 
     if (root / "CMakeLists.txt").is_file() and (root / "build").is_dir():
+        return "ctest --test-dir build"
+    if (root / "CMakeLists.txt").is_file():
+        # No build/ yet — still prefer ctest after verify-cmake creates it
         return "ctest --test-dir build"
     if (root / "Makefile").is_file():
         try:
@@ -576,6 +596,8 @@ def verify_edits(
     skip_package_prechecks: bool = False,
     skip_type_members: bool = False,
     skip_relevant_execution: bool = False,
+    extra_text: str = "",
+    non_interactive: Optional[bool] = None,
 ) -> Tuple[VerificationRecord, List[str]]:
     """
     Full verification pass for a set of edited files.
@@ -583,6 +605,7 @@ def verify_edits(
     Order (fail fast):
       1. Local type-member ground truth (cheap, no subprocess)
       2. Nearest-package typecheck/build/lint
+      2b. CMake reconfigure when build-system files edited (before ctest)
       3. Package-local or root test suite
       4. Mandatory pre-existing relevant tests (cannot be substituted by new tests)
       5. Smoke imports / CLI
@@ -676,6 +699,75 @@ def verify_edits(
     if not cmd:
         cmd = detect_test_command(root)
 
+    # --- 2b/3a) CMake: reconfigure before ctest when build files edited -----
+    cmake_result = None
+    try:
+        from .cmake_verify import apply_cmake_result_to_record, prepare_cmake_verify
+
+        cmake_result = prepare_cmake_verify(
+            root,
+            edited,
+            test_cmd=cmd,
+            extra_text=extra_text or "",
+            verbose=verbose,
+            error_print=error_print,
+            non_interactive=non_interactive,
+        )
+        if cmake_result.applies and cmake_result.suggested_test_cmd:
+            cmd = cmake_result.suggested_test_cmd
+        if cmake_result.reconfigure_failed:
+            record = VerificationRecord(
+                ran=True,
+                command=cmake_result.reconfigure_command or "cmake -S . -B build",
+                exit_code=cmake_result.reconfigure_exit_code or 1,
+                passed=False,
+                state=VerifyState.BUILD_FAILED,
+                failure_kind="cmake_reconfigure",
+                output_excerpt=cmake_result.reconfigure_output or "",
+                error=cmake_result.error
+                or "cmake reconfigure failed after build-system edits",
+                prechecks=precheck_dicts,
+                relevant_tests=list(relevant),
+                relevant_preexisting=list(preexisting),
+                relevant_newly_written=list(newly_written),
+                reconfigured=False,
+                discovered_tests=list(cmake_result.discovered_tests),
+                matched_change_tests=list(cmake_result.matched_change_tests),
+                cmake_reconfigure_command=cmake_result.reconfigure_command,
+                cmake_expected_tests=list(cmake_result.expected_tests),
+            )
+            return record, relevant
+        if cmake_result.stale_suite:
+            record = VerificationRecord(
+                ran=True,
+                command=cmake_result.suggested_test_cmd or cmd or "ctest -N",
+                exit_code=1,
+                passed=False,
+                state=VerifyState.TESTS_FAILED,
+                failure_kind="cmake_stale_suite",
+                output_excerpt=(
+                    f"Expected: {', '.join(cmake_result.expected_tests) or '(none)'}\n"
+                    f"Discovered: {', '.join(cmake_result.discovered_tests) or '(none)'}\n"
+                    f"{cmake_result.reconfigure_output[-1500:]}"
+                ),
+                error=cmake_result.error
+                or "Change-scoped tests missing from ctest discovery",
+                prechecks=precheck_dicts,
+                relevant_tests=list(relevant),
+                relevant_preexisting=list(preexisting),
+                relevant_newly_written=list(newly_written),
+                reconfigured=bool(cmake_result.reconfigured),
+                discovered_tests=list(cmake_result.discovered_tests),
+                matched_change_tests=list(cmake_result.matched_change_tests),
+                cmake_reconfigure_command=cmake_result.reconfigure_command,
+                cmake_expected_tests=list(cmake_result.expected_tests),
+                tests_discovered=len(cmake_result.discovered_tests) or 0,
+                zero_tests=not bool(cmake_result.discovered_tests),
+            )
+            return record, relevant
+    except Exception:  # noqa: BLE001
+        cmake_result = None
+
     if not cmd:
         record = VerificationRecord(
             ran=False,
@@ -699,6 +791,8 @@ def verify_edits(
     record.relevant_tests = list(relevant)
     record.relevant_preexisting = list(preexisting)
     record.relevant_newly_written = list(newly_written)
+    if cmake_result is not None:
+        apply_cmake_result_to_record(record, cmake_result)
 
     # Root monorepo guard: don't treat "don't run npm test from root" as a
     # normal test failure — surface as runner/routing problem.

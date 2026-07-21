@@ -170,7 +170,7 @@ Flags: `Z_NI_REQUIRE_EDITS` (default on), `Z_NI_AUTO_SEED` (default on),
 
 ---
 
-### P0 — Verify: stale CMake + change-scoped tests (`verify-cmake`)
+### P0 — Verify: stale CMake + change-scoped tests (`verify-cmake`) — **IMPLEMENTED**
 
 **Goals**
 
@@ -187,14 +187,11 @@ Flags: `Z_NI_REQUIRE_EDITS` (default on), `Z_NI_AUTO_SEED` (default on),
 - **Meaningful pass** requires either matched change tests executed, or
   explicit `VerifyState` that change-tests were absent (fail closed in NI).
 
-**Acceptance**
-
-- Repro: existing `build/` with only `miniregex_tests`; edit CMakeLists to add
-  `minilfu_tests`; verify must reconfigure and run (or hard-fail if still
-  undiscovered), never report green on old suite alone.
-
-**Files:** `aider/z/uncertainty/verify.py`, new
-`aider/z/uncertainty/cmake_verify.py`, gate wiring, tests.
+**Shipped:** `aider/z/uncertainty/cmake_verify.py`; wired in `verify_edits`
+before ctest; `detect_test_command` returns ctest even without existing
+`build/`; gate passes `non_interactive` from `--yes-always`.
+Flags: `Z_CMAKE_RECONFIGURE` (default on), `Z_CMAKE_REQUIRE_MATCHED` (default
+on in NI / yes-always). Tests: `tests/basic/test_z_cmake_verify.py`.
 
 ---
 
@@ -333,6 +330,12 @@ Chroma’s broken 3-arg `Posthog.capture` (posthog SDK arity mismatch) so
 <<<<<<< HEAD
 1. **chroma-telemetry** — tiny, confidence win (separate PR)  
 2. **gate-ni-ux** — block message + `Z_NI_GATE` (separate PR)  
+3. **ni-contract** — exit codes + auto-seed (separate PR)  
+4. **verify-cmake** — ✅ shipped (reconfigure + refuse stale suite-only green)  
+=======
+<<<<<<< HEAD
+1. **chroma-telemetry** — tiny, confidence win (separate PR)  
+2. **gate-ni-ux** — block message + `Z_NI_GATE` (separate PR)  
 3. **ni-contract** — ✅ shipped (exit codes + auto-seed + outcome line)  
 =======
 1. **chroma-telemetry** — ✅ shipped (`configure_chroma_telemetry`)  
@@ -340,6 +343,7 @@ Chroma’s broken 3-arg `Posthog.capture` (posthog SDK arity mismatch) so
 3. **ni-contract** — exit codes + auto-seed  
 >>>>>>> origin/main
 4. **verify-cmake** — stale build  
+>>>>>>> origin/main
 5. **sanitizer-teeth** — policy  
 6. **skill-retrieve** — lexical fallback + near-dup  
 

@@ -704,6 +704,7 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
         new_files=new_files,
         verbose=bool(getattr(coder, "verbose", False)),
         error_print=io.tool_error,
+        non_interactive=getattr(io, "yes", None) is True,
     )
 
     # Dynamic-risk diffs → mandatory sanitizer before/after when available
