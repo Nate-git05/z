@@ -43,6 +43,26 @@ class PlanConfirmUxTest(unittest.TestCase):
         self.assertIn("Steps:", confirm)
         self.assertGreaterEqual(confirm.count("\n"), 4)
 
+    def test_accent_context_on_escalation_view(self):
+        from unittest.mock import MagicMock, patch
+
+        from aider.z.escalation import render_escalation
+
+        console = MagicMock()
+        with patch("aider.z.escalation.Panel") as panel_cls:
+            render_escalation(
+                "Full implementation plan",
+                console=console,
+                context="Approach:\n  do the thing",
+                pretty=True,
+                accent_context=True,
+            )
+        self.assertTrue(panel_cls.called)
+        body = panel_cls.call_args[0][0]
+        # Rich Text — accent style applied to context
+        plain = body.plain if hasattr(body, "plain") else str(body)
+        self.assertIn("do the thing", plain)
+
 
 if __name__ == "__main__":
     unittest.main()

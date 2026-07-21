@@ -1163,6 +1163,58 @@ def revise_plan_with_feedback(
     return revised
 
 
+def show_full_plan_view(io, plan: PlanningArtifact) -> None:
+    """
+    Show the full plan in an orange escalation panel and wait for Enter.
+
+    Without a pause, View printed then immediately re-opened the compact confirm,
+    scrolling the plan away (felt like a timeout).
+    """
+    body = format_plan_for_user(plan)
+    pretty = bool(getattr(io, "pretty", True))
+    z_theme = bool(getattr(io, "z_theme", False))
+    try:
+        if z_theme and pretty:
+            from aider.z.escalation import render_escalation
+
+            console = getattr(io, "console", None)
+            render_escalation(
+                "Full implementation plan",
+                console=console,
+                context=body,
+                pretty=True,
+                accent_context=True,
+            )
+        else:
+            warn = getattr(io, "tool_warning", None)
+            out = getattr(io, "tool_output", None)
+            if warn:
+                warn("—— Full implementation plan ——")
+            if out:
+                out("")
+                out(body)
+                out("")
+    except Exception:
+        out = getattr(io, "tool_output", None)
+        if out:
+            out(body)
+
+    # Pause so the developer can read before the compact Y/N/C/V returns.
+    if getattr(io, "yes", None) in (True, False):
+        return
+    prompt_ask = getattr(io, "prompt_ask", None)
+    if prompt_ask:
+        try:
+            prompt_ask("Press Enter when done reading the plan", default="")
+        except Exception:
+            pass
+    else:
+        try:
+            input("Press Enter when done reading the plan ")
+        except Exception:
+            pass
+
+
 def interactive_plan_confirm(
     io,
     plan: PlanningArtifact,
@@ -1178,7 +1230,8 @@ def interactive_plan_confirm(
 
     Returns ``(approved: bool, plan)``. On Change, collects free-text
     revisions, revises the plan, and re-asks with a compact panel.
-    View prints the full plan once then re-asks (does not consume a change round).
+    View shows the full plan in an orange panel and waits for Enter
+    (does not consume a change round).
     """
     if plan is None:
         return False, plan
@@ -1209,12 +1262,7 @@ def interactive_plan_confirm(
             choice = "yes" if ok else "no"
 
         if choice == "view":
-            try:
-                io.tool_output("")
-                io.tool_output(format_plan_for_user(current))
-                io.tool_output("")
-            except Exception:
-                pass
+            show_full_plan_view(io, current)
             continue
 
         if choice == "yes":
@@ -1252,7 +1300,13 @@ def interactive_plan_confirm(
             feedback,
             original_request=original_request,
         )
-        # Compact re-confirm only — full plan via View
+        # Show the updated plan (orange + Enter) so Change→confirm doesn't flash past.
+        try:
+            io.tool_warning("Plan updated — review below, then Yes / No / Change / View.")
+        except Exception:
+            pass
+        show_full_plan_view(io, current)
+        # Compact re-confirm after they've had a chance to read
     # Exhausted rounds — last chance yes/no only
     io.tool_warning(
         "Change limit reached — Yes to proceed with the latest plan, No to abort."

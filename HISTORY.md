@@ -2,6 +2,7 @@
 
 ### main branch
 
+- Plan View no longer flashes away: full plan shows in an orange panel and waits for Enter; after Change the updated plan is shown the same way. Y/N/C/V option labels use orange.
 - Implemented P3 turn flow: Idle / Busy / WaitingInput orchestrator with message queue while Busy (see `docs/uncertainty/terminal-ux-p3-plan.md`).
 - Documented P3 terminal UX plan: unified turn flow (Idle / Busy / WaitingInput / message queue) — see `docs/uncertainty/terminal-ux-p3-plan.md`.
 - Fixed false-positive verify gate on green `ctest` (parser expected pytest-style `N passed`; now reads CTest summary / per-test lines and reconciles discovery from `ctest -N`).

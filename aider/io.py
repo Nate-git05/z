@@ -1227,6 +1227,8 @@ class InputOutput:
                     pretty=True,
                 )
                 escalation_shown = True
+                # Orange affordance line so Y/N/C/V isn't lost in status chrome
+                self.tool_warning("(Y)es  (N)o  (C)hange  (V)iew")
             elif "\n" in subject:
                 lines = subject.splitlines()
                 max_length = max(len(line) for line in lines)
