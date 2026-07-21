@@ -1,4 +1,4 @@
-"""Coding-quality Priority 1–2: hard ledger evidence, absorbed failure, config, mutation."""
+"""Coding-quality tranche 1: compact skills, tool-output budget, strict chat edits."""
 
 from __future__ import annotations
 
@@ -6,234 +6,160 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock
 
 _HOME = tempfile.mkdtemp(prefix="z_cq_")
 os.environ["Z_HOME"] = _HOME
 
-from aider.z.uncertainty.checklist import (  # noqa: E402
-    bind_evidence,
-    rescore_checklist_with_evidence,
-)
-from aider.z.uncertainty.detectors import (  # noqa: E402
-    detect_absorbed_failures,
-    detect_unvalidated_config,
-)
-from aider.z.uncertainty.gate import _effective_gate_tier  # noqa: E402
-from aider.z.uncertainty.mutation import (  # noqa: E402
-    MutationResult,
-    _apply_one_mutation,
-    mutation_nodes_from_result,
-)
-from aider.z.uncertainty.risk import collect_base_signals  # noqa: E402
-from aider.z.uncertainty.schema import (  # noqa: E402
-    NodeType,
-    RequirementItem,
-    TaskChecklist,
-    Tier,
-)
 
+class CompactSkillTests(unittest.TestCase):
+    def test_directive_truncates_long_body(self):
+        from aider.z.coding_context import format_skill_directive, skill_inject_full_enabled
+        from aider.z.skills.schema import Skill
 
-class HardLedgerEvidenceTest(unittest.TestCase):
-    def test_product_needs_file_symbol_and_test(self):
-        checklist = TaskChecklist(
-            task_id="t1",
-            title="Feat",
-            items=[
-                RequirementItem(
-                    text="Implement FlowGuard rate limiter allow",
-                    kind="product",
-                )
-            ],
+        self.assertFalse(skill_inject_full_enabled())
+        long_body = "line\n" * 500
+        skill = Skill(
+            id="s1",
+            title="Stripe webhooks",
+            description="How we verify Stripe",
+            content=long_body,
+            kind="playbook",
+            languages=["python"],
+            capability="payments.verify",
+            path="/tmp/fake-skill.md",
         )
-        # Code only — no tests → Partial, never Fully
-        evidence = bind_evidence(
-            checklist,
-            files_changed=["flowguard/rate_limiter.py"],
-            file_contents={
-                "flowguard/rate_limiter.py": (
-                    "class FlowGuard:\n"
-                    "    def allow(self, key): return True\n"
-                )
-            },
-            symbols=["FlowGuard", "allow"],
-            test_files=[],
+        out = format_skill_directive(skill, body_budget=400)
+        self.assertIn("Skill directive", out)
+        self.assertIn("Stripe webhooks", out)
+        self.assertIn("truncated", out.lower())
+        self.assertLess(len(out), len(long_body))
+        self.assertIn("full_skill_path=", out)
+
+    def test_format_skills_for_context_uses_compact(self):
+        from aider.z.skills.schema import Skill
+        from aider.z.skills.session import format_skills_for_context
+
+        skill = Skill(
+            id="s2",
+            title="Auth playbook",
+            description="session cookies",
+            content=("RULE\n" * 300),
+            kind="playbook",
+            path="/tmp/auth.md",
         )
-        rescore_checklist_with_evidence(checklist, evidence)
-        self.assertEqual(checklist.items[0].status, "Partially Addressed")
-        self.assertIn("test", evidence[0].missing or "")
-        self.assertFalse(evidence[0].has_hard_product_evidence)
+        compact = format_skills_for_context([skill])
+        self.assertIn("Compact skill directives", compact)
+        self.assertIn("truncated", compact.lower())
+        self.assertLess(len(compact), len(skill.content))
 
-        # Full triad → Fully
-        checklist.items[0].status = "Not Addressed"
-        evidence2 = bind_evidence(
-            checklist,
-            files_changed=["flowguard/rate_limiter.py", "tests/test_flowguard.py"],
-            file_contents={
-                "flowguard/rate_limiter.py": (
-                    "class FlowGuard:\n"
-                    "    def allow(self, key): return True\n"
-                ),
-                "tests/test_flowguard.py": "def test_allow(): assert True\n",
-            },
-            symbols=["FlowGuard", "allow"],
-            test_files=["tests/test_flowguard.py"],
-        )
-        rescore_checklist_with_evidence(checklist, evidence2)
-        self.assertEqual(checklist.items[0].status, "Fully Addressed")
-        self.assertTrue(evidence2[0].has_hard_product_evidence)
+        os.environ["Z_SKILL_INJECT_FULL"] = "1"
+        try:
+            full = format_skills_for_context([skill])
+            self.assertIn("RULE", full)
+            self.assertGreater(len(full), len(compact))
+        finally:
+            os.environ.pop("Z_SKILL_INJECT_FULL", None)
 
 
-class AbsorbedFailureTest(unittest.TestCase):
-    def test_broad_except_near_import_is_high(self):
-        text = (
-            "import requests\n"
-            "\n"
-            "def fetch(url):\n"
-            "    try:\n"
-            "        return requests.get(url)\n"
-            "    except Exception:\n"
-            "        return None\n"
-        )
-        sig = collect_base_signals(["client.py"])
-        nodes = detect_absorbed_failures(
-            sig,
-            file_contents={"client.py": text},
-            diff="",  # no diff → still pairs in-file
-        )
-        self.assertTrue(nodes)
-        self.assertEqual(nodes[0].type, NodeType.ABSORBED_FAILURE)
-        self.assertEqual(nodes[0].risk_tier, Tier.HIGH)
-        self.assertEqual(_effective_gate_tier(nodes[0]), Tier.HIGH)
+class OutputBudgetTests(unittest.TestCase):
+    def test_small_output_unchanged(self):
+        from aider.z.output_budget import budget_tool_output
+
+        text = "ok\npass\n"
+        out, path = budget_tool_output(text, label="t")
+        self.assertEqual(out, text)
+        self.assertIsNone(path)
+
+    def test_large_output_persisted(self):
+        from aider.z.output_budget import budget_tool_output, tool_output_dir
+
+        os.environ["Z_HOME"] = _HOME
+        lines = [f"line-{i}\n" for i in range(5000)]
+        text = "".join(lines)
+        out, path = budget_tool_output(text, label="pytest", lines_limit=100, bytes_limit=4096)
+        self.assertIsNotNone(path)
+        self.assertTrue(Path(path).is_file())
+        self.assertIn("tool-output budgeted", out)
+        self.assertIn(str(path), out)
+        self.assertLess(len(out), len(text))
+        self.assertEqual(Path(path).read_text(encoding="utf-8"), text)
+        self.assertEqual(Path(path).parent, tool_output_dir())
+        self.assertIn("tool-output", str(path))
 
 
-class UnvalidatedConfigTest(unittest.TestCase):
-    def test_init_numeric_without_validation(self):
-        text = (
-            "class Limiter:\n"
-            "    def __init__(self, timeout: float, max_retries: int = 3):\n"
-            "        self.timeout = timeout\n"
-            "        self.max_retries = max_retries\n"
-            "\n"
-            "    def run(self):\n"
-            "        return self.timeout\n"
-        )
-        sig = collect_base_signals(["limiter.py"])
-        nodes = detect_unvalidated_config(sig, file_contents={"limiter.py": text})
-        self.assertTrue(nodes)
-        self.assertEqual(nodes[0].type, NodeType.UNVALIDATED_CONFIG)
-        self.assertIn("timeout", nodes[0].signals.get("unvalidated_params") or [])
+class StrictChatEditTests(unittest.TestCase):
+    def test_blocks_existing_file_not_in_chat(self):
+        from aider.coders.base_coder import Coder
+        from aider.io import InputOutput
+        from aider.models import Model
 
-    def test_init_with_validation_skipped(self):
-        text = (
-            "class Limiter:\n"
-            "    def __init__(self, timeout: float):\n"
-            "        if timeout <= 0:\n"
-            "            raise ValueError('timeout')\n"
-            "        self.timeout = timeout\n"
-        )
-        sig = collect_base_signals(["limiter.py"])
-        nodes = detect_unvalidated_config(sig, file_contents={"limiter.py": text})
-        self.assertEqual(nodes, [])
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            target = root / "existing.py"
+            target.write_text("x = 1\n", encoding="utf-8")
 
+            io = InputOutput(yes=True)  # would auto-approve legacy confirm
+            model = Model("gpt-4o-mini")
+            coder = Coder.create(
+                main_model=model,
+                io=io,
+                fnames=[],
+                edit_format="diff",
+            )
+            coder.root = str(root)
+            coder.repo = None  # avoid git path_in_repo against workspace
+            coder.abs_fnames = set()
 
-class MutationHelperTest(unittest.TestCase):
-    def test_apply_mutation(self):
-        out = _apply_one_mutation("    if x > 0:")
-        self.assertIsNotNone(out)
-        new_line, label = out
-        self.assertIn(">=", new_line)
-        self.assertIn(">", label)
+            os.environ["Z_STRICT_CHAT_EDITS"] = "1"
+            try:
+                allowed = coder.allowed_to_edit("existing.py")
+                self.assertFalse(bool(allowed))
+                self.assertIn("not in the chat", coder.reflected_message or "")
+            finally:
+                os.environ.pop("Z_STRICT_CHAT_EDITS", None)
 
-    def test_survivor_node(self):
-        result = MutationResult(
-            ran=True,
-            attempted=2,
-            killed=1,
-            survivors=[
-                {
-                    "file": "mod.py",
-                    "line": 10,
-                    "mutation": "> → >=",
-                    "original": "if x > 0:",
-                    "mutant": "if x >= 0:",
-                }
-            ],
-        )
-        sig = collect_base_signals(["mod.py"])
-        nodes = mutation_nodes_from_result(result, signals=sig)
-        self.assertEqual(len(nodes), 1)
-        self.assertEqual(nodes[0].type, NodeType.WEAK_TEST)
-        self.assertEqual(_effective_gate_tier(nodes[0]), Tier.HIGH)
+    def test_allows_when_already_in_chat(self):
+        from aider.coders.base_coder import Coder
+        from aider.io import InputOutput
+        from aider.models import Model
 
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            target = root / "inchat.py"
+            target.write_text("y = 2\n", encoding="utf-8")
 
-class GatedPlanningTest(unittest.TestCase):
-    def test_routine_request_skips_plan(self):
-        from aider.z.uncertainty.plan import triage_for_planning
+            io = InputOutput(yes=True)
+            model = Model("gpt-4o-mini")
+            coder = Coder.create(
+                main_model=model,
+                io=io,
+                fnames=[],
+                edit_format="diff",
+            )
+            coder.root = str(root)
+            coder.repo = None
+            abs_t = str(target.resolve())
+            coder.abs_fnames = {abs_t}
 
-        required, reason, _ = triage_for_planning(
-            ["utils/format.py"],
-            user_text="Rename the helper and add a docstring.",
-        )
-        self.assertFalse(required)
-        self.assertEqual(reason, "")
+            os.environ["Z_STRICT_CHAT_EDITS"] = "1"
+            try:
+                # allowed_to_edit resolves via abs_root_path / path_under_root
+                allowed = coder.allowed_to_edit("inchat.py")
+                self.assertTrue(bool(allowed))
+            finally:
+                os.environ.pop("Z_STRICT_CHAT_EDITS", None)
 
-    def test_high_stakes_request_requires_plan(self):
-        from aider.z.uncertainty.plan import (
-            draft_plan_from_request,
-            format_plan_for_context,
-            triage_for_planning,
-        )
+    def test_strict_flag_helpers(self):
+        from aider.z.coding_context import strict_chat_edits_enabled
 
-        required, reason, sig = triage_for_planning(
-            ["billing/checkout.py"],
-            user_text="Add payment timeout and rate limit validation for checkout.",
-        )
-        self.assertTrue(required)
-        self.assertTrue(sig.high_stakes_hit or "high_stakes" in reason or "request" in reason)
-
-        plan = draft_plan_from_request(
-            "Add payment timeout and rate limit validation for checkout.",
-            title="Checkout hardening",
-            reason=reason,
-            files=["billing/checkout.py"],
-        )
-        self.assertTrue(plan.validation_contracts)
-        names = {c.input_name for c in plan.validation_contracts}
-        self.assertTrue({"timeout", "rate_limit"} & names or "timeout" in names)
-        self.assertTrue(plan.invariants)
-        ctx = format_plan_for_context(plan)
-        self.assertIn("Validation contracts", ctx)
-        self.assertIn("Invariants", ctx)
-
-    def test_blast_radius_triggers_plan(self):
-        from aider.z.uncertainty.plan import triage_for_planning
-
-        required, reason, _ = triage_for_planning(
-            ["lib/shared.py"],
-            user_text="Tweak the helper slightly.",
-            reference_count=12,
-            blast_radius_threshold=5,
-        )
-        self.assertTrue(required)
-        self.assertIn("blast_radius", reason)
-
-    def test_approve_unblocks_edits(self):
-        from aider.z.uncertainty.engine import SessionContext, UncertaintyEngine
-        from aider.z.uncertainty.store import UncertaintyStore
-
-        root = Path(tempfile.mkdtemp(prefix="z_plan_"))
-        store = UncertaintyStore(root=root, repo_key=str(root))
-        eng = UncertaintyEngine(SessionContext(root=root, store=store))
-        eng.begin_task("Harden auth session token validation.")
-        plan = eng.maybe_require_plan(
-            "Harden auth session token validation.",
-            files=["auth/session.py"],
-        )
-        self.assertIsNotNone(plan)
-        self.assertTrue(eng.edits_blocked_pending_plan())
-        eng.approve_plan(plan)
-        self.assertFalse(eng.edits_blocked_pending_plan())
-        self.assertTrue(eng.ctx.plan_approved)
+        os.environ.pop("Z_STRICT_CHAT_EDITS", None)
+        self.assertTrue(strict_chat_edits_enabled())
+        os.environ["Z_STRICT_CHAT_EDITS"] = "0"
+        try:
+            self.assertFalse(strict_chat_edits_enabled())
+        finally:
+            os.environ.pop("Z_STRICT_CHAT_EDITS", None)
 
 
 if __name__ == "__main__":

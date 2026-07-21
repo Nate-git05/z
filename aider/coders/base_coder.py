@@ -2356,6 +2356,23 @@ class Coder:
         core_rule = getattr(self.gpt_prompts, "core_adapter_prompt", None)
         if core_rule:
             final_reminders.append(core_rule)
+        # OpenCode-inspired coding discipline — implement modes only (keep ask thin)
+        try:
+            from aider.z.coding_context import coding_quality_reminder
+            from aider.z.task_mode import TaskMode
+
+            mode = getattr(self, "task_mode", None)
+            allows = True
+            if mode is not None:
+                allows = bool(getattr(mode, "allows_edits", True))
+            # Also skip for explicit ask/context edit formats
+            fmt = getattr(self, "edit_format", None)
+            if fmt in ("ask", "context", "help"):
+                allows = False
+            if allows and mode is not TaskMode.ASK:
+                final_reminders.append(coding_quality_reminder())
+        except Exception:
+            pass
         if self.main_model.lazy:
             final_reminders.append(self.gpt_prompts.lazy_prompt)
         if self.main_model.overeager:
@@ -3589,6 +3606,24 @@ class Coder:
             self.check_added_files()
             return True
 
+        # Existing file not in chat — OpenCode-style read-before-edit.
+        # Default strict mode refuses edits (even under --yes-always) so the
+        # model cannot invent patches for unread files. Legacy confirm remains
+        # behind Z_STRICT_CHAT_EDITS=0.
+        from aider.z.coding_context import strict_chat_edits_enabled
+
+        if strict_chat_edits_enabled():
+            msg = (
+                f"Edit blocked: `{path}` is not in the chat. "
+                f"Add it first (`/add {path}`) so its contents are visible, "
+                "then propose SEARCH/REPLACE. New files may still be created."
+            )
+            self.io.tool_error(msg)
+            # Feed a reflect so the model can ask to add the file next turn
+            prev = getattr(self, "reflected_message", None) or ""
+            self.reflected_message = (prev + "\n" + msg).strip() if prev else msg
+            return
+
         if not self.io.confirm_ask(
             "Allow edits to file that has not been added to the chat?",
             subject=path,
@@ -3969,6 +4004,21 @@ class Coder:
             or self.io.confirm_ask("Add command output to the chat?", allow_never=True)
         )
         if add_output and accumulated_output.strip():
+            # OpenCode-style tool-output budget: persist fat dumps, keep a preview
+            try:
+                from aider.z.output_budget import budget_tool_output
+
+                budgeted, saved = budget_tool_output(
+                    accumulated_output, label="shell"
+                )
+                if saved is not None:
+                    self.io.tool_output(
+                        f"Command output budgeted → {saved} "
+                        "(preview added to chat)."
+                    )
+                accumulated_output = budgeted
+            except Exception:
+                pass
             num_lines = len(accumulated_output.strip().splitlines())
             line_plural = "line" if num_lines == 1 else "lines"
             self.io.tool_output(f"Added {num_lines} {line_plural} of output to the chat.")

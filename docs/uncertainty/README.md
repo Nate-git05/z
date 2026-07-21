@@ -170,6 +170,7 @@ Control-flow and evidence phases:
 | [p0-control-flow.md](./p0-control-flow.md) | Modes, intent, async sync, shell risk |
 | [p1-evidence-lifecycle.md](./p1-evidence-lifecycle.md) | Clauses, resolution contracts, exceptions |
 | [p2-benchmark.md](./p2-benchmark.md) | Behavior benchmark harness + scoring |
+| [coding-quality.md](./coding-quality.md) | Compact skills, tool-output budget, strict chat edits |
 
 P0 subsystems:
 
