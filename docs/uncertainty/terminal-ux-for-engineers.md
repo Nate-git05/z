@@ -248,6 +248,8 @@ Document this next to NI gate UX (`fault-plan-ni-verify-skills-gate.md`).
 ## 15. Open questions
 
 Resolved for P0 in [terminal-ux-p0-plan.md](./terminal-ux-p0-plan.md) §2 (View letter, status hex `#D8D8D8`, thin checklist in panel).  
-Resolved for P1 in [terminal-ux-p1-plan.md](./terminal-ux-p1-plan.md) §2 (`PLAN›`/`ASK›`/`›`, usage default-off, history filter). Remaining:
+Resolved for P1 in [terminal-ux-p1-plan.md](./terminal-ux-p1-plan.md) §2 (`PLAN›`/`ASK›`/`›`, usage default-off, history filter).  
 
-1. Should ambiguous noun phrases (`users and sessions`) stay IMPLEMENT or become ASK? (Today: IMPLEMENT.)
+1. Ambiguous noun phrases (`users and sessions`) → **ASK** via local classifier (Option A).  
+   **Extensive plan (no code yet):** [mode-classifier-local-plan.md](./mode-classifier-local-plan.md)  
+   (Previously defaulted to IMPLEMENT; flipping avoids surprise plan panels.)

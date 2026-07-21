@@ -2,6 +2,7 @@
 
 ### main branch
 
+- Ambiguous noun-phrase prompts (e.g. `users and sessions`) now classify as ASK instead of IMPLEMENT, avoiding surprise plan panels (`looks_like_ambiguous_topic`; escape `Z_MODE_CLASSIFY=0`).
 - P2 terminal UX: Rich `/uncertainties` on the production tree, compact `Uncertainty · N High · M Medium — /uncertainties` summary, and golden implement-turn noise-budget fixtures.
 - P1 terminal UX: prompt mode chrome (`PLAN›` / `ASK›` / `›`), usage report opt-in (`--show-cost` / `Z_SHOW_USAGE`), and quieter chat-history mirroring (status lines no longer blockquoted by default).
 - Expanded `ANTHROPIC_MODELS` list with Claude Opus 4.1/4.5/4.6/4.7 dated variants and Claude Sonnet 3.7 so the Anthropic API key auto-detection (`models.sanity_check_models`) recognises them.

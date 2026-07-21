@@ -162,8 +162,12 @@ class TaskModeTests(unittest.TestCase):
             TaskMode.IMPLEMENT,
         )
 
-    def test_ambiguous_defaults_to_implement(self):
-        self.assertEqual(classify_task_mode(None, "users and sessions"), TaskMode.IMPLEMENT)
+    def test_ambiguous_noun_phrase_is_ask(self):
+        """A1: short topic lists must not open the implement/plan path."""
+        self.assertEqual(classify_task_mode(None, "users and sessions"), TaskMode.ASK)
+        intent = extract_intent("users and sessions")
+        self.assertEqual(intent.mode, "ask")
+        self.assertFalse(intent.requested_actions)
 
     def test_casual_chat_is_ask_not_plan(self):
         from aider.z.task_mode import looks_like_casual_chat
