@@ -81,17 +81,39 @@ class AppServerHandlersTest(unittest.TestCase):
         self.assertIn("uncertainty", result["capabilities"])
         self.assertEqual(result["workspaceRoot"], self.tmp)
 
-    def test_turn_start_stub(self):
+    def test_turn_start_requires_workspace_and_text(self):
         from aider.z.app_server.handlers import AppServerSession, HandlerError
 
         s = AppServerSession()
         s.handle("initialize", {"clientInfo": {"name": "t"}})
         with self.assertRaises(HandlerError):
             s.handle("turn/start", {})
-        out = s.handle("turn/start", {"text": "hello", "threadId": "t1"})
+        with self.assertRaises(HandlerError) as ctx:
+            s.handle("turn/start", {"text": "hello", "threadId": "t1"})
+        self.assertIn("workspace", str(ctx.exception).lower())
+
+    def test_turn_start_accepts_with_workspace(self):
+        from aider.z.app_server.handlers import AppServerSession
+
+        s = AppServerSession()
+        s.handle(
+            "initialize",
+            {"clientInfo": {"name": "t"}, "workspaceRoot": self.tmp},
+        )
+        with mock.patch.object(s, "_turn_manager") as tm:
+            mgr = mock.Mock()
+            mgr.start.return_value = {
+                "turnId": "tid-1",
+                "threadId": "t1",
+                "accepted": True,
+                "queued": False,
+                "stub": False,
+            }
+            tm.return_value = mgr
+            out = s.handle("turn/start", {"text": "hello", "threadId": "t1"})
         self.assertTrue(out["accepted"])
-        self.assertTrue(out.get("stub"))
-        self.assertEqual(out["threadId"], "t1")
+        self.assertFalse(out.get("stub"))
+        mgr.start.assert_called_once_with(text="hello", thread_id="t1")
 
     def test_skills_create_is_draft(self):
         from aider.z.app_server.handlers import AppServerSession

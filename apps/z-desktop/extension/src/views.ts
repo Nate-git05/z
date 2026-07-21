@@ -1,27 +1,26 @@
 /**
- * Sidebar webview providers — Profile is live in Phase 3; others stay placeholders.
+ * Sidebar webview providers — Chat (Phase 4) + Profile (Phase 3); others placeholders.
  */
 
 import * as vscode from "vscode";
 import { AppServerManager } from "./appServerManager";
 import { AuthStatus } from "./appServerClient";
+import { ChatViewProvider } from "./chatView";
 
 export function registerViews(
   context: vscode.ExtensionContext,
   manager: AppServerManager
-): { refreshProfile: () => void } {
+): { refreshProfile: () => void; refreshChat: () => void } {
+  const chat = new ChatViewProvider(manager);
   const profile = new ProfileViewProvider(manager);
   context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider("z.chat", chat, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
     vscode.window.registerWebviewViewProvider("z.profile", profile)
   );
 
-  for (const viewId of [
-    "z.chat",
-    "z.uncertainty",
-    "z.skills",
-    "z.commitBlocks",
-    "z.mcp",
-  ]) {
+  for (const viewId of ["z.uncertainty", "z.skills", "z.commitBlocks", "z.mcp"]) {
     context.subscriptions.push(
       vscode.window.registerWebviewViewProvider(
         viewId,
@@ -32,6 +31,7 @@ export function registerViews(
 
   return {
     refreshProfile: () => profile.refresh(),
+    refreshChat: () => chat.refresh(),
   };
 }
 

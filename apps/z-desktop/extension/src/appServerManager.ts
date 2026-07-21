@@ -22,6 +22,8 @@ export type ConnectionState =
   | "connected"
   | "error";
 
+type NotifyHandler = (method: string, params: unknown) => void;
+
 export class AppServerManager implements vscode.Disposable {
   private client: AppServerClient | null = null;
   private proc: ChildProcess | null = null;
@@ -32,11 +34,31 @@ export class AppServerManager implements vscode.Disposable {
   private readonly output: vscode.OutputChannel;
   private readonly onChangeEmitter = new vscode.EventEmitter<void>();
   readonly onDidChange = this.onChangeEmitter.event;
+  private readonly notifyHandlers = new Set<NotifyHandler>();
   private readonly disposables: vscode.Disposable[] = [];
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.output = vscode.window.createOutputChannel("Z App Server");
     this.disposables.push(this.output, this.onChangeEmitter);
+  }
+
+  onNotification(handler: NotifyHandler): vscode.Disposable {
+    this.notifyHandlers.add(handler);
+    return {
+      dispose: () => {
+        this.notifyHandlers.delete(handler);
+      },
+    };
+  }
+
+  private dispatchNotification(method: string, params: unknown): void {
+    for (const h of this.notifyHandlers) {
+      try {
+        h(method, params);
+      } catch {
+        /* ignore listener errors */
+      }
+    }
   }
 
   get connectionState(): ConnectionState {
@@ -184,6 +206,12 @@ export class AppServerManager implements vscode.Disposable {
     this.setState("connecting");
     this.client?.disconnect();
     this.client = new AppServerClient(this.appServerUrl());
+    this.client.setNotificationHandler((method, params) => {
+      this.dispatchNotification(method, params);
+      if (method.startsWith("turn/") || method.startsWith("item/")) {
+        this.output.appendLine(`← ${method}`);
+      }
+    });
     try {
       await this.client.connect();
       // Warm health (allowed pre-initialize)

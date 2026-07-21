@@ -1,25 +1,35 @@
-"""Request handlers for z-app-server IPC v0.
-
-V0 focuses on read surfaces + stubs. Turn execution (full Coder.run_one) lands
-in a later phase once the gateway stream path is green.
-"""
+"""Request handlers for z-app-server IPC v0 / Phase 4 turns."""
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from aider.z.app_server.protocol import PROTOCOL_VERSION, SERVER_NAME
+
+NotifyFn = Callable[[str, dict], None]
 
 
 class AppServerSession:
     """Per-connection session state."""
 
-    def __init__(self) -> None:
+    def __init__(self, notify: Optional[NotifyFn] = None) -> None:
         self.initialized = False
         self.client_info: dict[str, Any] = {}
         self.workspace_root: Optional[str] = None
+        self._notify: NotifyFn = notify or (lambda _m, _p: None)
+        self._turns = None  # lazy TurnManager
+
+    def _turn_manager(self):
+        if self._turns is None:
+            from aider.z.app_server.turn_runner import TurnManager
+
+            self._turns = TurnManager(
+                workspace_root=self.workspace_root,
+                notify=self._notify,
+            )
+        return self._turns
 
     def handle(self, method: str, params: Optional[dict]) -> Any:
         params = params or {}
@@ -57,7 +67,11 @@ class AppServerSession:
         if method == "usage/summary":
             return self._usage_summary(params)
         if method == "turn/start":
-            return self._turn_start_stub(params)
+            return self._turn_start(params)
+        if method == "turn/respond":
+            return self._turn_respond(params)
+        if method == "turn/cancel":
+            return self._turn_cancel(params)
         raise HandlerError(-32601, f"Method not found: {method}")
 
     def _initialize(self, params: dict) -> dict:
@@ -65,6 +79,10 @@ class AppServerSession:
         root = params.get("workspaceRoot")
         if root:
             self.workspace_root = str(root)
+            try:
+                self._turn_manager().set_workspace(self.workspace_root)
+            except Exception:
+                pass
         self.initialized = True
         z_home = os.environ.get("Z_HOME") or str(Path.home() / ".z")
         return {
@@ -100,6 +118,10 @@ class AppServerSession:
         if not path.is_dir():
             raise HandlerError(-32004, f"Not a directory: {path}")
         self.workspace_root = str(path)
+        try:
+            self._turn_manager().set_workspace(self.workspace_root)
+        except Exception:
+            pass
         return {"ok": True, "root": self.workspace_root}
 
     def _workspace_info(self, params: dict) -> dict:
@@ -300,24 +322,46 @@ class AppServerSession:
         rng = (params.get("range") or "billing_period").strip()
         return {"range": rng, "byModel": [], "note": "gateway usage not wired yet"}
 
-    def _turn_start_stub(self, params: dict) -> dict:
+    def _turn_start(self, params: dict) -> dict:
         text = (params.get("text") or "").strip()
         thread_id = (params.get("threadId") or "default").strip() or "default"
         if not text:
             raise HandlerError(-32602, "turn/start requires text")
-        # Full agent loop is Phase 4 — accept and report stub.
-        import uuid
+        if not self.workspace_root:
+            raise HandlerError(
+                -32020,
+                "No workspace open — open a folder in Z Editor first",
+            )
+        try:
+            return self._turn_manager().start(text=text, thread_id=thread_id)
+        except ValueError as err:
+            raise HandlerError(-32602, str(err)) from err
+        except RuntimeError as err:
+            raise HandlerError(-32021, str(err)) from err
+        except Exception as err:
+            raise HandlerError(-32022, f"turn/start failed: {err}") from err
 
-        turn_id = str(uuid.uuid4())
-        return {
-            "turnId": turn_id,
-            "threadId": thread_id,
-            "accepted": True,
-            "stub": True,
-            "message": (
-                "Turn accepted (stub). Wire Coder.run_one + gateway streaming in Phase 4."
-            ),
-        }
+    def _turn_respond(self, params: dict) -> dict:
+        request_id = (params.get("requestId") or "").strip()
+        if not request_id:
+            raise HandlerError(-32602, "turn/respond requires requestId")
+        thread_id = (params.get("threadId") or "").strip() or None
+        ok = self._turn_manager().respond(
+            request_id=request_id,
+            response=params.get("response"),
+            text=params.get("text"),
+            thread_id=thread_id,
+        )
+        if not ok:
+            raise HandlerError(-32023, "No matching waiting_input for requestId")
+        return {"ok": True, "requestId": request_id}
+
+    def _turn_cancel(self, params: dict) -> dict:
+        thread_id = (params.get("threadId") or "default").strip() or "default"
+        try:
+            return self._turn_manager().cancel(thread_id=thread_id)
+        except Exception as err:
+            raise HandlerError(-32024, f"turn/cancel failed: {err}") from err
 
 
 class HandlerError(Exception):

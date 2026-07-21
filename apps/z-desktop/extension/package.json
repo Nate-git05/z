@@ -2,7 +2,7 @@
   "name": "z-editor",
   "displayName": "Z",
   "description": "Z coding agent — chat, uncertainty chain, skills, commit blocks, MCP, profile",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "z",
   "engines": {
     "vscode": "^1.85.0"

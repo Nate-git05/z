@@ -38,8 +38,21 @@
         "threadId": "string",
         "text": "string"
       },
-      "result": { "turnId": "string", "accepted": true },
-      "notes": "V0 may stub the agent loop; streams turn/* notifications when wired."
+      "result": { "turnId": "string", "accepted": true, "queued": "boolean" },
+      "notes": "Phase 4 — runs Coder.run(with_message) on a worker thread; streams turn/* notifications."
+    },
+    "turn/respond": {
+      "params": {
+        "requestId": "string",
+        "response": "string|boolean",
+        "text": { "optional": true },
+        "threadId": { "optional": true }
+      },
+      "result": { "ok": true }
+    },
+    "turn/cancel": {
+      "params": { "threadId": { "optional": true } },
+      "result": { "ok": true }
     },
     "uncertainty/list": {
       "params": {
@@ -111,12 +124,34 @@
   },
   "notifications": {
     "turn/started": { "turnId": "string", "threadId": "string" },
-    "turn/busy": { "phase": "string" },
-    "item/agentMessage/delta": { "text": "string" },
+    "turn/busy": {
+      "turnId": "string",
+      "state": { "enum": ["idle", "busy", "waiting_input"] },
+      "phase": "string",
+      "label": "string",
+      "queueLen": "number"
+    },
+    "item/agentMessage/delta": { "turnId": "string", "text": "string" },
+    "turn/log": { "turnId": "string", "level": "info|warning|error", "text": "string" },
+    "turn/queued": { "turnId": "string", "queueLen": "number" },
+    "turn/error": { "turnId": "string", "message": "string" },
     "uncertainty/upsert": { "node": "UncertaintyNode" },
     "gate/commit_blocked": { "record": "CommitBlockRecord" },
-    "turn/waiting_input": { "kind": "string", "payload": "object" },
-    "turn/completed": { "turnId": "string", "ok": "boolean" }
+    "turn/waiting_input": {
+      "turnId": "string",
+      "requestId": "string",
+      "kind": { "enum": ["confirm", "plan_confirm", "prompt"] },
+      "question": "string",
+      "subject": { "optional": true },
+      "options": { "optional": true },
+      "default": { "optional": true }
+    },
+    "turn/completed": {
+      "turnId": "string",
+      "threadId": "string",
+      "ok": "boolean",
+      "interrupted": "boolean"
+    }
   },
   "deepLinks": {
     "protocol": "z-editor",

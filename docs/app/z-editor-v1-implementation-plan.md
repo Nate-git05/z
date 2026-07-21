@@ -1,6 +1,6 @@
 # Z Editor V1 — Implementation Plan (post–Codex audit)
 
-**Status:** Phase 0–3 landing — IPC + gateway + extension spawn/attach + auth deep-link UX; Phase 4 turn loop next.  
+**Status:** Phase 0–4 landing — Chat turn loop over IPC; Phases 5–10 (routing policy + panel UIs) next.  
 **Date:** 2026-07-21 (revised: VS Code OSS added as editor foundation)  
 **Inputs:** user revised V1 scope; local clones `vendor/codex` + `vendor/vscode`; Z monorepo surfaces.  
 **Related:** [`z-desktop-north-star.md`](./z-desktop-north-star.md), router-only CLI (#147).

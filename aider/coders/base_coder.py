@@ -4192,6 +4192,15 @@ class Coder:
                 self._stop_waiting_spinner()
             self.partial_response_content += text
 
+            # Z Editor / app-server: stream deltas over IPC even when pretty.
+            if text:
+                emit = getattr(self.io, "emit_llm_delta", None)
+                if callable(emit):
+                    try:
+                        emit(replace_reasoning_tags(text, self.reasoning_tag_name))
+                    except Exception:
+                        pass
+
             if self.show_pretty():
                 self.live_incremental_response(False)
             elif text:

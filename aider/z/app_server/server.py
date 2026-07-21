@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 from aider.z.app_server.handlers import AppServerSession, HandlerError
-from aider.z.app_server.protocol import make_error, make_result, parse_message
+from aider.z.app_server.protocol import make_error, make_notification, make_result, parse_message
 
 logger = logging.getLogger("z.app_server")
 
@@ -38,9 +38,35 @@ def _write_pid_file(path: Optional[str]) -> None:
 
 
 async def _handle_connection(websocket) -> None:
-    session = AppServerSession()
+    loop = asyncio.get_running_loop()
+    outbound: asyncio.Queue = asyncio.Queue()
+
+    def notify(method: str, params: Optional[dict] = None) -> None:
+        msg = make_notification(method, params)
+
+        def _put() -> None:
+            outbound.put_nowait(msg)
+
+        try:
+            loop.call_soon_threadsafe(_put)
+        except RuntimeError:
+            # Loop closed
+            pass
+
+    session = AppServerSession(notify=notify)
     peer = getattr(websocket, "remote_address", None)
     logger.info("client connected %s", peer)
+
+    async def _sender() -> None:
+        while True:
+            msg = await outbound.get()
+            try:
+                await websocket.send(json.dumps(msg))
+            except Exception:
+                logger.debug("send failed", exc_info=True)
+                return
+
+    sender_task = asyncio.create_task(_sender())
     try:
         async for raw in websocket:
             if not isinstance(raw, str):
@@ -68,7 +94,12 @@ async def _handle_connection(websocket) -> None:
                 continue
 
             try:
-                result = session.handle(method, params if isinstance(params, dict) else {})
+                # Handlers are sync / start background work — never block the loop long.
+                result = await asyncio.to_thread(
+                    session.handle,
+                    method,
+                    params if isinstance(params, dict) else {},
+                )
                 if req_id is not None:
                     await websocket.send(json.dumps(make_result(req_id, result)))
             except HandlerError as err:
@@ -83,6 +114,11 @@ async def _handle_connection(websocket) -> None:
                         json.dumps(make_error(req_id, -32000, f"Internal error: {err}"))
                     )
     finally:
+        sender_task.cancel()
+        try:
+            await sender_task
+        except asyncio.CancelledError:
+            pass
         logger.info("client disconnected %s", peer)
 
 

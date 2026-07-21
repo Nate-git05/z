@@ -1,6 +1,6 @@
 # Z Desktop (app shell)
 
-**Status:** Phase 0–3 — IPC, gateway, extension lifecycle + auth UX.
+**Status:** Phase 0–4 — IPC, gateway, shell lifecycle, auth, Chat turn loop.
 
 **Read first:** [`docs/app/z-editor-v1-implementation-plan.md`](../../docs/app/z-editor-v1-implementation-plan.md)
 
@@ -51,8 +51,17 @@ Extension settings: `z.appServerUrl`, `z.autoStartAppServer`, `z.zBinary`.
 - `GET /v1/gateway/usage`
 - Router CLI mode: `aider.z.gateway_client` (`Z_USE_GATEWAY=0` to disable)
 
-## Next (Phase 4+)
+## Phase 4 — Chat turn loop
 
-1. Real `turn/start` → Coder + Busy/WaitingInput stream into Chat panel
+Type in the **Chat** sidebar (not the CLI). Flow:
+
+1. `turn/start` → worker thread runs `Coder.run(with_message=…)`
+2. Notifications: `turn/busy`, `item/agentMessage/delta`, `turn/waiting_input`, `turn/completed`
+3. Approvals / plan confirm answered via Chat buttons → `turn/respond`
+
+## Next (Phase 5+)
+
+1. Real gateway routing policy (TaskMode / escalate)
 2. Live uncertainty / skills / commit-blocks / MCP webviews
-3. Apply `product.z.json` when building from `vendor/vscode`
+3. Profile usage from `gateway_requests`
+4. Apply `product.z.json` when building from `vendor/vscode`
