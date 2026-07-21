@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import atexit
 import json
 import logging
+import os
+from pathlib import Path
 from typing import Optional
 
 from aider.z.app_server.handlers import AppServerSession, HandlerError
@@ -15,6 +18,23 @@ logger = logging.getLogger("z.app_server")
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8741
+
+
+def _write_pid_file(path: Optional[str]) -> None:
+    if not path:
+        return
+    p = Path(path).expanduser()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(str(os.getpid()), encoding="utf-8")
+
+    def _cleanup() -> None:
+        try:
+            if p.is_file() and p.read_text(encoding="utf-8").strip() == str(os.getpid()):
+                p.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    atexit.register(_cleanup)
 
 
 async def _handle_connection(websocket) -> None:
@@ -89,11 +109,13 @@ def run_app_server(
     port: int = DEFAULT_PORT,
     *,
     log_level: str = "INFO",
+    pid_file: Optional[str] = None,
 ) -> None:
     logging.basicConfig(
         level=getattr(logging, log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    _write_pid_file(pid_file)
     try:
         asyncio.run(_serve(host, port))
     except KeyboardInterrupt:
@@ -105,8 +127,18 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--log-level", default="INFO")
+    parser.add_argument(
+        "--pid-file",
+        default=None,
+        help="Write PID for Z Editor spawn/attach lifecycle (optional)",
+    )
     args = parser.parse_args(argv)
-    run_app_server(host=args.host, port=args.port, log_level=args.log_level)
+    run_app_server(
+        host=args.host,
+        port=args.port,
+        log_level=args.log_level,
+        pid_file=getattr(args, "pid_file", None),
+    )
     return 0
 
 

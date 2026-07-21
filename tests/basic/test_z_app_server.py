@@ -154,5 +154,104 @@ class GatewayClientTest(unittest.TestCase):
         self.assertEqual(openai_compatible_model("openai/gpt-4o"), "openai/gpt-4o")
 
 
+class LifecycleHelpersTest(unittest.TestCase):
+    def test_parse_host_port(self):
+        from aider.z.app_server.lifecycle import parse_host_port, resolve_app_server_url
+
+        self.assertEqual(parse_host_port("ws://127.0.0.1:8741"), ("127.0.0.1", 8741))
+        self.assertEqual(parse_host_port("127.0.0.1:9000"), ("127.0.0.1", 9000))
+        self.assertTrue(resolve_app_server_url().startswith("ws://"))
+
+    def test_port_is_open_false(self):
+        from aider.z.app_server.lifecycle import port_is_open
+
+        # Unlikely anything listens on this high port in the test sandbox
+        self.assertFalse(port_is_open("127.0.0.1", 59999, timeout=0.05))
+
+
+class Phase3AuthWorkspaceTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="z_p3_")
+        self.env = mock.patch.dict(os.environ, {"Z_HOME": self.tmp})
+        self.env.start()
+        # Fresh login controller per test
+        from aider.z.app_server import login_session
+
+        login_session.controller = login_session.EditorLoginController()
+
+    def tearDown(self):
+        from aider.z.app_server import login_session
+
+        try:
+            login_session.controller.cancel()
+        except Exception:
+            pass
+        self.env.stop()
+
+    def test_server_health_before_initialize(self):
+        from aider.z.app_server.handlers import AppServerSession
+
+        s = AppServerSession()
+        health = s.handle("server/health", {})
+        self.assertTrue(health["ok"])
+        self.assertFalse(health["initialized"])
+        self.assertIn("pid", health)
+
+    def test_workspace_info_and_open(self):
+        from aider.z.app_server.handlers import AppServerSession
+
+        s = AppServerSession()
+        s.handle("initialize", {"clientInfo": {"name": "t"}})
+        info = s.handle("workspace/info", {})
+        self.assertFalse(info["open"])
+        out = s.handle("workspace/open", {"root": self.tmp})
+        self.assertTrue(out["ok"])
+        info2 = s.handle("workspace/info", {})
+        self.assertTrue(info2["open"])
+        self.assertEqual(info2["root"], str(Path(self.tmp).resolve()))
+
+    def test_auth_login_start_returns_url(self):
+        from aider.z.app_server.handlers import AppServerSession
+        from aider.z.auth import WebAuthPageSession
+        import socketserver
+
+        s = AppServerSession()
+        s.handle("initialize", {"clientInfo": {"name": "t"}})
+
+        fake_server = mock.Mock(spec=socketserver.TCPServer)
+        result_box = {"data": None, "error": None, "done": __import__("threading").Event()}
+        fake = WebAuthPageSession(
+            page_url="https://example.test/app/login?state=abc",
+            state="abc",
+            redirect_uri="http://127.0.0.1:8765/callback",
+            result_box=result_box,
+            server=fake_server,
+        )
+        # Don't let background thread block forever — mark done immediately with error
+        result_box["error"] = "test-stop"
+        result_box["done"].set()
+
+        with mock.patch("aider.z.auth.prepare_web_auth_page", return_value=fake):
+            out = s.handle(
+                "auth/loginStart",
+                {"method": "google", "intent": "signin", "openBrowser": False},
+            )
+        self.assertTrue(out["started"])
+        self.assertEqual(out["status"], "pending")
+        self.assertIn("example.test", out["loginUrl"])
+        st = s.handle("auth/loginStatus", {})
+        self.assertIn(st["status"], ("pending", "failed", "succeeded"))
+
+    def test_auth_logout(self):
+        from aider.z.app_server.handlers import AppServerSession
+
+        s = AppServerSession()
+        s.handle("initialize", {"clientInfo": {"name": "t"}})
+        with mock.patch("aider.z.auth.logout") as logout:
+            out = s.handle("auth/logout", {})
+        self.assertTrue(out["ok"])
+        logout.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

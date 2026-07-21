@@ -25,10 +25,15 @@ class AppServerSession:
         params = params or {}
         if method == "initialize":
             return self._initialize(params)
+        # Health is allowed pre-initialize so spawn/attach can probe quickly.
+        if method == "server/health":
+            return self._server_health(params)
         if not self.initialized:
             raise HandlerError(-32000, "Not initialized")
         if method == "workspace/open":
             return self._workspace_open(params)
+        if method == "workspace/info":
+            return self._workspace_info(params)
         if method == "uncertainty/list":
             return self._uncertainty_list(params)
         if method == "skills/list":
@@ -41,6 +46,14 @@ class AppServerSession:
             return self._mcp_list(params)
         if method == "auth/status":
             return self._auth_status(params)
+        if method == "auth/loginStart":
+            return self._auth_login_start(params)
+        if method == "auth/loginStatus":
+            return self._auth_login_status(params)
+        if method == "auth/loginCancel":
+            return self._auth_login_cancel(params)
+        if method == "auth/logout":
+            return self._auth_logout(params)
         if method == "usage/summary":
             return self._usage_summary(params)
         if method == "turn/start":
@@ -64,8 +77,19 @@ class AppServerSession:
                 "mcp",
                 "turns",
                 "auth",
+                "workspace",
             ],
             "workspaceRoot": self.workspace_root,
+        }
+
+    def _server_health(self, params: dict) -> dict:
+        del params
+        return {
+            "ok": True,
+            "initialized": self.initialized,
+            "serverInfo": {"name": SERVER_NAME, "version": PROTOCOL_VERSION},
+            "workspaceRoot": self.workspace_root,
+            "pid": os.getpid(),
         }
 
     def _workspace_open(self, params: dict) -> dict:
@@ -77,6 +101,15 @@ class AppServerSession:
             raise HandlerError(-32004, f"Not a directory: {path}")
         self.workspace_root = str(path)
         return {"ok": True, "root": self.workspace_root}
+
+    def _workspace_info(self, params: dict) -> dict:
+        del params
+        root = self.workspace_root
+        return {
+            "root": root,
+            "open": bool(root),
+            "name": Path(root).name if root else None,
+        }
 
     def _uncertainty_list(self, params: dict) -> dict:
         sort = (params.get("sort") or "risk").strip().lower()
@@ -195,23 +228,72 @@ class AppServerSession:
     def _auth_status(self, params: dict) -> dict:
         del params
         try:
-            from aider.z.auth import current_session
+            from aider.z.auth import current_session, get_auth_base_url
             from aider.z.onboarding import load_config
 
             creds = current_session()
             cfg = load_config()
             authed = bool(creds and creds.is_authenticated())
             email = None
+            name = None
             if authed and creds and getattr(creds, "user", None):
                 email = getattr(creds.user, "email", None)
+                name = getattr(creds.user, "name", None)
+            login = None
+            try:
+                from aider.z.app_server.login_session import controller
+
+                login = controller.status().to_dict()
+            except Exception:
+                login = None
             return {
                 "authenticated": authed,
                 "email": email,
+                "name": name,
+                "displayName": creds.display_name() if authed and creds else None,
                 "auth_mode": cfg.auth_mode,
                 "selected_model": cfg.selected_model,
+                "authBaseUrl": get_auth_base_url(),
+                "login": login,
             }
         except Exception as err:
             raise HandlerError(-32015, f"auth/status failed: {err}") from err
+
+    def _auth_login_start(self, params: dict) -> dict:
+        try:
+            from aider.z.app_server.login_session import controller
+
+            return controller.start(
+                method=(params.get("method") or "google"),
+                intent=(params.get("intent") or "signin"),
+                open_browser=bool(params.get("openBrowser", False)),
+            )
+        except ValueError as err:
+            raise HandlerError(-32602, str(err)) from err
+        except Exception as err:
+            raise HandlerError(-32016, f"auth/loginStart failed: {err}") from err
+
+    def _auth_login_status(self, params: dict) -> dict:
+        del params
+        from aider.z.app_server.login_session import controller
+
+        return controller.status().to_dict()
+
+    def _auth_login_cancel(self, params: dict) -> dict:
+        del params
+        from aider.z.app_server.login_session import controller
+
+        return controller.cancel()
+
+    def _auth_logout(self, params: dict) -> dict:
+        del params
+        try:
+            from aider.z.auth import logout
+
+            logout(io=None)
+            return {"ok": True, "authenticated": False}
+        except Exception as err:
+            raise HandlerError(-32017, f"auth/logout failed: {err}") from err
 
     def _usage_summary(self, params: dict) -> dict:
         # V0 stub — Phase 9 fills from gateway /v1/gateway/usage

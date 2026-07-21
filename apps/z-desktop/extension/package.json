@@ -2,14 +2,15 @@
   "name": "z-editor",
   "displayName": "Z",
   "description": "Z coding agent — chat, uncertainty chain, skills, commit blocks, MCP, profile",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "publisher": "z",
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": ["Other"],
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onUri"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -62,12 +63,28 @@
         "title": "Z: Start app-server"
       },
       {
+        "command": "z.stopAppServer",
+        "title": "Z: Stop app-server"
+      },
+      {
         "command": "z.reconnectAppServer",
         "title": "Z: Reconnect app-server"
       },
       {
         "command": "z.showStatus",
         "title": "Z: Show connection status"
+      },
+      {
+        "command": "z.signIn",
+        "title": "Z: Sign in"
+      },
+      {
+        "command": "z.signOut",
+        "title": "Z: Sign out"
+      },
+      {
+        "command": "z.cancelSignIn",
+        "title": "Z: Cancel sign-in"
       }
     ],
     "configuration": {
@@ -82,6 +99,11 @@
           "type": "boolean",
           "default": true,
           "description": "Spawn `z app-server` when the extension activates if not already reachable."
+        },
+        "z.zBinary": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the `z` CLI binary. Empty = resolve via PATH."
         }
       }
     }

@@ -17,12 +17,21 @@
       "result": {
         "serverInfo": { "name": "z-app-server", "version": "string" },
         "zHome": "string",
-        "capabilities": ["uncertainty", "skills", "commit_blocks", "mcp", "turns"]
+        "capabilities": ["uncertainty", "skills", "commit_blocks", "mcp", "turns", "auth", "workspace"]
       }
+    },
+    "server/health": {
+      "params": {},
+      "result": { "ok": true, "initialized": "boolean", "pid": "number" },
+      "notes": "Allowed before initialize — used by spawn/attach probe."
     },
     "workspace/open": {
       "params": { "root": "string" },
       "result": { "ok": true, "root": "string" }
+    },
+    "workspace/info": {
+      "params": {},
+      "result": { "root": "string|null", "open": "boolean", "name": "string|null" }
     },
     "turn/start": {
       "params": {
@@ -69,8 +78,35 @@
       "result": {
         "authenticated": "boolean",
         "email": { "optional": true },
-        "auth_mode": { "enum": ["router", "byok", null] }
+        "auth_mode": { "enum": ["router", "byok", null] },
+        "login": { "optional": true }
       }
+    },
+    "auth/loginStart": {
+      "params": {
+        "method": { "enum": ["google", "z"] },
+        "intent": { "enum": ["signin", "signup"], "default": "signin" },
+        "openBrowser": { "type": "boolean", "default": false }
+      },
+      "result": {
+        "started": true,
+        "loginUrl": "string",
+        "state": "string",
+        "status": "pending"
+      },
+      "notes": "Phase 3 — non-blocking; extension opens loginUrl via openExternal."
+    },
+    "auth/loginStatus": {
+      "params": {},
+      "result": { "status": { "enum": ["idle", "pending", "succeeded", "failed", "cancelled"] } }
+    },
+    "auth/loginCancel": {
+      "params": {},
+      "result": { "status": "cancelled" }
+    },
+    "auth/logout": {
+      "params": {},
+      "result": { "ok": true, "authenticated": false }
     }
   },
   "notifications": {
@@ -81,5 +117,13 @@
     "gate/commit_blocked": { "record": "CommitBlockRecord" },
     "turn/waiting_input": { "kind": "string", "payload": "object" },
     "turn/completed": { "turnId": "string", "ok": "boolean" }
+  },
+  "deepLinks": {
+    "protocol": "z-editor",
+    "examples": [
+      "z-editor://signin?method=google",
+      "z-editor://signin?method=z",
+      "z-editor://auth/complete"
+    ]
   }
 }

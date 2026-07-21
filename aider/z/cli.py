@@ -100,6 +100,11 @@ def build_parser() -> argparse.ArgumentParser:
     app_server.add_argument("--host", default="127.0.0.1")
     app_server.add_argument("--port", type=int, default=8741)
     app_server.add_argument("--log-level", default="INFO")
+    app_server.add_argument(
+        "--pid-file",
+        default=None,
+        help="Write PID file for editor spawn/attach lifecycle",
+    )
 
     bench = sub.add_parser(
         "benchmark",
@@ -588,6 +593,9 @@ def cmd_app_server(args) -> int:
         "--log-level",
         str(getattr(args, "log_level", "INFO")),
     ]
+    pid_file = getattr(args, "pid_file", None)
+    if pid_file:
+        argv.extend(["--pid-file", str(pid_file)])
     return app_server_main(argv)
 
 

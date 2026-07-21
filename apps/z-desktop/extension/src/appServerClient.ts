@@ -14,16 +14,39 @@ export interface InitializeResult {
   workspaceRoot?: string | null;
 }
 
+export interface AuthStatus {
+  authenticated?: boolean;
+  email?: string | null;
+  name?: string | null;
+  displayName?: string | null;
+  auth_mode?: string | null;
+  selected_model?: string | null;
+  authBaseUrl?: string;
+  login?: LoginStatus | null;
+}
+
+export interface LoginStatus {
+  status: "idle" | "pending" | "succeeded" | "failed" | "cancelled" | string;
+  method?: string | null;
+  loginUrl?: string | null;
+  state?: string | null;
+  error?: string | null;
+  email?: string | null;
+}
+
 type Pending = {
   resolve: (value: unknown) => void;
   reject: (err: Error) => void;
 };
+
+type NotifyHandler = (method: string, params: unknown) => void;
 
 export class AppServerClient {
   private ws: WebSocket | null = null;
   private nextId = 1;
   private pending = new Map<JsonRpcId, Pending>();
   private url: string;
+  private onNotify: NotifyHandler | null = null;
 
   constructor(url: string) {
     this.url = url;
@@ -33,7 +56,15 @@ export class AppServerClient {
     return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
   }
 
-  async connect(): Promise<void> {
+  get serverUrl(): string {
+    return this.url;
+  }
+
+  setNotificationHandler(handler: NotifyHandler | null): void {
+    this.onNotify = handler;
+  }
+
+  async connect(timeoutMs = 5000): Promise<void> {
     if (this.connected) {
       return;
     }
@@ -46,7 +77,7 @@ export class AppServerClient {
           /* ignore */
         }
         reject(new Error(`Timed out connecting to ${this.url}`));
-      }, 5000);
+      }, timeoutMs);
       ws.on("open", () => {
         clearTimeout(timer);
         this.ws = ws;
@@ -99,21 +130,38 @@ export class AppServerClient {
 
   async initialize(workspaceRoot?: string): Promise<InitializeResult> {
     const result = (await this.request("initialize", {
-      clientInfo: { name: "z-editor", version: "0.1.0" },
+      clientInfo: { name: "z-editor", version: "0.3.0" },
       workspaceRoot,
     })) as InitializeResult;
     this.notify("initialized");
     return result;
   }
 
+  async health(): Promise<{ ok: boolean; pid?: number; initialized?: boolean }> {
+    return (await this.request("server/health")) as {
+      ok: boolean;
+      pid?: number;
+      initialized?: boolean;
+    };
+  }
+
   private onMessage(raw: string): void {
-    let msg: { id?: JsonRpcId; result?: unknown; error?: { message?: string } };
+    let msg: {
+      id?: JsonRpcId;
+      method?: string;
+      params?: unknown;
+      result?: unknown;
+      error?: { message?: string };
+    };
     try {
       msg = JSON.parse(raw);
     } catch {
       return;
     }
     if (msg.id === undefined || msg.id === null) {
+      if (msg.method && this.onNotify) {
+        this.onNotify(msg.method, msg.params);
+      }
       return;
     }
     const pending = this.pending.get(msg.id);
@@ -126,5 +174,57 @@ export class AppServerClient {
     } else {
       pending.resolve(msg.result);
     }
+  }
+}
+
+/** Probe whether something accepts WS connections at url (no initialize). */
+export async function probeAppServer(url: string, timeoutMs = 800): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const ws = new WebSocket(url);
+    const timer = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      try {
+        ws.close();
+      } catch {
+        /* ignore */
+      }
+      resolve(false);
+    }, timeoutMs);
+    ws.on("open", () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      try {
+        ws.close();
+      } catch {
+        /* ignore */
+      }
+      resolve(true);
+    });
+    ws.on("error", () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      resolve(false);
+    });
+  });
+}
+
+export function parseHostPort(url: string): { host: string; port: number } {
+  try {
+    const u = new URL(url.includes("://") ? url : `ws://${url}`);
+    const host = u.hostname || "127.0.0.1";
+    const port = u.port ? Number(u.port) : 8741;
+    return { host, port };
+  } catch {
+    return { host: "127.0.0.1", port: 8741 };
   }
 }
