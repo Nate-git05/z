@@ -781,6 +781,53 @@ class Coder:
         finally:
             self.waiting_spinner = None
 
+    def _phase_spinner_start(self, text: str) -> None:
+        """Start (or restart) the mascot/eyes spinner for a planning step."""
+        self._stop_waiting_spinner()
+        if not text:
+            return
+        try:
+            if not self.show_pretty():
+                # Non-pretty / dumb terminals: still print a static breadcrumb
+                self.io.tool_output(text)
+                return
+        except Exception:
+            return
+        try:
+            if getattr(self.io, "z_theme", True):
+                self.waiting_spinner = waiting_display(text)
+            else:
+                self.waiting_spinner = WaitingSpinner(text)
+            self.waiting_spinner.start()
+        except Exception:
+            self.waiting_spinner = None
+            try:
+                self.io.tool_output(text)
+            except Exception:
+                pass
+
+    def _phase_spinner_update(self, text: str) -> None:
+        """Update spinner status text without stopping the eyes animation."""
+        if not text:
+            return
+        spinner = getattr(self, "waiting_spinner", None)
+        if spinner is None:
+            self._phase_spinner_start(text)
+            return
+        try:
+            if hasattr(spinner, "set_text"):
+                spinner.set_text(text)
+            elif hasattr(spinner, "text"):
+                spinner.text = text
+            elif hasattr(spinner, "spinner") and hasattr(spinner.spinner, "text"):
+                spinner.spinner.text = text
+        except Exception:
+            pass
+
+    def _phase_spinner_stop(self) -> None:
+        """Stop planning-phase spinner before printing or prompting."""
+        self._stop_waiting_spinner()
+
     def get_abs_fnames_content(self):
         for fname in list(self.abs_fnames):
             content = self.io.read_text(fname)
@@ -1133,35 +1180,57 @@ class Coder:
                 eng0.ctx.task_intent = intent
                 eng0.ctx.task_mode = mode.value if hasattr(mode, "value") else str(mode)
 
-            # Skills first (feeds capability plan). Explore overlaps checklist/plan
-            # (T3-style: fork non-critical local work off the critical path).
-            self._maybe_pull_skills(user_text, checkpoint="turn")
+            # Skills + overlapped explore, with continuous mascot/eyes updates.
+            # Explore forks off the critical path while checklist/plan draft (T3).
+            try:
+                self._phase_spinner_start("Planning — matching skills…")
+                self._maybe_pull_skills(user_text, checkpoint="turn")
 
-            explore_fut = self._start_explore_pass_async(user_text)
+                if mode.allows_explore_pass:
+                    try:
+                        from aider.z.explore import explore_pass_enabled
 
-            # House instructions (AGENTS.md) — once per session
-            self._maybe_inject_house_instructions()
+                        if explore_pass_enabled():
+                            self._phase_spinner_start(
+                                "Planning — exploring related files…"
+                            )
+                    except Exception:
+                        pass
+                explore_fut = self._start_explore_pass_async(user_text)
 
-            if mode.allows_requirement_decomposition:
-                self._maybe_begin_uncertainty_task(user_text)
+                # House instructions (AGENTS.md) — once per session
+                self._maybe_inject_house_instructions()
 
-            # PLAN mode: inject reminder; skip high-stakes *implement* plan confirm
-            from aider.z.task_mode import TaskMode as _TM
+                if mode.allows_requirement_decomposition:
+                    self._phase_spinner_start(
+                        "Planning — drafting approach checklist…"
+                    )
+                    self._maybe_begin_uncertainty_task(user_text)
 
-            if mode is _TM.PLAN:
-                self._maybe_advance_plan_interview(user_text)
-                self._inject_plan_mode_reminder()
-            elif mode.allows_planning:
-                if not self._maybe_require_implementation_plan(user_text):
-                    self._cancel_explore_pass(explore_fut)
-                    return
-            else:
-                # Ensure no stale plan from a prior turn leaks into this message
-                eng = getattr(self, "uncertainty_engine", None)
-                if eng is not None and getattr(eng, "ctx", None) is not None:
-                    eng.ctx.plan = None
-                    eng.ctx.plan_required = False
-                    eng.ctx.plan_approved = True
+                # PLAN mode: inject reminder; skip high-stakes *implement* plan confirm
+                from aider.z.task_mode import TaskMode as _TM
+
+                if mode is _TM.PLAN:
+                    self._phase_spinner_start("Planning — refining plan interview…")
+                    self._maybe_advance_plan_interview(user_text)
+                    self._phase_spinner_stop()
+                    self._inject_plan_mode_reminder()
+                elif mode.allows_planning:
+                    self._phase_spinner_start(
+                        "Planning — drafting implementation plan…"
+                    )
+                    if not self._maybe_require_implementation_plan(user_text):
+                        self._cancel_explore_pass(explore_fut)
+                        return
+                else:
+                    # Ensure no stale plan from a prior turn leaks into this message
+                    eng = getattr(self, "uncertainty_engine", None)
+                    if eng is not None and getattr(eng, "ctx", None) is not None:
+                        eng.ctx.plan = None
+                        eng.ctx.plan_required = False
+                        eng.ctx.plan_approved = True
+            finally:
+                self._phase_spinner_stop()
 
             # Join explore before the model turn so findings still land in context
             self._finish_explore_pass(explore_fut)
@@ -1409,12 +1478,14 @@ class Coder:
             if not get_session_skill_index():
                 load_skills_for_session(io=None)
 
+            self._phase_spinner_update("Planning — routing skills…")
             skills, skip_reasons = pull_skills_for_checkpoint(
                 user_message,
                 root=getattr(self, "root", None),
                 limit=2,
                 checkpoint=checkpoint,
             )
+            self._phase_spinner_update("Planning — building capability plan…")
             # Retrieve trace: verbose, --yes-always / NI, or Z_SKILL_RETRIEVE_LOG
             try:
                 import os
@@ -1492,6 +1563,9 @@ class Coder:
             if not blocks:
                 return
 
+            # Clear eyes spinner before printing results into the scrollback
+            self._phase_spinner_stop()
+
             block = "\n\n".join(blocks)
             names = ", ".join(s.title for s in skills) if skills else "(capability plan only)"
             has_bug = any((s.kind or "") == "bug_pattern" for s in (skills or []))
@@ -1515,6 +1589,12 @@ class Coder:
                     f"Capability gaps ({len(cap_plan.coverage_gaps)}): "
                     "compensate with workflow — no skill ≠ skip verification."
                 )
+                # Gaps are informational — never a turn abort.
+                if not skills:
+                    self.io.tool_output(
+                        "No matching skill — continuing with native plan / "
+                        "verify workflow (not stopped)."
+                    )
             self.cur_messages += [
                 {"role": "user", "content": block},
                 {
@@ -2019,11 +2099,13 @@ class Coder:
             # New task → allow one drift confirm again
             self._drift_asked_this_task = False
             self._drift_reflection_log = []
+            self._phase_spinner_update("Planning — enriching approach steps…")
             checklist, plan, was_thin = enrich_thin_checklist(checklist, user_message)
             engine.ctx.checklist = checklist
             if not checklist.items and not plan:
                 return
 
+            self._phase_spinner_stop()
             rendered = format_checklist_for_user(
                 checklist, plan=plan, thin=was_thin
             )
@@ -2438,6 +2520,8 @@ class Coder:
             except Exception:
                 files = []
 
+            self._phase_spinner_update("Planning — scoring blast radius…")
+
             # Light pre-edit blast-radius: reference count for symbols in chat files
             symbols = []
             reference_count = 0
@@ -2462,6 +2546,7 @@ class Coder:
             except Exception:
                 pass
 
+            self._phase_spinner_update("Planning — drafting implementation plan…")
             plan = engine.maybe_require_plan(
                 user_message,
                 files=files,
@@ -2472,6 +2557,7 @@ class Coder:
                 return True
 
             # Full plan in the scrollback for review
+            self._phase_spinner_stop()
             rendered = format_plan_for_user(plan)
             self.io.tool_output("")
             self.io.tool_output(rendered)

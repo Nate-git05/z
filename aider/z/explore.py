@@ -153,7 +153,12 @@ def _search_path_names(
     max_files_scanned: int = 4000,
     deadline: Optional[float] = None,
 ) -> List[str]:
-    """Filename substring search with hard scan/time budgets."""
+    """Filename substring search with hard scan/time budgets.
+
+    Unbounded ``os.walk`` on a monorepo can hang for minutes after the
+    capability-plan lines and look like Z stopped. Cap both files visited
+    and wall clock so explore always returns.
+    """
     import time
 
     key = keyword.lower()
@@ -276,6 +281,7 @@ def _rank_candidates(
     already_in_chat: Optional[Sequence[str]],
     max_keywords: int,
     max_files: int,
+    on_progress=None,
 ) -> Tuple[List[str], List[Tuple[str, List[str]]]]:
     keywords = extract_keywords(task, limit=max_keywords)
     if not keywords:
@@ -288,11 +294,19 @@ def _rank_candidates(
     use_rg = _rg_available()
     # Whole-pass budget — explore must not dominate turn latency.
     pass_deadline = time.monotonic() + 12.0
+    total = len(keywords)
 
-    for kw in keywords:
+    for i, kw in enumerate(keywords):
         remaining = pass_deadline - time.monotonic()
         if remaining <= 0:
             break
+        if on_progress:
+            try:
+                on_progress(
+                    f"Planning — exploring `{kw}` ({i + 1}/{total})…"
+                )
+            except Exception:
+                pass
         if use_rg:
             for rel, snip in _search_rg(
                 root, kw, max_hits=5, timeout=min(4.0, remaining)
@@ -390,11 +404,13 @@ def run_explore_pass(
     max_keywords: int = 5,
     max_files: int = 12,
     depth: Optional[str] = None,
+    on_progress=None,
 ) -> str:
     """
     Return a compact markdown findings block (may be empty).
 
     ``depth`` overrides ``Z_EXPLORE_DEPTH`` when provided (``thin`` / ``deep``).
+    ``on_progress`` is an optional ``callable(str)`` for live status updates.
     """
     if not explore_pass_enabled():
         return ""
@@ -402,12 +418,19 @@ def run_explore_pass(
     if not root_p.is_dir():
         return ""
 
+    if on_progress:
+        try:
+            on_progress("Planning — exploring related files…")
+        except Exception:
+            pass
+
     keywords, ranked = _rank_candidates(
         task,
         root_p,
         already_in_chat=already_in_chat,
         max_keywords=max_keywords,
         max_files=max_files,
+        on_progress=on_progress,
     )
     if not ranked:
         return ""
@@ -415,6 +438,11 @@ def run_explore_pass(
     mode = (depth or explore_depth()).strip().lower()
     if mode in ("0", "thin", "shallow", "basic", "list"):
         return _format_thin(ranked)
+    if on_progress:
+        try:
+            on_progress("Planning — reading candidate signatures…")
+        except Exception:
+            pass
     return _format_deep(
         root_p,
         keywords,
