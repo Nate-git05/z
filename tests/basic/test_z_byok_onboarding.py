@@ -222,15 +222,15 @@ class StartAgentInjectTest(unittest.TestCase):
             captured["argv"] = list(argv or [])
             return 0
 
-        with patch("aider.z.cli.ensure_agent_session", return_value=True):
-            with patch(
-                "aider.z.onboarding.load_config",
-                return_value=OnboardingConfig(
-                    auth_mode="byok", selected_model="claude-haiku-4-5"
-                ),
-            ):
-                with patch("aider.main.main", side_effect=fake_main):
-                    code = _start_agent([])
+        with patch("aider.z.cli.ensure_agent_session", return_value=True), patch(
+            "aider.z.cli._model_missing_keys", return_value=[]
+        ), patch(
+            "aider.z.onboarding.load_config",
+            return_value=OnboardingConfig(
+                auth_mode="byok", selected_model="claude-haiku-4-5"
+            ),
+        ), patch("aider.main.main", side_effect=fake_main):
+            code = _start_agent([])
         self.assertEqual(code, 0)
         self.assertEqual(
             captured["argv"],
@@ -244,15 +244,15 @@ class StartAgentInjectTest(unittest.TestCase):
             captured["argv"] = list(argv or [])
             return 0
 
-        with patch("aider.z.cli.ensure_agent_session", return_value=True):
-            with patch(
-                "aider.z.onboarding.load_config",
-                return_value=OnboardingConfig(
-                    auth_mode="byok", selected_model="claude-haiku-4-5"
-                ),
-            ):
-                with patch("aider.main.main", side_effect=fake_main):
-                    code = _start_agent(["--model", "gpt-5.6"])
+        with patch("aider.z.cli.ensure_agent_session", return_value=True), patch(
+            "aider.z.cli._model_missing_keys", return_value=[]
+        ), patch(
+            "aider.z.onboarding.load_config",
+            return_value=OnboardingConfig(
+                auth_mode="byok", selected_model="claude-haiku-4-5"
+            ),
+        ), patch("aider.main.main", side_effect=fake_main):
+            code = _start_agent(["--model", "gpt-5.6"])
         self.assertEqual(code, 0)
         self.assertEqual(
             captured["argv"], ["--model", "gpt-5.6", "--no-show-model-warnings"]
@@ -330,6 +330,19 @@ class RememberedModeTest(unittest.TestCase):
         self.assertTrue(ok)
         byok.assert_called_once()
 
+    def test_start_agent_hard_stops_if_keys_still_missing(self):
+        with patch("aider.z.cli.ensure_agent_session", return_value=True), patch(
+            "aider.z.onboarding.load_config",
+            return_value=OnboardingConfig(
+                auth_mode="byok", selected_model="claude-sonnet-5"
+            ),
+        ), patch(
+            "aider.z.cli._model_missing_keys", return_value=["ANTHROPIC_API_KEY"]
+        ), patch("aider.main.main") as agent_main:
+            code = _start_agent([])
+        self.assertEqual(code, 1)
+        agent_main.assert_not_called()
+
 
 class RouterModeFlowTest(unittest.TestCase):
     def test_router_mode_asks_for_preferred_model_after_login(self):
@@ -365,12 +378,15 @@ class RouterModeFlowTest(unittest.TestCase):
                                 side_effect=fake_router_model,
                             ):
                                 with patch(
-                                    "aider.z.onboarding.save_auth_mode"
-                                ) as save_mode:
+                                    "aider.z.cli._ensure_model_keys", return_value=True
+                                ):
                                     with patch(
-                                        "aider.z.onboarding.save_selected_model"
-                                    ) as save_model:
-                                        ok = ensure_agent_session(io)
+                                        "aider.z.onboarding.save_auth_mode"
+                                    ) as save_mode:
+                                        with patch(
+                                            "aider.z.onboarding.save_selected_model"
+                                        ) as save_model:
+                                            ok = ensure_agent_session(io)
 
         self.assertTrue(ok)
         self.assertEqual(order, ["login", "mode", "router_model"])
@@ -384,15 +400,15 @@ class RouterModeFlowTest(unittest.TestCase):
             captured["argv"] = list(argv or [])
             return 0
 
-        with patch("aider.z.cli.ensure_agent_session", return_value=True):
-            with patch(
-                "aider.z.onboarding.load_config",
-                return_value=OnboardingConfig(
-                    auth_mode="router", selected_model="claude-haiku-4-5"
-                ),
-            ):
-                with patch("aider.main.main", side_effect=fake_main):
-                    code = _start_agent([])
+        with patch("aider.z.cli.ensure_agent_session", return_value=True), patch(
+            "aider.z.cli._model_missing_keys", return_value=[]
+        ), patch(
+            "aider.z.onboarding.load_config",
+            return_value=OnboardingConfig(
+                auth_mode="router", selected_model="claude-haiku-4-5"
+            ),
+        ), patch("aider.main.main", side_effect=fake_main):
+            code = _start_agent([])
         self.assertEqual(code, 0)
         self.assertEqual(
             captured["argv"],
