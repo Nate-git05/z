@@ -70,10 +70,7 @@ class UncertaintyStore:
             except Exception:
                 pass
         if sync and self.remote_sync:
-            try:
-                self.remote_sync(node)
-            except Exception:
-                pass
+            self._enqueue_remote(node)
         return node
 
     def add_many(self, nodes: Iterable[UncertaintyNode], *, sync: bool = True) -> List[UncertaintyNode]:
@@ -127,11 +124,36 @@ class UncertaintyStore:
             except Exception:
                 pass
         if self.remote_sync:
-            try:
-                self.remote_sync(node)
-            except Exception:
-                pass
+            self._enqueue_remote(node)
         return node
+
+    def _enqueue_remote(self, node: UncertaintyNode) -> None:
+        """Local-write-then-async-sync — never block the agent loop on network."""
+        sync_fn = self.remote_sync
+        if not sync_fn:
+            return
+        try:
+            from .sync_outbox import enqueue_node_sync
+
+            version = (
+                getattr(node, "resolved_at", None)
+                or getattr(node, "updated_at", None)
+                or getattr(node, "created_at", None)
+                or node.status.value
+                or "v"
+            )
+            # Capture current node snapshot for the worker
+            node_id = node.id
+
+            def _payload() -> bool:
+                current = self.nodes.get(node_id, node)
+                result = sync_fn(current)
+                return bool(result) if result is not None else True
+
+            enqueue_node_sync(node_id, str(version), _payload)
+        except Exception:
+            # Outbox unavailable — drop the sync rather than block the loop
+            logger.debug("uncertainty async enqueue failed; skipping remote sync")
 
     def save_local(self) -> None:
         path = self._local_path

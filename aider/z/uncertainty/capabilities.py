@@ -25,9 +25,24 @@ class Capability:
     # Why it was inferred
     reason: str = ""
     critical: bool = True
+    # Provenance (P0.3) — required for every activation
+    requirement_id: str = ""
+    matched_span: str = ""
+    confidence: float = 0.0
+    supporting_requirement_ids: tuple = field(default_factory=tuple)
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+@dataclass(frozen=True)
+class ClassifiedRequirement:
+    """One classified requirement clause for capability inference."""
+
+    id: str
+    text: str
+    kind: str = "requested_action"  # requested_action | observation | prohibited
+    polarity: str = "required"  # required | prohibited | informational
 
 
 @dataclass
@@ -200,40 +215,142 @@ _GAP_COMPENSATION = {
 }
 
 
-def infer_capabilities(requirements: str) -> List[Capability]:
-    """Infer required capabilities from the task / checklist text."""
-    text = requirements or ""
-    found: List[Capability] = []
-    seen: Set[str] = set()
-    for cap_id, label, evidence, pattern, critical in _CAPABILITY_RULES:
-        if cap_id in seen:
-            continue
-        if pattern.search(text):
-            seen.add(cap_id)
-            found.append(
-                Capability(
+def requirements_from_intent(intent) -> List[ClassifiedRequirement]:
+    """Build classified requirements from a TaskIntent (P0.2/P0.3)."""
+    out: List[ClassifiedRequirement] = []
+    for i, text in enumerate(getattr(intent, "requested_actions", None) or []):
+        if text and str(text).strip():
+            out.append(
+                ClassifiedRequirement(
+                    id=f"req-{i + 1}",
+                    text=str(text).strip(),
+                    kind="requested_action",
+                    polarity="required",
+                )
+            )
+    # Prohibited clauses never feed inference — listed only for audit
+    for i, text in enumerate(getattr(intent, "prohibited_actions", None) or []):
+        if text and str(text).strip():
+            out.append(
+                ClassifiedRequirement(
+                    id=f"proh-{i + 1}",
+                    text=str(text).strip(),
+                    kind="prohibited",
+                    polarity="prohibited",
+                )
+            )
+    return out
+
+
+def infer_capabilities(
+    requirements: "str | Sequence[ClassifiedRequirement] | None" = None,
+    *,
+    intent=None,
+) -> List[Capability]:
+    """
+    Infer required capabilities from *classified* requirement clauses only.
+
+    Raw prompt strings are accepted for backward compatibility but are treated
+    as a single required clause — callers should prefer TaskIntent / classified
+    lists. Observations and prohibited clauses never activate capabilities.
+    """
+    clauses: List[ClassifiedRequirement] = []
+    if intent is not None:
+        clauses = [
+            c
+            for c in requirements_from_intent(intent)
+            if c.polarity == "required" and c.kind == "requested_action"
+        ]
+    elif isinstance(requirements, str):
+        # Legacy path: one synthetic clause — still no whole-message secondary scan
+        text = (requirements or "").strip()
+        if text:
+            clauses = [
+                ClassifiedRequirement(
+                    id="req-1",
+                    text=text,
+                    kind="requested_action",
+                    polarity="required",
+                )
+            ]
+    elif requirements:
+        for i, item in enumerate(requirements):
+            if isinstance(item, ClassifiedRequirement):
+                if item.polarity == "required" and item.kind == "requested_action":
+                    clauses.append(item)
+            elif isinstance(item, str) and item.strip():
+                clauses.append(
+                    ClassifiedRequirement(
+                        id=f"req-{i + 1}",
+                        text=item.strip(),
+                        kind="requested_action",
+                        polarity="required",
+                    )
+                )
+
+    # Aggregate activations with multi-requirement provenance
+    by_id: dict[str, Capability] = {}
+    for clause in clauses:
+        span = clause.text
+        for cap_id, label, evidence, pattern, critical in _CAPABILITY_RULES:
+            m = pattern.search(span)
+            if not m:
+                continue
+            matched = m.group(0)
+            reason = "explicit requested verification"
+            # Soften implementation-flavored caps when the clause is investigative
+            if re.search(
+                r"(?i)\b(investigate|diagnose|determine|explain|why|mapping)\b", span
+            ):
+                reason = "explicit requested investigation/verification"
+            existing = by_id.get(cap_id)
+            if existing:
+                support = tuple(
+                    dict.fromkeys(
+                        list(existing.supporting_requirement_ids or ())
+                        + (existing.requirement_id,)
+                        + (clause.id,)
+                    )
+                )
+                by_id[cap_id] = Capability(
                     id=cap_id,
                     label=label,
                     evidence_type=evidence,
-                    reason=f"matched requirement text for {cap_id}",
+                    reason=existing.reason or reason,
                     critical=critical,
+                    requirement_id=existing.requirement_id or clause.id,
+                    matched_span=existing.matched_span or matched,
+                    confidence=max(existing.confidence, 0.88),
+                    supporting_requirement_ids=support,
                 )
-            )
-    return found
+            else:
+                by_id[cap_id] = Capability(
+                    id=cap_id,
+                    label=label,
+                    evidence_type=evidence,
+                    reason=reason,
+                    critical=critical,
+                    requirement_id=clause.id,
+                    matched_span=matched,
+                    confidence=0.88,
+                    supporting_requirement_ids=(clause.id,),
+                )
+    return list(by_id.values())
 
 
 def build_capability_plan(
-    requirements: str,
+    requirements: "str | Sequence[ClassifiedRequirement] | None" = None,
     *,
     skill_capabilities: Sequence[str] = (),
     skill_ids: Sequence[str] = (),
+    intent=None,
 ) -> CapabilityPlan:
     """
-    required_capabilities = infer(requirements)
+    required_capabilities = infer(classified requirements)
     available = skills + native abilities
     coverage_gaps = required - available
     """
-    required = infer_capabilities(requirements)
+    required = infer_capabilities(requirements, intent=intent)
     skill_caps = {c.strip().lower() for c in skill_capabilities if c and c.strip()}
     skill_ids_l = {s.strip().lower() for s in skill_ids if s and s.strip()}
 

@@ -1,15 +1,22 @@
-"""Remote sync of uncertainty nodes to z_server Postgres backend."""
+"""Remote sync of uncertainty nodes to z_server Postgres backend.
+
+Network I/O here must use short timeouts. Callers should enqueue via
+``sync_outbox`` rather than invoking these functions on the agent loop.
+"""
 
 from __future__ import annotations
 
 import os
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple, Union
 
 import requests
 
 from aider.z.auth import current_session, get_auth_base_url
 
 from .schema import UncertaintyNode
+
+# (connect, read) — never 15s on this path
+TIMEOUT: Union[float, Tuple[float, float]] = (1.0, 2.0)
 
 
 def _token() -> Optional[str]:
@@ -32,7 +39,7 @@ def sync_node(node: UncertaintyNode, *, repo_key: str, workspace_id: Optional[st
             f"{base}/v1/uncertainty/nodes",
             headers={"Authorization": f"Bearer {token}"},
             json=payload,
-            timeout=15,
+            timeout=TIMEOUT,
         )
         return resp.status_code in (200, 201)
     except requests.RequestException:
@@ -52,7 +59,7 @@ def fetch_workspace_nodes(*, repo_key: str, workspace_id: Optional[str] = None) 
             f"{base}/v1/uncertainty/nodes",
             headers={"Authorization": f"Bearer {token}"},
             params=params,
-            timeout=15,
+            timeout=TIMEOUT,
         )
         if resp.status_code != 200:
             return []
@@ -71,7 +78,7 @@ def update_remote_status(node_id: str, status: str, *, repo_key: str) -> bool:
             f"{base}/v1/uncertainty/nodes/{node_id}",
             headers={"Authorization": f"Bearer {token}"},
             json={"status": status, "repo_key": repo_key},
-            timeout=15,
+            timeout=TIMEOUT,
         )
         return resp.status_code == 200
     except requests.RequestException:

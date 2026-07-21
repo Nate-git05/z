@@ -1248,7 +1248,9 @@ class Commands:
 
     def cmd_ask(self, args):
         """Ask questions about the code base without editing any files. If no prompt provided, switches to ask mode."""  # noqa
-        return self._generic_chat_command(args, "ask")
+        from aider.z.task_mode import TaskMode
+
+        return self._generic_chat_command(args, "ask", task_mode=TaskMode.ASK)
 
     def cmd_code(self, args):
         """Ask for changes to your code. If no prompt provided, switches to code mode."""  # noqa
@@ -1260,7 +1262,14 @@ class Commands:
 
     def cmd_context(self, args):
         """Enter context mode to see surrounding code context. If no prompt provided, switches to context mode."""  # noqa
-        return self._generic_chat_command(args, "context", placeholder=args.strip() or None)
+        from aider.z.task_mode import TaskMode
+
+        return self._generic_chat_command(
+            args,
+            "context",
+            placeholder=args.strip() or None,
+            task_mode=TaskMode.ASK,
+        )
 
     def cmd_ok(self, args):
         "Alias for `/code Ok, please go ahead and make those changes.` (any args are appended)"
@@ -1270,7 +1279,7 @@ class Commands:
             msg = f"{msg} {extra}"
         return self.cmd_code(msg)
 
-    def _generic_chat_command(self, args, edit_format, placeholder=None):
+    def _generic_chat_command(self, args, edit_format, placeholder=None, task_mode=None):
         if not args.strip():
             # Switch to the corresponding chat mode if no args provided
             return self.cmd_chat_mode(edit_format)
@@ -1283,6 +1292,9 @@ class Commands:
             edit_format=edit_format,
             summarize_from_coder=False,
         )
+        if task_mode is not None:
+            coder.forced_task_mode = task_mode
+            coder.task_mode = task_mode
 
         user_msg = args
         coder.run(user_msg)
