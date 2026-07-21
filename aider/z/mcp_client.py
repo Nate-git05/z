@@ -140,3 +140,14 @@ def note_unverifiable_mcp_result(tool_name: str, coder=None) -> None:
     if engine is None:
         return
     engine.record_mcp_unverifiable(tool_name)
+
+
+def format_mcp_result_for_chat(tool_name: str, result_text: str) -> str:
+    """Budget MCP tool dumps before they enter ``cur_messages``."""
+    from aider.z.output_budget import inject_tool_result
+
+    return inject_tool_result(
+        result_text or "",
+        label=f"mcp-{tool_name or 'tool'}",
+        command=f"mcp:{tool_name}" if tool_name else "mcp",
+    )

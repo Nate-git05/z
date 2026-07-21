@@ -6,6 +6,7 @@ Standing regression signal for whether P0+P1 made Z better at **real work**, not
 |-------|----------|
 | Issue schema + loader | `aider/z/benchmark/issues.py` |
 | Scripted / adapter agent | `aider/z/benchmark/agent.py` |
+| Live adapter (z / hook / replay) | `aider/z/benchmark/live_adapter.py` |
 | Harness | `aider/z/benchmark/harness.py` |
 | Scoring / report | `aider/z/benchmark/scoring.py` |
 | Issue set (v1, 30 issues) | `benchmarks/p2/issues/` |
@@ -26,7 +27,35 @@ z benchmark run
 z benchmark score benchmarks/p2/results/run-<id>.jsonl
 ```
 
-CI uses the **scripted agent adapter**: real P0/P1 mode, intent, clause, and shell-risk classifiers, plus authored solutions per issue. A live LLM adapter can be plugged in later without changing scoring.
+CI uses the **scripted agent adapter**: real P0/P1 mode, intent, clause, and shell-risk classifiers, plus authored solutions per issue.
+
+### Live adapter (real model / hook / replay)
+
+```bash
+# Builtin Z coder against the fixture worktree (needs API keys)
+Z_P2_LIVE=1 Z_P2_LIVE_MODEL=gpt-4o-mini \
+  python -m aider.z.benchmark run --adapter live --ids p2-011-bugfix-average --no-baseline
+
+# External hook (edits worktree + writes AgentTrace JSON)
+Z_P2_LIVE=1 Z_P2_LIVE_HOOK=scripts/p2_live_hook_example.py \
+  python -m aider.z.benchmark run --adapter live --ids p2-011-bugfix-average --no-baseline
+
+# Offline replay through the live pipeline (no LLM — CI / dry-run)
+Z_P2_LIVE=1 Z_P2_LIVE_BACKEND=replay \
+  python -m aider.z.benchmark run --adapter live --ids p2-011-bugfix-average --no-baseline
+```
+
+| Env | Meaning |
+|-----|---------|
+| `Z_P2_LIVE=1` | Enable live adapter (otherwise timed-out stub) |
+| `Z_P2_LIVE_BACKEND` | `z` (default), `hook`, or `replay` |
+| `Z_P2_LIVE_MODEL` | Model for builtin `z` backend |
+| `Z_P2_LIVE_HOOK` | Hook script path (implies hook backend if backend unset) |
+| `Z_P2_LIVE_MAX_TURNS` | Max coder turns for builtin (default 3) |
+| `Z_P2_LIVE_REPLAY` | Optional JSON with `file_edits` for replay |
+
+Without `Z_P2_LIVE=1`, `--adapter live` returns a timed-out stub so accidental CI
+selection cannot spend tokens. Scoring is unchanged.
 
 ## Design notes
 

@@ -243,7 +243,13 @@ class Commands:
             )
 
         content = self.scraper.scrape(url) or ""
-        content = f"Here is the content of {url}:\n\n" + content
+        try:
+            from aider.z.output_budget import inject_tool_result
+
+            body = inject_tool_result(content, label="web-scrape")
+            content = f"Here is the content of {url}:\n\n" + body
+        except Exception:
+            content = f"Here is the content of {url}:\n\n" + content
         if return_content:
             return content
 
@@ -1100,10 +1106,25 @@ class Commands:
             line_plural = "line" if num_lines == 1 else "lines"
             self.io.tool_output(f"Added {num_lines} {line_plural} of output to the chat.")
 
-            msg = prompts.run_output.format(
-                command=args,
-                output=combined_output,
-            )
+            try:
+                from aider.z.output_budget import inject_tool_result
+
+                output_for_chat = inject_tool_result(
+                    combined_output, label="run", command=args
+                )
+                # inject_tool_result may already prefix with Output of `...`
+                if output_for_chat.startswith("Output of "):
+                    msg = output_for_chat
+                else:
+                    msg = prompts.run_output.format(
+                        command=args,
+                        output=output_for_chat,
+                    )
+            except Exception:
+                msg = prompts.run_output.format(
+                    command=args,
+                    output=combined_output,
+                )
 
             self.coder.cur_messages += [
                 dict(role="user", content=msg),
@@ -1251,6 +1272,159 @@ class Commands:
         from aider.z.task_mode import TaskMode
 
         return self._generic_chat_command(args, "ask", task_mode=TaskMode.ASK)
+
+    def cmd_plan(self, args):
+        """Enter plan interview (clarify → draft → approve). Product edits blocked until `/plan-exit`."""  # noqa
+        from aider.z.plan_interview import PlanInterviewStage, plan_interview_enabled
+        from aider.z.task_mode import TaskMode
+
+        if not (args or "").strip():
+            self.coder.forced_task_mode = TaskMode.PLAN
+            self.coder.task_mode = TaskMode.PLAN
+            if plan_interview_enabled():
+                self.coder._plan_interview_stage = PlanInterviewStage.CLARIFY
+                self.coder._plan_clarify_asked = False
+            try:
+                self.coder._inject_plan_mode_reminder()
+            except Exception:
+                pass
+            self.io.tool_output(
+                "Switched to plan mode (product edits blocked). "
+                "Interview: clarify → draft → /plan-exit. "
+                "Describe the task, then `/plan-exit` when the plan is ready."
+            )
+            return
+
+        if plan_interview_enabled():
+            self.coder._plan_interview_stage = PlanInterviewStage.CLARIFY
+            self.coder._plan_clarify_asked = False
+
+        return self._generic_chat_command(
+            args,
+            self.coder.main_model.edit_format,
+            task_mode=TaskMode.PLAN,
+        )
+
+    def cmd_plan_draft(self, args):
+        """Advance plan interview to draft and remind the model to write the plan artifact."""  # noqa
+        from pathlib import Path
+
+        from aider.z.plan_interview import PlanInterviewStage, format_interview_reminder
+        from aider.z.plan_mode import new_plan_path
+        from aider.z.task_mode import TaskMode
+
+        self.coder.forced_task_mode = TaskMode.PLAN
+        self.coder.task_mode = TaskMode.PLAN
+        if not getattr(self.coder, "_active_plan_path", None):
+            self.coder._active_plan_path = str(new_plan_path(stem="task"))
+        self.coder._plan_interview_stage = PlanInterviewStage.DRAFT
+        path = Path(self.coder._active_plan_path)
+        block = format_interview_reminder(PlanInterviewStage.DRAFT, plan_path=path)
+        note = (args or "").strip()
+        if note:
+            block += f"\nUser note for the draft:\n{note}\n"
+        self.coder.cur_messages += [
+            {"role": "user", "content": block},
+            {
+                "role": "assistant",
+                "content": f"I'll draft the plan at `{path}` (no product edits).",
+            },
+        ]
+        self.io.tool_output(f"Plan interview → draft. Write the plan at {path}.")
+        return
+
+    def cmd_plan_status(self, args):
+        """Show plan interview stage and artifact path."""
+        from aider.z.plan_interview import (
+            PlanInterviewStage,
+            detect_stage,
+            format_status,
+        )
+
+        stage = getattr(self.coder, "_plan_interview_stage", None)
+        if stage is None:
+            stage = detect_stage(
+                active_path=getattr(self.coder, "_active_plan_path", None)
+            )
+        self.io.tool_output(
+            format_status(
+                stage if isinstance(stage, PlanInterviewStage) else PlanInterviewStage(stage),
+                plan_path=getattr(self.coder, "_active_plan_path", None),
+            ).rstrip()
+        )
+
+    def cmd_plan_approve(self, args):
+        """Approve the plan artifact and switch to implement (alias of `/plan-exit`)."""
+        return self.cmd_plan_exit(args)
+
+    def cmd_plan_exit(self, args):
+        """Leave plan mode, load the latest plan as binding context, and switch to code mode."""  # noqa
+        from pathlib import Path
+
+        from aider.z.plan_interview import PlanInterviewStage
+        from aider.z.plan_mode import format_plan_exit_context, plans_dir
+        from aider.z.task_mode import TaskMode
+
+        plan_text = ""
+        plan_path = None
+        # Prefer coder's active path, else newest file in plans_dir
+        active = getattr(self.coder, "_active_plan_path", None)
+        if active and Path(active).is_file():
+            plan_path = active
+            plan_text = Path(active).read_text(encoding="utf-8", errors="replace")
+        else:
+            plans = sorted(
+                plans_dir().glob("*.md"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            if plans:
+                plan_path = str(plans[0])
+                plan_text = plans[0].read_text(encoding="utf-8", errors="replace")
+
+        extra = (args or "").strip()
+        if not plan_text and not extra:
+            self.io.tool_warning(
+                "No plan artifact found under "
+                f"{plans_dir()}. Staying in plan mode — write a plan first "
+                "(or `/plan-draft`)."
+            )
+            return
+
+        # Clear sticky plan forcing
+        self.coder.forced_task_mode = None
+        self.coder.task_mode = TaskMode.IMPLEMENT
+        if hasattr(self.coder, "_active_plan_path"):
+            self.coder._active_plan_path = None
+        self.coder._plan_interview_stage = None
+        self.coder._plan_clarify_asked = False
+
+        if plan_text:
+            block = format_plan_exit_context(plan_text, plan_path=plan_path)
+            self.coder.cur_messages += [
+                {"role": "user", "content": block},
+                {
+                    "role": "assistant",
+                    "content": (
+                        "Plan approved via /plan-exit. I'll treat it as binding "
+                        "and implement next."
+                    ),
+                },
+            ]
+            eng = getattr(self.coder, "uncertainty_engine", None)
+            if eng is not None and getattr(eng, "ctx", None) is not None:
+                eng.ctx.plan_approved = True
+                eng.ctx.plan_required = False
+            self.io.tool_output(
+                f"Plan exit — loaded {plan_path or '(inline)'}; switching to code mode."
+            )
+
+        prompt = extra or "Implement the approved plan."
+        return self._generic_chat_command(
+            prompt,
+            self.coder.main_model.edit_format,
+            task_mode=TaskMode.IMPLEMENT,
+        )
 
     def cmd_code(self, args):
         """Ask for changes to your code. If no prompt provided, switches to code mode."""  # noqa

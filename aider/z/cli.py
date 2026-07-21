@@ -104,6 +104,12 @@ def build_parser() -> argparse.ArgumentParser:
     bench_run.add_argument("--parallel", type=int, default=1)
     bench_run.add_argument("--results-dir", default=None)
     bench_run.add_argument("--report", action="store_true")
+    bench_run.add_argument(
+        "--adapter",
+        choices=["scripted", "live"],
+        default=None,
+        help="Agent adapter (default: scripted; live needs Z_P2_LIVE=1; backends z|hook|replay)",
+    )
     bench_score = bench_sub.add_parser(
         "score", help="Score a persisted run without re-executing"
     )
@@ -526,6 +532,8 @@ def cmd_benchmark(io, args) -> int:
             argv.extend(["--results-dir", str(args.results_dir)])
         if getattr(args, "report", False):
             argv.append("--report")
+        if getattr(args, "adapter", None):
+            argv.extend(["--adapter", str(args.adapter)])
     elif sub == "score":
         argv.append(args.results_path)
     elif sub == "list":

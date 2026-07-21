@@ -43,6 +43,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print scoring report after the run",
     )
+    run.add_argument(
+        "--adapter",
+        choices=["scripted", "live"],
+        default=None,
+        help=(
+            "Agent adapter (default: scripted). "
+            "live needs Z_P2_LIVE=1; backends: z (builtin), hook, replay"
+        ),
+    )
 
     score = sub.add_parser("score", help="Score a persisted run without re-executing")
     score.add_argument(
@@ -93,14 +102,17 @@ def main(argv: list[str] | None = None) -> int:
 
     # run
     from .harness import run_benchmark_suite
+    from .live_adapter import select_adapter
     from .scoring import format_report, score_results
 
+    adapter = select_adapter(getattr(args, "adapter", None))
     results = run_benchmark_suite(
         ids=args.ids,
         include_baseline=not args.no_baseline,
         parallel=max(1, int(args.parallel)),
         persist=True,
         results_dir=Path(args.results_dir) if args.results_dir else None,
+        adapter=adapter,
     )
     print(f"Wrote {len(results)} result rows.")
     if args.report or True:

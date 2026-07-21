@@ -18,18 +18,25 @@ class TaskMode(Enum):
     IMPLEMENT = "implement"
     REVIEW = "review"
     VERIFY = "verify"
+    PLAN = "plan"  # OpenCode-style: design only; no product edits
 
     # --- pipeline policy (single source of truth) ---------------------------
 
     @property
     def allows_planning(self) -> bool:
-        return self is TaskMode.IMPLEMENT
+        # PLAN drafts a plan; IMPLEMENT may still gate high-stakes plans
+        return self in (TaskMode.IMPLEMENT, TaskMode.PLAN)
 
     @property
     def allows_requirement_decomposition(self) -> bool:
         # INVESTIGATE may build investigation targets; REVIEW limited clauses;
-        # IMPLEMENT full checklist. ASK/VERIFY skip.
-        return self in (TaskMode.IMPLEMENT, TaskMode.INVESTIGATE, TaskMode.REVIEW)
+        # IMPLEMENT/PLAN full checklist. ASK/VERIFY skip.
+        return self in (
+            TaskMode.IMPLEMENT,
+            TaskMode.INVESTIGATE,
+            TaskMode.REVIEW,
+            TaskMode.PLAN,
+        )
 
     @property
     def allows_capability_inference(self) -> bool:
@@ -37,7 +44,13 @@ class TaskMode(Enum):
 
     @property
     def allows_edits(self) -> bool:
+        """Product-code edits. PLAN uses ``allows_plan_file_edits`` instead."""
         return self is TaskMode.IMPLEMENT
+
+    @property
+    def allows_plan_file_edits(self) -> bool:
+        """Only the plan artifact may be written in PLAN mode."""
+        return self is TaskMode.PLAN
 
     @property
     def skills_read_only(self) -> bool:
@@ -54,6 +67,10 @@ class TaskMode(Enum):
     @property
     def allows_shell_mutation(self) -> bool:
         return self is TaskMode.IMPLEMENT
+
+    @property
+    def allows_explore_pass(self) -> bool:
+        return self in (TaskMode.IMPLEMENT, TaskMode.PLAN, TaskMode.INVESTIGATE)
 
 
 _INVESTIGATE_RE = re.compile(
@@ -101,6 +118,8 @@ def classify_task_mode(
         if intent_mode == "investigate" or _INVESTIGATE_RE.search(text):
             return TaskMode.INVESTIGATE
         return TaskMode.ASK
+    if fmt == "plan":
+        return TaskMode.PLAN
 
     if intent_mode:
         try:
@@ -142,4 +161,6 @@ def mode_from_edit_format(edit_format: Optional[str]) -> Optional[TaskMode]:
     fmt = (edit_format or "").strip().lower()
     if fmt in ("ask", "context"):
         return TaskMode.ASK
+    if fmt == "plan":
+        return TaskMode.PLAN
     return None

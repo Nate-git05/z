@@ -818,7 +818,29 @@ def format_plan_for_confirm(plan: PlanningArtifact) -> str:
 
 
 def format_plan_for_context(plan: PlanningArtifact) -> str:
-    """Inject into cur_messages as grounding for implementation + detectors."""
+    """
+    Inject into cur_messages as grounding for implementation.
+
+    Detectors use ``engine.ctx.plan`` (full artifact). By default the coding
+    turn gets a compact directive; set ``Z_PLAN_CONTEXT_FULL=1`` or
+    ``Z_CONTROL_PLANE_COMPACT=0`` for the legacy full dump.
+    """
+    try:
+        from aider.z.control_plane_budget import (
+            control_plane_compact_enabled,
+            format_plan_directive,
+            plan_context_full_enabled,
+        )
+
+        if control_plane_compact_enabled() and not plan_context_full_enabled():
+            return format_plan_directive(plan)
+    except Exception:
+        pass
+    return _format_plan_for_context_full(plan)
+
+
+def _format_plan_for_context_full(plan: PlanningArtifact) -> str:
+    """Legacy full plan dump into cur_messages (escape hatch)."""
     lines = [
         "# Approved implementation plan (binding)",
         f"Task: {plan.title}",

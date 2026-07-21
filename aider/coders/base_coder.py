@@ -1131,11 +1131,22 @@ class Coder:
             # Skills always may run (read-only flagged for non-implement modes)
             self._maybe_pull_skills(user_text, checkpoint="turn")
 
+            # Compact read-only explore when chat is thin (OpenCode-inspired)
+            self._maybe_explore_pass(user_text)
+
+            # House instructions (AGENTS.md) — once per session
+            self._maybe_inject_house_instructions()
+
             if mode.allows_requirement_decomposition:
                 self._maybe_begin_uncertainty_task(user_text)
 
-            # Planning only in IMPLEMENT (P0.1) — never for /ask or investigate
-            if mode.allows_planning:
+            # PLAN mode: inject reminder; skip high-stakes *implement* plan confirm
+            from aider.z.task_mode import TaskMode as _TM
+
+            if mode is _TM.PLAN:
+                self._maybe_advance_plan_interview(user_text)
+                self._inject_plan_mode_reminder()
+            elif mode.allows_planning:
                 if not self._maybe_require_implementation_plan(user_text):
                     return
             else:
@@ -1204,6 +1215,13 @@ class Coder:
                 )
             except Exception:
                 pass
+
+            # Soft stop: model claimed done while High nodes / verify still bad
+            if not self.reflected_message:
+                try:
+                    self._maybe_soft_stop_done_claim()
+                except Exception:
+                    pass
 
             if not self.reflected_message:
                 break
@@ -1306,6 +1324,7 @@ class Coder:
         from aider.z.uncertainty.intent import extract_intent
 
         # Explicit /ask or /context — hard mapping (not sticky across turns)
+        # Explicit TaskMode from /plan|/ask commands wins over heuristics.
         forced_mode_str = None
         explicit = getattr(self, "forced_task_mode", None)
         if isinstance(explicit, TaskMode):
@@ -1328,6 +1347,10 @@ class Coder:
             recent_messages=recent,
             forced_mode=forced_mode_str,
         )
+        if isinstance(explicit, TaskMode):
+            intent.mode = explicit.value
+            return explicit, intent
+
         mode = classify_task_mode(
             self.edit_format,
             user_message or "",
@@ -1364,6 +1387,11 @@ class Coder:
                 pull_skills_for_checkpoint,
             )
             from aider.z.task_mode import TaskMode
+            from aider.z.control_plane_budget import (
+                capability_plan_fingerprint,
+                control_plane_compact_enabled,
+                format_capability_directive,
+            )
             from aider.z.uncertainty.capabilities import (
                 build_capability_plan,
                 format_capability_plan,
@@ -1409,11 +1437,23 @@ class Coder:
                 skill_block = format_skills_for_context(skills, checkpoint=checkpoint)
                 if skill_block:
                     blocks.append(skill_block)
-            # Always surface capability gaps when specialized verification is needed
+            # Surface capability gaps when specialized verification is needed.
+            # Compact mode: thin directive; skip re-inject when fingerprint unchanged.
             if cap_plan.required and (
                 cap_plan.coverage_gaps or checkpoint == "turn"
             ):
-                blocks.append(format_capability_plan(cap_plan))
+                fp = capability_plan_fingerprint(cap_plan)
+                prev_fp = getattr(self, "_capability_plan_fingerprint", None)
+                if control_plane_compact_enabled() and fp and fp == prev_fp:
+                    pass  # already injected this gap set
+                else:
+                    if control_plane_compact_enabled():
+                        cap_block = format_capability_directive(cap_plan)
+                    else:
+                        cap_block = format_capability_plan(cap_plan)
+                    if cap_block:
+                        blocks.append(cap_block)
+                        self._capability_plan_fingerprint = fp
 
             if not blocks:
                 return
@@ -1455,6 +1495,226 @@ class Coder:
         except Exception as err:
             if getattr(self, "verbose", False):
                 self.io.tool_warning(f"Skill/capability pull skipped: {err}")
+
+    def _maybe_explore_pass(self, user_message: str) -> None:
+        """Inject compact read-only findings when the chat is thin."""
+        if not user_message or len(user_message.strip()) < 8:
+            return
+        try:
+            from aider.z.explore import explore_pass_enabled, run_explore_pass
+            from aider.z.task_mode import TaskMode
+
+            if not explore_pass_enabled():
+                return
+            mode = getattr(self, "task_mode", None)
+            if mode is not None and not getattr(mode, "allows_explore_pass", False):
+                return
+            if mode is TaskMode.ASK:
+                return
+            n_chat = len(getattr(self, "abs_fnames", None) or [])
+            if n_chat >= 3:
+                return
+            already = []
+            try:
+                already = list(self.get_inchat_relative_files() or [])
+            except Exception:
+                already = []
+            block = run_explore_pass(
+                user_message,
+                root=getattr(self, "root", None) or ".",
+                already_in_chat=already,
+            )
+            if not block:
+                return
+            deep = "Explore scout" in block or "deep)" in block[:80]
+            self.io.tool_output(
+                "Explore scout: candidate files + signatures (read-only)."
+                if deep
+                else "Explore pass: candidate files found (read-only)."
+            )
+            self.cur_messages += [
+                {"role": "user", "content": block},
+                {
+                    "role": "assistant",
+                    "content": (
+                        "I'll use those explore findings as investigation targets "
+                        "and ask to /add files before editing them."
+                    ),
+                },
+            ]
+        except Exception as err:
+            if getattr(self, "verbose", False):
+                self.io.tool_warning(f"Explore pass skipped: {err}")
+
+    def _maybe_inject_house_instructions(self) -> None:
+        if getattr(self, "_house_instructions_injected", False):
+            return
+        try:
+            from aider.z.house_instructions import load_house_instructions
+
+            block = load_house_instructions(getattr(self, "root", None) or ".")
+            if not block:
+                self._house_instructions_injected = True
+                return
+            self._house_instructions_injected = True
+            self.cur_messages += [
+                {"role": "user", "content": block},
+                {
+                    "role": "assistant",
+                    "content": (
+                        "I'll follow the house AGENTS.md instructions where they "
+                        "apply to this task."
+                    ),
+                },
+            ]
+            self.io.tool_output("Loaded house instructions (AGENTS.md).")
+        except Exception as err:
+            if getattr(self, "verbose", False):
+                self.io.tool_warning(f"House instructions skipped: {err}")
+
+    def _inject_plan_mode_reminder(self) -> None:
+        try:
+            from pathlib import Path
+
+            from aider.z.plan_interview import (
+                PlanInterviewStage,
+                detect_stage,
+                format_interview_reminder,
+                plan_interview_enabled,
+            )
+            from aider.z.plan_mode import format_plan_mode_reminder, new_plan_path
+
+            if not getattr(self, "_active_plan_path", None):
+                path = new_plan_path(stem="task")
+                self._active_plan_path = str(path)
+                if plan_interview_enabled():
+                    self._plan_interview_stage = PlanInterviewStage.CLARIFY
+                    self._plan_clarify_asked = False
+            path = Path(self._active_plan_path)
+
+            if plan_interview_enabled():
+                stage = getattr(self, "_plan_interview_stage", None)
+                detected = detect_stage(active_path=self._active_plan_path)
+                if detected is PlanInterviewStage.READY:
+                    stage = PlanInterviewStage.READY
+                elif stage is None:
+                    stage = detected
+                self._plan_interview_stage = stage
+                block = format_interview_reminder(stage, plan_path=path)
+                if stage is PlanInterviewStage.CLARIFY:
+                    self._plan_clarify_asked = True
+            else:
+                block = format_plan_mode_reminder(path)
+
+            self.cur_messages += [
+                {"role": "user", "content": block},
+                {
+                    "role": "assistant",
+                    "content": (
+                        f"Plan mode acknowledged. I'll only write the plan at `{path}` "
+                        "and will not edit product code until /plan-exit."
+                    ),
+                },
+            ]
+            stage_s = getattr(getattr(self, "_plan_interview_stage", None), "value", None)
+            extra = f" (interview: {stage_s})" if stage_s else ""
+            self.io.tool_output(f"Plan mode — artifact path: {path}{extra}")
+        except Exception as err:
+            if getattr(self, "verbose", False):
+                self.io.tool_warning(f"Plan mode reminder skipped: {err}")
+
+    def _maybe_advance_plan_interview(self, user_text: str) -> None:
+        """After clarify answers, move interview to draft on the next user turn."""
+        try:
+            from aider.z.plan_interview import (
+                PlanInterviewStage,
+                advance_after_user_reply,
+                plan_interview_enabled,
+            )
+            from aider.z.task_mode import TaskMode
+
+            if not plan_interview_enabled():
+                return
+            if getattr(self, "task_mode", None) is not TaskMode.PLAN:
+                return
+            if not user_text or user_text.strip().startswith("/"):
+                return
+            stage = getattr(self, "_plan_interview_stage", PlanInterviewStage.CLARIFY)
+            if stage is PlanInterviewStage.CLARIFY and getattr(
+                self, "_plan_clarify_asked", False
+            ):
+                self._plan_interview_stage = advance_after_user_reply(stage)
+        except Exception:
+            pass
+
+    def _maybe_run_tool_loop(self, content: str) -> bool:
+        """
+        Run read-only z-tool fences from the model reply.
+        Returns True if a reflect was scheduled (caller should skip apply).
+        """
+        try:
+            from aider.z.tool_loop import run_tool_loop, tool_loop_enabled
+
+            if not tool_loop_enabled() or not content:
+                return False
+            # Avoid infinite tool-loop reflections
+            if int(getattr(self, "num_reflections", 0) or 0) >= 3:
+                return False
+            res = run_tool_loop(content, root=getattr(self, "root", None) or ".")
+            if not res.ran:
+                return False
+            names = ", ".join(f"{c.name}" for c in res.calls)
+            self.io.tool_output(f"Tool-loop: ran {len(res.calls)} read-only tool(s) ({names}).")
+            prev = getattr(self, "reflected_message", None) or ""
+            self.reflected_message = (
+                (prev + "\n\n" + res.reflect_message).strip()
+                if prev
+                else res.reflect_message
+            )
+            return True
+        except Exception as err:
+            if getattr(self, "verbose", False):
+                self.io.tool_warning(f"Tool-loop skipped: {err}")
+            return False
+
+    def _maybe_soft_stop_done_claim(self) -> None:
+        from aider.z.uncertainty.done_gate import (
+            count_open_high,
+            looks_like_done_claim,
+            soft_stop_reason,
+        )
+
+        content = getattr(self, "partial_response_content", None) or ""
+        if not looks_like_done_claim(content):
+            return
+        store = getattr(self, "uncertainty_store", None)
+        open_high = 0
+        if store is not None:
+            try:
+                open_high = count_open_high(store.list(include_resolved=False))
+            except Exception:
+                open_high = 0
+        eng = getattr(self, "uncertainty_engine", None)
+        plan_pending = False
+        completion_incomplete = False
+        if eng is not None:
+            try:
+                plan_pending = bool(eng.edits_blocked_pending_plan())
+            except Exception:
+                plan_pending = False
+            report = getattr(getattr(eng, "ctx", None), "completion_report", None)
+            if report is not None and not getattr(report, "complete", True):
+                completion_incomplete = True
+        last_verify_failed = getattr(self, "test_outcome", None) is False
+        reason = soft_stop_reason(
+            open_high_count=open_high,
+            last_verify_failed=bool(last_verify_failed),
+            plan_pending=plan_pending,
+            completion_incomplete=completion_incomplete,
+        )
+        if reason:
+            self.io.tool_warning(reason)
+            self.reflected_message = reason
 
     def _skill_capture_skip(self, reason: str) -> None:
         """Visible skip reason — silence here is how capture looked 'broken'."""
@@ -2367,10 +2627,14 @@ class Coder:
                 allows = bool(getattr(mode, "allows_edits", True))
             # Also skip for explicit ask/context edit formats
             fmt = getattr(self, "edit_format", None)
-            if fmt in ("ask", "context", "help"):
+            if fmt in ("ask", "context", "help", "plan"):
                 allows = False
-            if allows and mode is not TaskMode.ASK:
+            if allows and mode not in (TaskMode.ASK, TaskMode.PLAN):
                 final_reminders.append(coding_quality_reminder())
+            if mode is TaskMode.PLAN:
+                from aider.z.plan_mode import format_plan_mode_reminder
+
+                final_reminders.append(format_plan_mode_reminder())
         except Exception:
             pass
         if self.main_model.lazy:
@@ -2776,6 +3040,10 @@ class Coder:
                     return
             except KeyboardInterrupt:
                 interrupted = True
+
+            # Thin read-only tool-loop before applying SEARCH/REPLACE
+            if not interrupted and self._maybe_run_tool_loop(content):
+                return
 
         if interrupted:
             if self.cur_messages and self.cur_messages[-1]["role"] == "user":
@@ -3561,6 +3829,42 @@ class Coder:
         self.need_commit_before_edits.add(path)
 
     def allowed_to_edit(self, path):
+        # Plan permission mode first — plan artifacts may live under $Z_HOME
+        # (outside the git root), so check before path_under_root.
+        try:
+            from aider.z.plan_mode import is_plan_artifact_path, plans_dir
+            from aider.z.task_mode import TaskMode
+
+            mode = getattr(self, "task_mode", None)
+            if mode is TaskMode.PLAN:
+                raw = str(path)
+                if is_plan_artifact_path(raw, root=getattr(self, "root", None)):
+                    full_plan = str(Path(raw).expanduser().resolve())
+                    if not Path(full_plan).exists():
+                        Path(full_plan).parent.mkdir(parents=True, exist_ok=True)
+                        if not self.dry_run:
+                            utils.touch_file(full_plan)
+                    self.abs_fnames.add(full_plan)
+                    return True
+                # Relative plan names → write under plans_dir()
+                if "/" not in raw.replace("\\", "/") and raw.endswith(".md"):
+                    full_plan = str((plans_dir() / raw).resolve())
+                    Path(full_plan).parent.mkdir(parents=True, exist_ok=True)
+                    if not Path(full_plan).exists() and not self.dry_run:
+                        utils.touch_file(full_plan)
+                    self.abs_fnames.add(full_plan)
+                    return True
+                msg = (
+                    f"Plan mode: blocked product edit to `{path}`. "
+                    "Write the plan artifact only, then `/plan-exit` to implement."
+                )
+                self.io.tool_error(msg)
+                prev = getattr(self, "reflected_message", None) or ""
+                self.reflected_message = (prev + "\n" + msg).strip() if prev else msg
+                return
+        except Exception:
+            pass
+
         full_path = self.path_under_root(path)
         if full_path is None:
             self.io.tool_warning(
