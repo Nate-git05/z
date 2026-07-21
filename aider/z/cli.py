@@ -155,8 +155,9 @@ def ensure_agent_session(io) -> bool:
     """First-run / session gate for the coding agent.
 
     Order: if not signed in, ask Google vs Z in the terminal, open the matching
-    web login page, THEN choose BYOK vs router in the terminal, THEN (BYOK only)
-    finish model/key setup via a second, skip_login web trip.
+    web login page (credentials only in the browser — never CLI OTP), THEN
+    choose BYOK vs router in the terminal, THEN (BYOK only) finish model/key
+    setup via a second, skip_login web trip.
 
     ``z login`` / ``z auth switch`` use the same Google-vs-Z → web login path.
 
