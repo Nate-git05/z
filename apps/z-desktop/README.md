@@ -1,6 +1,12 @@
 # Z Desktop (app shell)
 
-**Status:** scaffold / north star only — not a shipping binary yet.
+**Status:** plan + local Codex reference clone — not a shipping binary yet.
+
+**Read first:** [`docs/app/z-editor-v1-implementation-plan.md`](../../docs/app/z-editor-v1-implementation-plan.md)
+
+**Important:** `openai/codex` OSS does **not** contain a desktop GUI (no Tauri/Electron/Monaco).
+`codex app` installs a separate closed-source app. We reuse **app-server protocol ideas**
+and build the Z Editor shell ourselves.
 
 ## Intent
 
