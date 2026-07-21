@@ -20,8 +20,8 @@ Open [http://localhost:3000](http://localhost:3000).
 - `/`, `/pricing`, `/login` → Next.js
 - `/v1/*`, `/app/*`, `/static/*` → proxied to FastAPI
 
-Sign-in OTP while Twilio is not configured: use code `123456`.
-(Disable later with `Z_PROVISIONAL_OTP=0` once Twilio Verify is live.)
+Sign-in OTP until Twilio is live: use code `123456` (accepted by default).
+Disable with `Z_PROVISIONAL_OTP=0` once Twilio Verify is live.
 
 ## Deploy on Vercel
 
