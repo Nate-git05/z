@@ -342,8 +342,8 @@ def get_parser(default_config_files, git_root):
     )
     group.add_argument(
         "--tool-output-color",
-        default="#A0A0A0",
-        help="Set the color for tool output (default: #A0A0A0)",
+        default="#C96A2B",
+        help="Set the color for tool output (default: #C96A2B)",
     )
     group.add_argument(
         "--tool-error-color",
@@ -389,11 +389,11 @@ def get_parser(default_config_files, git_root):
     )
     group.add_argument(
         "--code-theme",
-        default="monokai",
+        default="z-terminal",
         help=(
-            "Set the markdown code theme (default: monokai, other options include default,"
-            " solarized-dark, solarized-light, or a Pygments builtin style,"
-            " see https://pygments.org/styles for available themes)"
+            "Set the markdown code theme (default: z-terminal — white+orange, no purple;"
+            " other options include monokai, default, solarized-dark, or a Pygments"
+            " builtin style, see https://pygments.org/styles for available themes)"
         ),
     )
     group.add_argument(

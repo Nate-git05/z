@@ -39,7 +39,7 @@ def render_startup_banner(
 
     Layout:
         [orange Z wordmark]   [idle orange mascot]
-        model / connection status in white/gray
+        model / connection status in white/orange
         remaining announcement lines
     """
     console = console or Console()
@@ -95,7 +95,7 @@ def render_startup_banner(
 
 
 def render_header_rule(console: Console | None = None, pretty: bool = True) -> None:
-    """Thin separator using muted gray (not orange — orange is reserved)."""
+    """Thin separator using muted orange (grey was unreadable)."""
     console = console or Console()
     if pretty:
         console.rule(style=Style(color=TEXT_MUTED))
