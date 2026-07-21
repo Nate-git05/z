@@ -180,19 +180,38 @@ def _model_missing_keys(model_id: str | None) -> list[str]:
 
 
 def _ensure_model_keys(io, model_id: str | None) -> bool:
-    """If the preferred model needs API keys that are missing, collect them."""
+    """If the preferred model needs API keys that are missing, collect them.
+
+    When a model is already saved, only ask for the missing key(s) — do **not**
+    reopen the full foundation-model catalog (that broke the post-login flow).
+    """
+    if not model_id:
+        from aider.z.auth import prompt_byok_setup
+
+        io.tool_output("")
+        io.tool_output("No model saved yet — choose a model and paste its API key.")
+        return prompt_byok_setup(io)
+
     missing = _model_missing_keys(model_id)
     if not missing:
         return True
 
-    io.tool_output("")
-    io.tool_output(
-        f"Model {model_id} needs {', '.join(missing)} — "
-        "paste your key to continue (or run `z auth switch` later)."
-    )
-    from aider.z.auth import prompt_byok_setup
+    from aider.z.onboarding import save_byok_key
 
-    return prompt_byok_setup(io)
+    io.tool_output("")
+    io.tool_output(f"Using saved model: {model_id}")
+    io.tool_output(
+        f"Needs {', '.join(missing)}. Paste the key below "
+        "(or run `z auth switch` to pick a different model)."
+    )
+    for env_var in missing:
+        value = (io.prompt_ask(f"Paste your {env_var}", default="") or "").strip()
+        if not value:
+            io.tool_error(f"No {env_var} entered — cannot start.")
+            return False
+        save_byok_key(env_var, value)
+        io.tool_output(f"Saved {env_var}.")
+    return not _model_missing_keys(model_id)
 
 
 def _complete_mode_setup(io, mode: str) -> bool:
@@ -206,7 +225,6 @@ def _complete_mode_setup(io, mode: str) -> bool:
     if mode == "byok":
         # Model/key picker is post-auth only. (/app/setup is not shipped yet.)
         from aider.z.auth import prompt_byok_setup
-        from aider.z.onboarding import load_config
 
         io.tool_output("")
         io.tool_output("Bring your own key — choose a model and paste its API key.")
@@ -214,7 +232,7 @@ def _complete_mode_setup(io, mode: str) -> bool:
             return False
         save_auth_mode(mode)
         _load_byok_env()
-        return _ensure_model_keys(io, load_config().selected_model)
+        return True
 
     if mode == "router":
         from aider.z.login_screen import prompt_router_model_choice

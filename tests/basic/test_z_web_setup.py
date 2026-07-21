@@ -339,10 +339,14 @@ def test_configured_mode_still_requires_login_when_signed_out():
     )
     with patch(
         "aider.z.onboarding.load_config",
-        return_value=OnboardingConfig(auth_mode="byok"),
+        return_value=OnboardingConfig(
+            auth_mode="byok", selected_model="claude-sonnet-5"
+        ),
     ), patch("aider.z.auth.current_session", return_value=None), patch(
         "aider.z.auth.open_web_login", return_value=creds
-    ) as login, patch("aider.z.auth.open_web_setup") as setup:
+    ) as login, patch(
+        "aider.z.cli._model_missing_keys", return_value=[]
+    ), patch("aider.z.auth.open_web_setup") as setup:
         ok = ensure_agent_session(io)
     assert ok
     login.assert_called_once()
