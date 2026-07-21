@@ -218,7 +218,16 @@ Document this next to NI gate UX (`fault-plan-ni-verify-skills-gate.md`).
 
 **Extensive plan:** [terminal-ux-p2-plan.md](./terminal-ux-p2-plan.md) · **Implemented:** this PR
 
-**Out of scope for these tranches:** removing plan gates, auto-skipping verify, web UI.
+### P3 — Turn flow (busy · queue · interrupt)
+
+9. Single turn orchestrator (Idle / Busy / WaitingInput)  
+10. Message queue while Busy; FIFO drain at Idle  
+11. One ^C / cancel contract that keeps the queue  
+
+**Extensive plan (no code yet):** [terminal-ux-p3-plan.md](./terminal-ux-p3-plan.md)
+
+**Out of scope for these tranches:** removing plan gates, auto-skipping verify, web UI,
+mid-stream steer (P4).
 
 ---
 

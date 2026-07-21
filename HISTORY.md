@@ -2,6 +2,7 @@
 
 ### main branch
 
+- Documented P3 terminal UX plan: unified turn flow (Idle / Busy / WaitingInput / message queue) — plan only, see `docs/uncertainty/terminal-ux-p3-plan.md`.
 - Fixed terminal-resize garble on drift/plan escalation prompts: long text stays in the Rich panel; prompt_toolkit only sees a short `(Y)es/(N)o` line.
 - Ambiguous noun-phrase prompts (e.g. `users and sessions`) now classify as ASK instead of IMPLEMENT, avoiding surprise plan panels (`looks_like_ambiguous_topic`; escape `Z_MODE_CLASSIFY=0`).
 - P2 terminal UX: Rich `/uncertainties` on the production tree, compact `Uncertainty · N High · M Medium — /uncertainties` summary, and golden implement-turn noise-budget fixtures.
