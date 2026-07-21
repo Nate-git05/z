@@ -484,6 +484,8 @@ def test_auth_switch_uses_web_login_and_byok_skip_login():
     with patch("aider.z.auth.current_session", return_value=None), patch(
         "aider.z.auth.open_web_login", return_value=creds
     ) as login, patch(
+        "aider.z.onboarding.clear_setup"
+    ) as clear, patch(
         "aider.z.login_screen.prompt_auth_mode_choice", return_value="byok"
     ), patch("aider.z.auth.prompt_byok_setup", return_value=True) as byok, patch(
         "aider.z.onboarding.save_auth_mode"
@@ -492,6 +494,7 @@ def test_auth_switch_uses_web_login_and_byok_skip_login():
 
     assert code == 0
     login.assert_called_once()
+    clear.assert_called_once_with(clear_keys=True)
     terminal.assert_not_called()
     byok.assert_called_once()
     save_mode.assert_called_once_with("byok")

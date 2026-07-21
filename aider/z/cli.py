@@ -34,6 +34,15 @@ def build_parser() -> argparse.ArgumentParser:
         "switch",
         help="Re-choose between bring-your-own key and Z's model router",
     )
+    reset = sub.add_parser(
+        "reset",
+        help="Clear saved BYOK/router/model choices and pick again (keeps login)",
+    )
+    reset.add_argument(
+        "--logout",
+        action="store_true",
+        help="Also sign out (clear ~/.z/credentials)",
+    )
     sub.add_parser("logout", help="Sign out and clear ~/.z/credentials")
     sub.add_parser("whoami", help="Show the current Z account / workspace")
 
@@ -340,7 +349,8 @@ def _print_help() -> None:
         "Change mode later with `z auth switch`. Agent flags work like `aider …`.\n"
         "Examples:\n"
         "  z\n"
-        "  z auth switch\n"
+        "  z reset          # redo BYOK vs router + model (stay signed in)\n"
+        "  z auth switch    # same as reset, then choose again\n"
         "  z logout\n"
         "  z whoami\n"
         "  z workspace create\n"
@@ -415,6 +425,7 @@ def main(argv: list[str] | None = None) -> int | None:
     top_commands = {
         "login",
         "auth",
+        "reset",
         "logout",
         "whoami",
         "workspace",
@@ -447,10 +458,13 @@ def dispatch(args) -> int:
             return cmd_auth_switch(io)
         # Bare `z auth` remains an alias for login.
         return cmd_login(io, provider=getattr(args, "provider", None))
+    if args.command == "reset":
+        return cmd_reset(io, logout=bool(getattr(args, "logout", False)))
     if args.command == "logout":
         from aider.z.auth import logout
 
         logout(io)
+        io.tool_output("Tip: run `z reset` if you only want to change BYOK/router/model.")
         return 0
     if args.command == "whoami":
         from aider.z.auth import whoami_text
@@ -554,8 +568,47 @@ def cmd_mcp(io, args) -> int:
 
 
 def cmd_auth_switch(io) -> int:
-    """Re-choose BYOK vs router. Login (if needed) happens via the web page."""
+    """Re-choose BYOK vs router (+ model/key). Clears the previous saved choice."""
     from aider.z.auth import current_session, open_web_login
+    from aider.z.onboarding import clear_setup
+
+    creds = current_session()
+    if not (creds and creds.is_authenticated()):
+        creds = open_web_login(io)
+        if not creds:
+            return 1
+
+    clear_setup(clear_keys=True)
+    io.tool_output("Cleared previous BYOK/router/model choice.")
+
+    from aider.z.login_screen import prompt_auth_mode_choice
+
+    mode = prompt_auth_mode_choice(io)
+    if mode is None:
+        io.tool_output("Switch cancelled.")
+        return 1
+    return 0 if _complete_mode_setup(io, mode) else 1
+
+
+def cmd_reset(io, *, logout: bool = False) -> int:
+    """Clear saved setup choices and pick BYOK/router/model again.
+
+    Keeps the Z account signed in unless ``--logout`` is passed.
+    """
+    from aider.z.onboarding import clear_setup
+
+    if logout:
+        from aider.z.auth import logout as do_logout
+
+        do_logout(io)
+        clear_setup(clear_keys=True)
+        io.tool_output("Setup cleared. Run `z` to sign in and choose again.")
+        return 0
+
+    from aider.z.auth import current_session, open_web_login
+
+    clear_setup(clear_keys=True)
+    io.tool_output("Cleared saved BYOK/router/model choices (account login kept).")
 
     creds = current_session()
     if not (creds and creds.is_authenticated()):
@@ -567,7 +620,7 @@ def cmd_auth_switch(io) -> int:
 
     mode = prompt_auth_mode_choice(io)
     if mode is None:
-        io.tool_output("Switch cancelled.")
+        io.tool_output("Reset cancelled — run `z reset` again when ready.")
         return 1
     return 0 if _complete_mode_setup(io, mode) else 1
 
