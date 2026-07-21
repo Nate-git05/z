@@ -1,4 +1,4 @@
-# Coding quality (tranche 1–3)
+# Coding quality (tranche 1–4)
 
 Z keeps its differentiators (skills, uncertainty, verify gate) but stops them
 from crowding the **coding** turn. Patterns inspired by OpenCode / Claude Code
@@ -70,10 +70,22 @@ Z_P2_LIVE=1 Z_P2_LIVE_HOOK=/path/to/hook.py \
 Without `Z_P2_LIVE=1`, selecting `--adapter live` returns a timed-out stub so CI
 never spends tokens accidentally. Default remains the scripted adapter.
 
+## Tranche 4
+
+| Mechanism | Default | Escape hatch |
+|-----------|---------|--------------|
+| Compact plan-for-context inject | on | `Z_PLAN_CONTEXT_FULL=1` or `Z_CONTROL_PLANE_COMPACT=0` |
+| Compact capability directive + dedupe | on | `Z_CONTROL_PLANE_COMPACT=0` |
+| Tighter `/plan-exit` budget | 2500 chars | `Z_PLAN_EXIT_CHARS`, or compact off |
+
+Human scrollback (`format_plan_for_user`) and `engine.ctx.plan` stay complete —
+detectors still see the full artifact. Only `cur_messages` injects get thinner.
+
 ## Related
 
 - Plans: [coding-quality-tranche1-plan.md](./coding-quality-tranche1-plan.md),
   [coding-quality-tranche2-plan.md](./coding-quality-tranche2-plan.md),
-  [coding-quality-tranche3-plan.md](./coding-quality-tranche3-plan.md)
+  [coding-quality-tranche3-plan.md](./coding-quality-tranche3-plan.md),
+  [coding-quality-tranche4-plan.md](./coding-quality-tranche4-plan.md)
 - Skills: [../skills/README.md](../skills/README.md)
 - Uncertainty: [README.md](./README.md)

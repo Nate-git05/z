@@ -70,7 +70,20 @@ def format_plan_exit_context(plan_text: str, *, plan_path: Optional[str] = None)
     header = "# Approved plan (binding) — proceed to implement"
     if plan_path:
         header += f"\nSource: `{plan_path}`"
-    body = (plan_text or "").strip()
-    if len(body) > 6000:
-        body = body[:6000] + "\n… [plan truncated for context]\n"
+    try:
+        from aider.z.control_plane_budget import (
+            control_plane_compact_enabled,
+            truncate_plan_exit,
+        )
+
+        if control_plane_compact_enabled():
+            body = truncate_plan_exit(plan_text or "")
+        else:
+            body = (plan_text or "").strip()
+            if len(body) > 6000:
+                body = body[:6000] + "\n… [plan truncated for context]\n"
+    except Exception:
+        body = (plan_text or "").strip()
+        if len(body) > 6000:
+            body = body[:6000] + "\n… [plan truncated for context]\n"
     return f"{header}\n\n{body}\n"
