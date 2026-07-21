@@ -335,6 +335,10 @@ class InputOutput:
         )
         self.dry_run = dry_run
 
+        # Set by Coder to stop mascot/LLM spinners before any prompt.
+        self._stop_agent_busy = None
+        self.agent_busy = False
+
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.append_chat_history(f"\n# aider chat started at {current_time}\n\n")
 
@@ -519,6 +523,16 @@ class InputOutput:
         else:
             print()
 
+    def _ensure_prompt_ready(self):
+        """Stop agent busy chrome before any interactive prompt."""
+        self.agent_busy = False
+        stopper = getattr(self, "_stop_agent_busy", None)
+        if callable(stopper):
+            try:
+                stopper()
+            except Exception:
+                pass
+
     def interrupt_input(self):
         if self.prompt_session and self.prompt_session.app:
             # Store any partial input before interrupting
@@ -536,6 +550,7 @@ class InputOutput:
         edit_format=None,
         prompt_chrome=None,
     ):
+        self._ensure_prompt_ready()
         self.rule()
 
         # Ring the bell if needed
@@ -543,11 +558,23 @@ class InputOutput:
 
         rel_fnames = list(rel_fnames)
         show = ""
+        files_printed_outside = False
         if rel_fnames:
             rel_read_only_fnames = [
                 get_rel_fname(fname, root) for fname in (abs_read_only_fnames or [])
             ]
-            show = self.format_files_for_input(rel_fnames, rel_read_only_fnames)
+            file_block = self.format_files_for_input(rel_fnames, rel_read_only_fnames)
+            # Z theme: print files once above the prompt (not inside prompt_toolkit).
+            # Embedding Rich Columns in the prompt message causes path concatenation
+            # and duplicate redraws when the mascot spinner uses \r on the same TTY.
+            if getattr(self, "z_theme", False) and self.pretty and self.prompt_session:
+                if file_block.strip():
+                    # Prefer live console so paths are not re-measured by prompt_toolkit
+                    for line in file_block.rstrip("\n").splitlines():
+                        self.console.print(line)
+                    files_printed_outside = True
+            else:
+                show = file_block
 
         if prompt_chrome is not None:
             prompt_prefix = prompt_chrome
@@ -559,7 +586,12 @@ class InputOutput:
                 prompt_prefix += (" " if edit_format else "") + "multi"
             prompt_prefix += "> "
 
-        show += prompt_prefix
+        if files_printed_outside:
+            show = prompt_prefix
+        else:
+            if show and not show.endswith("\n"):
+                show += "\n"
+            show += prompt_prefix
         self.prompt_prefix = prompt_prefix
 
         inp = ""
@@ -827,6 +859,7 @@ class InputOutput:
         group=None,
         allow_never=False,
     ):
+        self._ensure_prompt_ready()
         self.num_user_asks += 1
 
         # Ring the bell if needed
@@ -1009,6 +1042,7 @@ class InputOutput:
         Returns ``\"yes\"`` | ``\"no\"`` | ``\"change\"`` | ``\"view\"``.
         ``--yes-always`` auto-returns ``\"yes\"``.
         """
+        self._ensure_prompt_ready()
         self.num_user_asks += 1
         self.ring_bell()
 
@@ -1129,6 +1163,7 @@ class InputOutput:
 
     @restore_multiline
     def prompt_ask(self, question, default="", subject=None):
+        self._ensure_prompt_ready()
         self.num_user_asks += 1
 
         # Ring the bell if needed
@@ -1377,6 +1412,23 @@ class InputOutput:
                 editable_files.append(f"{full_path}")
 
             return "\n".join(read_only_files + editable_files) + "\n"
+
+        # Z theme: one path per line. Rich Columns packs paths onto one line and
+        # the mascot \r spinner can erase spaces → glued names like event_bus.hppCMakeLists.txt.
+        if getattr(self, "z_theme", False):
+            lines = []
+            read_only_files = sorted(rel_read_only_fnames or [])
+            editable_files = [f for f in sorted(rel_fnames) if f not in (rel_read_only_fnames or [])]
+            if read_only_files:
+                lines.append("Readonly:")
+                for rel_path in read_only_files:
+                    abs_path = os.path.abspath(os.path.join(self.root, rel_path))
+                    lines.append(abs_path if len(abs_path) < len(rel_path) else rel_path)
+            if editable_files:
+                if read_only_files:
+                    lines.append("Editable:")
+                lines.extend(editable_files)
+            return ("\n".join(lines) + "\n") if lines else ""
 
         output = StringIO()
         console = Console(file=output, force_terminal=False)

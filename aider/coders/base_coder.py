@@ -789,6 +789,11 @@ class Coder:
     def _stop_waiting_spinner(self):
         """Clear the waiting spinner."""
         spinner = getattr(self, "waiting_spinner", None)
+        try:
+            if getattr(self, "io", None) is not None:
+                self.io.agent_busy = False
+        except Exception:
+            pass
         if not spinner:
             return
         try:
@@ -801,23 +806,41 @@ class Coder:
         self._stop_waiting_spinner()
         if not text:
             return
+        # Make busy state unmistakable: leave prompt_toolkit chrome, announce interrupt.
+        label = text
+        if "Ctrl+C" not in label:
+            label = f"{text}  · Ctrl+C to interrupt"
         try:
             if not self.show_pretty():
                 # Non-pretty / dumb terminals: still print a static breadcrumb
-                self.io.tool_output(text)
+                self.io.tool_output(label)
                 return
         except Exception:
             return
         try:
+            # Separate from leftover slash-menu / prompt redraw so \r spinner
+            # does not overwrite file paths or completer chrome.
+            import sys as _sys
+
+            _sys.stdout.write("\n")
+            _sys.stdout.flush()
+        except Exception:
+            pass
+        try:
             if getattr(self.io, "z_theme", True):
-                self.waiting_spinner = waiting_display(text)
+                self.waiting_spinner = waiting_display(label)
             else:
-                self.waiting_spinner = WaitingSpinner(text)
+                self.waiting_spinner = WaitingSpinner(label)
             self.waiting_spinner.start()
+            try:
+                self.io.agent_busy = True
+                self.io._stop_agent_busy = self._phase_spinner_stop
+            except Exception:
+                pass
         except Exception:
             self.waiting_spinner = None
             try:
-                self.io.tool_output(text)
+                self.io.tool_output(label)
             except Exception:
                 pass
 
@@ -825,17 +848,20 @@ class Coder:
         """Update spinner status text without stopping the eyes animation."""
         if not text:
             return
+        label = text
+        if "Ctrl+C" not in label:
+            label = f"{text}  · Ctrl+C to interrupt"
         spinner = getattr(self, "waiting_spinner", None)
         if spinner is None:
             self._phase_spinner_start(text)
             return
         try:
             if hasattr(spinner, "set_text"):
-                spinner.set_text(text)
+                spinner.set_text(label)
             elif hasattr(spinner, "text"):
-                spinner.text = text
+                spinner.text = label
             elif hasattr(spinner, "spinner") and hasattr(spinner.spinner, "text"):
-                spinner.spinner.text = text
+                spinner.spinner.text = label
         except Exception:
             pass
 
@@ -1149,6 +1175,8 @@ class Coder:
             self.commands.cmd_copy_context()
 
     def get_input(self):
+        # Never leave planning/LLM spinner running into the next prompt.
+        self._phase_spinner_stop()
         inchat_files = self.get_inchat_relative_files()
         read_only_files = [self.get_rel_fname(fname) for fname in self.abs_read_only_fnames]
         all_files = sorted(set(inchat_files + read_only_files))
@@ -2790,7 +2818,8 @@ class Coder:
         return inp
 
     def keyboard_interrupt(self):
-        # Ensure cursor is visible on exit
+        # Ensure cursor is visible on exit; stop any busy spinner immediately.
+        self._phase_spinner_stop()
         Console().show_cursor(True)
 
         now = time.time()
@@ -2801,7 +2830,7 @@ class Coder:
             self.event("exit", reason="Control-C")
             sys.exit()
 
-        self.io.tool_warning("\n\n^C again to exit")
+        self.io.tool_warning("\n\n^C again to exit  (or wait — agent work was interrupted)")
 
         self.last_keyboard_interrupt = now
 
@@ -3275,10 +3304,16 @@ class Coder:
         if self.show_pretty():
             spinner_text = "Waiting for " + self.main_model.name
             if getattr(self.io, "z_theme", True):
+                spinner_text = f"{spinner_text}  · Ctrl+C to interrupt"
                 self.waiting_spinner = waiting_display(spinner_text)
             else:
                 self.waiting_spinner = WaitingSpinner(spinner_text)
             self.waiting_spinner.start()
+            try:
+                self.io.agent_busy = True
+                self.io._stop_agent_busy = self._stop_waiting_spinner
+            except Exception:
+                pass
             if self.stream:
                 self.mdstream = self.io.get_assistant_mdstream()
             else:

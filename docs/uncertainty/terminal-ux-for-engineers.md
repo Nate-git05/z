@@ -54,14 +54,17 @@ Revision rounds reprint the full plan (`plan.interactive_plan_confirm`).
 `run_one` runs skills → explore → checklist → plan before the first model token.  
 Even with phase spinners, completed milestones still print multiple lines.
 
-**Busy vs input:** the loop is still single-threaded (`type → work → type`). Leftover
-prompt_toolkit chrome + `\r` mascot spinner made Busy look interactive. Partial honesty
-landed in #141 (Ctrl+C hint, stop spinner before prompts, vertical file list).
+**Busy vs input:** leftover prompt_toolkit chrome + `\r` mascot spinner made Busy look
+interactive. Honesty contract (#141):
 
-**P3** makes Busy / WaitingInput / Idle / Queued one orchestrated flow — type while Busy
-to enqueue the next turn without fighting the spinner.
+1. Spinner label includes `Ctrl+C to interrupt`.
+2. Spinner stops on KeyboardInterrupt and before every `get_input` / confirm / prompt_ask.
+3. Chat file paths print **above** the prompt (one per line), never inside PromptSession.
 
-**Extensive plan (no code yet):** [terminal-ux-p3-plan.md](./terminal-ux-p3-plan.md)
+**P3 turn flow:** one orchestrator owns Idle / Busy / WaitingInput / Queued — type while
+Busy to enqueue the next turn; blocking asks freeze the queue; auto-drain at Idle.
+
+**Plan:** [terminal-ux-p3-plan.md](./terminal-ux-p3-plan.md)
 
 ### 3.4 Mode discoverability
 
