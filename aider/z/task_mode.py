@@ -111,6 +111,18 @@ _PURE_QUESTION_RE = re.compile(
     r"(?i)^\s*(what|who|when|where|why|how|is|are|can|could|should|would|do|does|did)\b"
 )
 
+# Topic-ish tokens: letters/digits with optional inner hyphens/underscores/apostrophes
+_TOPIC_TOKEN_RE = re.compile(r"(?i)^[a-z0-9][a-z0-9_'/-]*$")
+_TOPIC_JOINERS = frozenset({"and", "or", "the", "a", "an", "of", "for", "to", "in", "on", "with"})
+
+
+def _mode_classify_enabled() -> bool:
+    """Escape: Z_MODE_CLASSIFY=0 restores pre-A1 ambiguous→IMPLEMENT default."""
+    import os
+
+    raw = (os.environ.get("Z_MODE_CLASSIFY") or "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
 
 def has_implement_signal(user_message: str) -> bool:
     """True when the message includes an implement/build/fix-style verb."""
@@ -151,6 +163,60 @@ def looks_like_ask_question(user_message: str) -> bool:
     return True
 
 
+def looks_like_ambiguous_topic(user_message: str) -> bool:
+    """True for short noun-ish topics with no verb — ASK, not IMPLEMENT plan UX.
+
+    Multi-token only (D10): ``users and sessions``, ``auth middleware``.
+    Single-word topics stay out so bare ``redis`` can still mean implement.
+    """
+    if not _mode_classify_enabled():
+        return False
+    text = (user_message or "").strip()
+    if not text:
+        return False
+    if looks_like_casual_chat(text) or looks_like_ask_question(text):
+        return False
+    if "?" in text:
+        return False
+    if len(text) > 60:
+        return False
+    # Path / code / fence hints → real coding context
+    if re.search(r"[/\\.`]", text) or re.search(r"(?i)\.\w{1,5}\b", text):
+        return False
+    if (
+        has_implement_signal(text)
+        or _INVESTIGATE_RE.search(text)
+        or _VERIFY_RE.search(text)
+        or _REVIEW_RE.search(text)
+    ):
+        return False
+
+    # Normalize commas to spaces for tokenization
+    norm = re.sub(r"[,:;]+", " ", text)
+    norm = re.sub(r"\s+", " ", norm).strip()
+    tokens = norm.split()
+    if len(tokens) < 2 or len(tokens) > 8:
+        return False
+
+    content_tokens = 0
+    for tok in tokens:
+        low = tok.lower()
+        if low in _TOPIC_JOINERS:
+            continue
+        if not _TOPIC_TOKEN_RE.match(tok):
+            return False
+        content_tokens += 1
+    # Need at least two content words, or one content + joiner pattern like "users and sessions"
+    if content_tokens < 1:
+        return False
+    if content_tokens == 1 and len(tokens) < 2:
+        return False
+    # Require ≥2 content tokens for ASK (D10 multi-token focus)
+    if content_tokens < 2:
+        return False
+    return True
+
+
 def classify_task_mode(
     edit_format: Optional[str],
     user_message: str = "",
@@ -164,7 +230,7 @@ def classify_task_mode(
       1. Explicit command via edit_format (ask/context → ASK)
       2. Intent.mode from structured extraction when provided
       3. Conservative prompt heuristics; default IMPLEMENT for coding work,
-         but greetings / pure questions stay ASK (no plan UX)
+         but greetings / pure questions / ambiguous topics stay ASK (no plan UX)
     """
     fmt = (edit_format or "").strip().lower()
     if fmt in ("ask", "context"):
@@ -181,6 +247,10 @@ def classify_task_mode(
     # Greetings / small-talk win over a stale intent_mode=implement from
     # fabricated clauses (see extract_intent).
     if looks_like_casual_chat(text):
+        return TaskMode.ASK
+
+    # Ambiguous noun phrases (``users and sessions``) → ASK before stale implement intent
+    if looks_like_ambiguous_topic(text):
         return TaskMode.ASK
 
     if intent_mode:

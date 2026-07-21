@@ -107,12 +107,19 @@ def extract_intent(
 
     resolved_mode = mode or "implement"
 
-    # Never fabricate a coding action from a greeting / small-talk turn.
+    # Never fabricate a coding action from a greeting / small-talk / topic turn.
+    # Respect forced_mode (e.g. one-shot /code <topic>) — D8.
     try:
-        from aider.z.task_mode import looks_like_casual_chat, looks_like_ask_question
+        from aider.z.task_mode import (
+            looks_like_ambiguous_topic,
+            looks_like_ask_question,
+            looks_like_casual_chat,
+        )
 
-        if looks_like_casual_chat(text) or (
-            looks_like_ask_question(text) and not forced_mode
+        if not forced_mode and (
+            looks_like_casual_chat(text)
+            or looks_like_ambiguous_topic(text)
+            or looks_like_ask_question(text)
         ):
             resolved_mode = "ask"
             intent = TaskIntent(mode="ask", clauses=list(clauses))
@@ -148,10 +155,15 @@ def extract_intent(
                 )
         elif not clauses:
             # Bare text with no clauses: only invent an action when it looks
-            # like a real coding request, not chat.
-            from aider.z.task_mode import has_implement_signal
+            # like a real coding request, not chat or an ambiguous topic.
+            from aider.z.task_mode import (
+                has_implement_signal,
+                looks_like_ambiguous_topic,
+            )
 
-            if has_implement_signal(text) or len(text) > 40:
+            if looks_like_ambiguous_topic(text):
+                resolved_mode = "ask"
+            elif has_implement_signal(text) or len(text) > 40:
                 clauses.append(
                     TaskClause(
                         text=text.strip(),
