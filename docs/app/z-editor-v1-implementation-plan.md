@@ -12,8 +12,8 @@
 | Decision | Plan lock |
 |----------|-----------|
 | Goal | Desktop editor; Z engine programs; **router-only** models; uncertainty / skills / gate / cost visible in-app |
-| **Editor shell** | **[microsoft/vscode](https://github.com/microsoft/vscode) (Code - OSS, MIT)** — Electron workbench, Monaco, file tree, tabs. Local: `apps/z-desktop/vendor/vscode` (~333MB shallow) |
-| Codex role | **Protocol + MCP/session patterns only** — CLI/TUI/`app-server`; **not** a desktop GUI. Local: `apps/z-desktop/vendor/codex` |
+| **Editor shell** | **[microsoft/vscode](https://github.com/microsoft/vscode)** via fork **[Nate-git05/Seam](https://github.com/Nate-git05/Seam)** — Electron workbench, Monaco, file tree, tabs. Local: `apps/z-desktop/vendor/vscode` |
+| Codex role | **Protocol + MCP/session patterns only** — CLI/TUI/`app-server`; **not** a desktop GUI. Fork **[Nate-git05/codex](https://github.com/Nate-git05/codex)**. Local: `apps/z-desktop/vendor/codex` |
 | Agent brain | Existing Z (Python/Aider fork) |
 | Stack change | **Drop Tauri greenfield** for V1 shell — fork/brand VS Code OSS instead (Cursor-shaped). React panels can still mount inside VS Code webview/workbench contributions. |
 
