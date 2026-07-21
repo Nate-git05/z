@@ -117,3 +117,125 @@ class RelatedPathTests(unittest.TestCase):
             (src / "test_parser.py").write_text("def test_parse():\n    pass\n", encoding="utf-8")
             related = suggest_related_paths(root, "lib/parser.py")
             self.assertTrue(any("test_parser" in r for r in related), related)
+
+
+class ExploreBudgetTests(unittest.TestCase):
+    def test_path_walk_respects_file_budget(self):
+        from aider.z.explore import _search_path_names
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            # Many decoy files before the match — budget must stop early.
+            for i in range(80):
+                (root / f"decoy_{i}.txt").write_text("x", encoding="utf-8")
+            (root / "event_bus.hpp").write_text("// bus", encoding="utf-8")
+            hits = _search_path_names(
+                root, "event_bus", max_hits=4, max_files_scanned=20
+            )
+            # Match is file #81; with scan cap 20 we must not hang or find it
+            self.assertEqual(hits, [])
+
+    def test_rg_path_skips_filename_walk(self):
+        from unittest import mock
+
+        from aider.z import explore as explore_mod
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "event_bus.cpp").write_text(
+                "void publish() {}\n", encoding="utf-8"
+            )
+            walked = []
+
+            def boom(*a, **k):
+                walked.append(True)
+                return []
+
+            with mock.patch.object(explore_mod, "_rg_available", return_value=True):
+                with mock.patch.object(
+                    explore_mod,
+                    "_search_rg",
+                    return_value=[("event_bus.cpp", "publish")],
+                ):
+                    with mock.patch.object(
+                        explore_mod, "_search_path_names", side_effect=boom
+                    ):
+                        kws, ranked = explore_mod._rank_candidates(
+                            "implement thread-safe event bus publish subscribe",
+                            root,
+                            already_in_chat=[],
+                            max_keywords=5,
+                            max_files=8,
+                        )
+            self.assertTrue(kws)
+            self.assertTrue(any("event_bus" in r for r, _ in ranked), ranked)
+            self.assertEqual(walked, [], "filename walk must not run when rg works")
+
+
+class CapabilityProgressTests(unittest.TestCase):
+    def test_gap_only_announces_continue(self):
+        """Capability-plan-only with gaps must say continuing, not look finished."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from aider.coders.base_coder import Coder
+
+        outputs: list[str] = []
+        warnings: list[str] = []
+
+        io = SimpleNamespace(
+            yes=True,
+            tool_output=lambda *a, **k: outputs.append(" ".join(str(x) for x in a)),
+            tool_warning=lambda *a, **k: warnings.append(" ".join(str(x) for x in a)),
+        )
+        coder = MagicMock(spec=Coder)
+        coder.io = io
+        coder.verbose = False
+        coder.root = "."
+        coder.task_mode = SimpleNamespace(allows_capability_inference=True)
+        coder.task_intent = None
+        coder.uncertainty_engine = None
+        coder.cur_messages = []
+        coder._capability_plan_fingerprint = None
+
+        # Drive the real method with stubs for skill pull internals
+        from unittest import mock
+
+        from aider.z.uncertainty.capabilities import Capability, CapabilityPlan
+
+        need = Capability(
+            id="concurrency_safety",
+            label="Concurrency safety",
+            evidence_type="concurrency_test",
+            reason="thread-safe",
+        )
+        fake_plan = CapabilityPlan(
+            required=[need],
+            available_from_skills=[],
+            available_native=[],
+            coverage_gaps=[need],
+            compensation=["use sanitizers"],
+        )
+
+        with mock.patch(
+            "aider.z.skills.session.get_session_skill_index", return_value=[1]
+        ), mock.patch(
+            "aider.z.skills.session.pull_skills_for_checkpoint",
+            return_value=([], []),
+        ), mock.patch(
+            "aider.z.uncertainty.capabilities.build_capability_plan",
+            return_value=fake_plan,
+        ), mock.patch(
+            "aider.z.uncertainty.capabilities.format_capability_plan",
+            return_value="Capability plan stub",
+        ), mock.patch(
+            "aider.z.control_plane_budget.control_plane_compact_enabled",
+            return_value=False,
+        ):
+            Coder._maybe_pull_skills(coder, "Implement a thread-safe event bus", checkpoint="turn")
+
+        blob = "\n".join(warnings + outputs)
+        self.assertIn("Capability gaps", blob)
+        self.assertIn("continuing", blob.lower())
+        self.assertIn("not stopped", blob.lower())
+

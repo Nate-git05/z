@@ -188,6 +188,10 @@ class WaitingSpinner:
         if not self._thread.is_alive():
             self._thread.start()
 
+    def set_text(self, text: str) -> None:
+        """Update status text while the spinner keeps animating."""
+        self.spinner.text = text or self.spinner.text
+
     def stop(self):
         """Request the spinner to stop and wait briefly for the thread to exit."""
         self._stop_event.set()
