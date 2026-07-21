@@ -1406,8 +1406,33 @@ class Coder:
                 limit=2,
                 checkpoint=checkpoint,
             )
+            # Retrieve trace: verbose, --yes-always / NI, or Z_SKILL_RETRIEVE_LOG
+            try:
+                import os
+
+                from aider.z.skills.near_dup import get_last_retrieve_trace
+
+                log_retrieve = bool(getattr(self, "verbose", False))
+                if getattr(self.io, "yes", None) is True:
+                    log_retrieve = True
+                if os.environ.get("Z_SKILL_RETRIEVE_LOG", "").strip().lower() in (
+                    "1",
+                    "true",
+                    "yes",
+                ):
+                    log_retrieve = True
+                if log_retrieve:
+                    tr = get_last_retrieve_trace()
+                    if tr is not None:
+                        for line in tr.format_lines():
+                            self.io.tool_output(line)
+            except Exception:
+                pass
             if getattr(self, "verbose", False) and skip_reasons:
                 for reason in skip_reasons[:6]:
+                    self.io.tool_output(f"Skill skip — {reason}")
+            elif skip_reasons and getattr(self.io, "yes", None) is True:
+                for reason in skip_reasons[:4]:
                     self.io.tool_output(f"Skill skip — {reason}")
 
             skill_caps = [s.capability for s in (skills or []) if getattr(s, "capability", None)]
