@@ -27,3 +27,5 @@ web/.env*.local
 
 # Codex OSS clone for Z desktop (local only — do not vendor into git)
 apps/z-desktop/vendor/
+apps/z-desktop/extension/out/
+apps/z-desktop/extension/node_modules/

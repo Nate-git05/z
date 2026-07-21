@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://z.dev/protocol/ipc-v0.json",
+  "title": "Z Editor ↔ z-app-server IPC v0",
+  "description": "JSON-RPC 2.0 over local WebSocket. Inspired by Codex app-server Thread/Turn lifecycle; payloads are Z-native.",
+  "transport": {
+    "default": "ws://127.0.0.1:8741",
+    "env": "Z_APP_SERVER_URL"
+  },
+  "handshake": ["initialize", "initialized"],
+  "methods": {
+    "initialize": {
+      "params": {
+        "clientInfo": { "name": "string", "version": "string" },
+        "workspaceRoot": { "type": "string", "optional": true }
+      },
+      "result": {
+        "serverInfo": { "name": "z-app-server", "version": "string" },
+        "zHome": "string",
+        "capabilities": ["uncertainty", "skills", "commit_blocks", "mcp", "turns"]
+      }
+    },
+    "workspace/open": {
+      "params": { "root": "string" },
+      "result": { "ok": true, "root": "string" }
+    },
+    "turn/start": {
+      "params": {
+        "threadId": "string",
+        "text": "string"
+      },
+      "result": { "turnId": "string", "accepted": true },
+      "notes": "V0 may stub the agent loop; streams turn/* notifications when wired."
+    },
+    "uncertainty/list": {
+      "params": {
+        "sort": { "enum": ["risk", "age", "type"], "default": "risk" }
+      },
+      "result": { "nodes": "UncertaintyNode[]" }
+    },
+    "skills/list": {
+      "params": {
+        "kind": { "optional": true },
+        "quality_state": { "optional": true },
+        "query": { "optional": true }
+      },
+      "result": { "skills": "SkillSummary[]" }
+    },
+    "skills/create": {
+      "params": { "skill": "SkillDraft" },
+      "result": { "skill": "Skill" },
+      "notes": "Always draft / needs_review (D8)."
+    },
+    "commit_blocks/list": {
+      "params": {},
+      "result": { "blocks": "CommitBlockRecord[]" }
+    },
+    "mcp/list": {
+      "params": {},
+      "result": { "connections": "McpConnectionSummary[]" }
+    },
+    "usage/summary": {
+      "params": { "range": { "enum": ["billing_period", "all"], "default": "billing_period" } },
+      "result": { "byModel": "UsageRow[]" },
+      "notes": "Proxies gateway /v1/gateway/usage when authenticated."
+    },
+    "auth/status": {
+      "params": {},
+      "result": {
+        "authenticated": "boolean",
+        "email": { "optional": true },
+        "auth_mode": { "enum": ["router", "byok", null] }
+      }
+    }
+  },
+  "notifications": {
+    "turn/started": { "turnId": "string", "threadId": "string" },
+    "turn/busy": { "phase": "string" },
+    "item/agentMessage/delta": { "text": "string" },
+    "uncertainty/upsert": { "node": "UncertaintyNode" },
+    "gate/commit_blocked": { "record": "CommitBlockRecord" },
+    "turn/waiting_input": { "kind": "string", "payload": "object" },
+    "turn/completed": { "turnId": "string", "ok": "boolean" }
+  }
+}

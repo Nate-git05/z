@@ -20,6 +20,7 @@ from z_server.models.user import (
     WorkspaceMembership,
 )
 from z_server.models.waitlist import WaitlistSignup
+from z_server.models.gateway import GatewayRequest
 
 __all__ = [
     "Base",
@@ -40,4 +41,5 @@ __all__ = [
     "UncertaintyNodeRow",
     "WaitlistSignup",
     "Skill",
+    "GatewayRequest",
 ]

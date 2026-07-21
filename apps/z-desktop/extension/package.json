@@ -1,0 +1,102 @@
+{
+  "name": "z-editor",
+  "displayName": "Z",
+  "description": "Z coding agent — chat, uncertainty chain, skills, commit blocks, MCP, profile",
+  "version": "0.1.0",
+  "publisher": "z",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "z",
+          "title": "Z",
+          "icon": "media/z-activity.svg"
+        }
+      ]
+    },
+    "views": {
+      "z": [
+        {
+          "id": "z.chat",
+          "name": "Chat",
+          "type": "webview"
+        },
+        {
+          "id": "z.uncertainty",
+          "name": "Uncertainty",
+          "type": "webview"
+        },
+        {
+          "id": "z.skills",
+          "name": "Skills",
+          "type": "webview"
+        },
+        {
+          "id": "z.commitBlocks",
+          "name": "Commit blocks",
+          "type": "webview"
+        },
+        {
+          "id": "z.profile",
+          "name": "Profile",
+          "type": "webview"
+        },
+        {
+          "id": "z.mcp",
+          "name": "MCP",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "z.startAppServer",
+        "title": "Z: Start app-server"
+      },
+      {
+        "command": "z.reconnectAppServer",
+        "title": "Z: Reconnect app-server"
+      },
+      {
+        "command": "z.showStatus",
+        "title": "Z: Show connection status"
+      }
+    ],
+    "configuration": {
+      "title": "Z",
+      "properties": {
+        "z.appServerUrl": {
+          "type": "string",
+          "default": "ws://127.0.0.1:8741",
+          "description": "WebSocket URL for local z-app-server (override with Z_APP_SERVER_URL)."
+        },
+        "z.autoStartAppServer": {
+          "type": "boolean",
+          "default": true,
+          "description": "Spawn `z app-server` when the extension activates if not already reachable."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@types/ws": "^8.5.10",
+    "typescript": "^5.3.3"
+  }
+}

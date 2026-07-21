@@ -1,6 +1,6 @@
 # Z Editor V1 — Implementation Plan (post–Codex audit)
 
-**Status:** plan only — confirm stack lock below before large VS Code fork work.  
+**Status:** Phase 0–2 scaffolding landing — IPC + gateway stub + extension skeleton in tree; turn loop / live panels next.  
 **Date:** 2026-07-21 (revised: VS Code OSS added as editor foundation)  
 **Inputs:** user revised V1 scope; local clones `vendor/codex` + `vendor/vscode`; Z monorepo surfaces.  
 **Related:** [`z-desktop-north-star.md`](./z-desktop-north-star.md), router-only CLI (#147).
