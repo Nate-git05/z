@@ -271,6 +271,8 @@ def test_router_mode_needs_no_second_web_trip():
     ), patch(
         "aider.z.login_screen.prompt_router_model_choice",
         return_value="claude-sonnet-5",
+    ), patch(
+        "aider.z.cli._ensure_model_keys", return_value=True
     ), patch("aider.z.auth.open_web_setup") as setup, patch(
         "aider.z.onboarding.save_auth_mode"
     ) as save_mode, patch(

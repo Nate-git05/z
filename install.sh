@@ -187,9 +187,9 @@ main() {
 
   echo
   ok "Z installed: $(command -v z)"
-  info "Try:  z models"
-  info "Then: export ANTHROPIC_API_KEY=…   # or OPENAI_API_KEY"
-  info "      cd your-project && z"
+  info "Next:  cd your-project && z"
+  info "Flow:  Google/Z sign-in → BYOK or router → paste API key if needed"
+  info "Keys:  saved to ~/.z/byok.env (or export ANTHROPIC_API_KEY / OPENAI_API_KEY)"
   echo
 }
 

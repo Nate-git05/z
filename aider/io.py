@@ -804,6 +804,10 @@ class InputOutput:
         """Offer to open a URL in the browser, returns True if opened."""
         if url in self.never_prompts:
             return False
+        # Running as `z`: never interrupt with Aider documentation prompts.
+        if os.environ.get("Z_CLI", "").strip().lower() in ("1", "true", "yes"):
+            if url and "aider.chat" in str(url):
+                return False
         if self.confirm_ask(prompt, subject=url, allow_never=allow_never):
             webbrowser.open(url)
             return True

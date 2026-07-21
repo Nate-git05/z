@@ -206,13 +206,15 @@ def _complete_mode_setup(io, mode: str) -> bool:
     if mode == "byok":
         # Model/key picker is post-auth only. (/app/setup is not shipped yet.)
         from aider.z.auth import prompt_byok_setup
+        from aider.z.onboarding import load_config
 
         io.tool_output("")
         io.tool_output("Bring your own key — choose a model and paste its API key.")
         if not prompt_byok_setup(io):
             return False
         save_auth_mode(mode)
-        return True
+        _load_byok_env()
+        return _ensure_model_keys(io, load_config().selected_model)
 
     if mode == "router":
         from aider.z.login_screen import prompt_router_model_choice
@@ -222,6 +224,10 @@ def _complete_mode_setup(io, mode: str) -> bool:
             "Z's router runs on Z-hosted models. Pick a preferred model — "
             "Z can still escalate to a stronger one when the task needs it."
         )
+        io.tool_output(
+            "(Hosted routing billing is not live yet — you'll also paste a "
+            "provider API key so the agent can run locally.)"
+        )
         model_id = prompt_router_model_choice(io)
         if not model_id:
             io.tool_output("Setup cancelled.")
@@ -229,7 +235,7 @@ def _complete_mode_setup(io, mode: str) -> bool:
         save_selected_model(model_id)
         save_auth_mode(mode)
         io.tool_output(f"Router preference saved: {model_id}")
-        return True
+        return _ensure_model_keys(io, model_id)
 
     return False
 
@@ -357,6 +363,24 @@ def _start_agent(argv: list[str]) -> int | None:
         a.startswith("--show-model-warnings") for a in argv
     ):
         argv = list(argv) + ["--no-show-model-warnings"]
+
+    # Final hard gate: never enter the agent with a saved model that still
+    # lacks provider keys (that path used to become the Aider docs prompt).
+    from aider.z.onboarding import load_config as _load_cfg
+
+    cfg = _load_cfg()
+    if cfg.selected_model:
+        still_missing = _model_missing_keys(cfg.selected_model)
+        if still_missing:
+            io.tool_error(
+                f"Cannot start: {cfg.selected_model} still needs "
+                f"{', '.join(still_missing)}."
+            )
+            io.tool_output(
+                "Run `z auth switch` and paste your key, or:\n"
+                f"  export {still_missing[0]}=…"
+            )
+            return 1
 
     from aider.main import main as agent_main
 
