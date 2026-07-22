@@ -789,6 +789,11 @@ class Coder:
     def _stop_waiting_spinner(self):
         """Clear the waiting spinner."""
         spinner = getattr(self, "waiting_spinner", None)
+        try:
+            if getattr(self, "io", None) is not None:
+                self.io.agent_busy = False
+        except Exception:
+            pass
         if not spinner:
             return
         try:
@@ -796,28 +801,72 @@ class Coder:
         finally:
             self.waiting_spinner = None
 
+    def _busy_spinner_active(self) -> bool:
+        spinner = getattr(self, "waiting_spinner", None)
+        if spinner is None:
+            return False
+        thread = getattr(spinner, "_thread", None)
+        if thread is not None and getattr(thread, "is_alive", lambda: False)():
+            return True
+        return bool(getattr(spinner, "visible", False))
+
     def _phase_spinner_start(self, text: str) -> None:
         """Start (or restart) the mascot/eyes spinner for a planning step."""
         self._stop_waiting_spinner()
         if not text:
             return
+        from aider.z.ux_preamble import public_busy_label
+
+        # Quiet default: one "Working…" line; verbose keeps phase detail.
+        public = public_busy_label(text, coder=self)
+        orch = None
+        try:
+            orch = self.io.ensure_turn_ux()
+            orch.enter_busy(public)
+        except Exception:
+            orch = getattr(self.io, "turn_orchestrator", None)
+        label = public
+        if orch is not None:
+            try:
+                orch.set_phase(public)
+                label = orch.status_label(public)
+            except Exception:
+                if "Ctrl+C" not in label:
+                    label = f"{public}  · Ctrl+C to interrupt"
+        elif "Ctrl+C" not in label:
+            label = f"{public}  · Ctrl+C to interrupt"
         try:
             if not self.show_pretty():
                 # Non-pretty / dumb terminals: still print a static breadcrumb
-                self.io.tool_output(text)
+                self.io.tool_output(label)
                 return
         except Exception:
             return
         try:
+            # Separate from leftover slash-menu / prompt redraw so \r spinner
+            # does not overwrite file paths or completer chrome.
+            import sys as _sys
+
+            _sys.stdout.write("\n")
+            _sys.stdout.flush()
+        except Exception:
+            pass
+        try:
             if getattr(self.io, "z_theme", True):
-                self.waiting_spinner = waiting_display(text)
+                self.waiting_spinner = waiting_display(label)
             else:
-                self.waiting_spinner = WaitingSpinner(text)
+                self.waiting_spinner = WaitingSpinner(label)
             self.waiting_spinner.start()
+            try:
+                self.io.agent_busy = True
+                self.io._stop_agent_busy = self._phase_spinner_stop
+                self.io.start_busy_queue_reader()
+            except Exception:
+                pass
         except Exception:
             self.waiting_spinner = None
             try:
-                self.io.tool_output(text)
+                self.io.tool_output(label)
             except Exception:
                 pass
 
@@ -825,23 +874,41 @@ class Coder:
         """Update spinner status text without stopping the eyes animation."""
         if not text:
             return
+        from aider.z.ux_preamble import public_busy_label
+
+        public = public_busy_label(text, coder=self)
+        orch = getattr(self.io, "turn_orchestrator", None)
+        if orch is not None:
+            try:
+                orch.set_phase(public)
+                label = orch.status_label(public)
+            except Exception:
+                label = public
+        else:
+            label = public
+            if "Ctrl+C" not in label:
+                label = f"{public}  · Ctrl+C to interrupt"
         spinner = getattr(self, "waiting_spinner", None)
         if spinner is None:
             self._phase_spinner_start(text)
             return
         try:
             if hasattr(spinner, "set_text"):
-                spinner.set_text(text)
+                spinner.set_text(label)
             elif hasattr(spinner, "text"):
-                spinner.text = text
+                spinner.text = label
             elif hasattr(spinner, "spinner") and hasattr(spinner.spinner, "text"):
-                spinner.spinner.text = text
+                spinner.spinner.text = label
         except Exception:
             pass
 
     def _phase_spinner_stop(self) -> None:
         """Stop planning-phase spinner before printing or prompting."""
         self._stop_waiting_spinner()
+        try:
+            self.io.stop_busy_queue_reader()
+        except Exception:
+            pass
 
     def get_abs_fnames_content(self):
         for fname in list(self.abs_fnames):
@@ -1128,27 +1195,94 @@ class Coder:
 
     def run(self, with_message=None, preproc=True):
         try:
+            self.io.ensure_turn_ux()
+            self.io._refresh_busy_status = self._refresh_busy_status
+            self.io._stop_agent_busy = self._phase_spinner_stop
+            self.io._busy_spinner_active = self._busy_spinner_active
             if with_message:
                 self.io.user_input(with_message)
-                self.run_one(with_message, preproc)
+                self._begin_turn_busy("planning")
+                try:
+                    self.run_one(with_message, preproc)
+                finally:
+                    self._end_turn_idle()
                 return self.partial_response_content
             while True:
                 try:
                     if not self.io.placeholder:
                         self.copy_context()
-                    user_message = self.get_input()
-                    self.run_one(user_message, preproc)
-                    self.show_undo_hint()
+                    user_message = self._next_user_message()
+                    self._begin_turn_busy("planning")
+                    try:
+                        self.run_one(user_message, preproc)
+                        self.show_undo_hint()
+                    finally:
+                        self._end_turn_idle()
                 except KeyboardInterrupt:
                     self.keyboard_interrupt()
         except EOFError:
             return
+
+    def _next_user_message(self):
+        """Idle: auto-drain one queued message (D7) or block on full prompt."""
+        orch = self.io.ensure_turn_ux()
+        orch.enter_idle()
+        queued = self.io.pop_queued_user_message()
+        if queued:
+            try:
+                self.io.tool_output(orch.format_queued_preview(queued))
+            except Exception:
+                pass
+            try:
+                self.io.ring_bell()
+            except Exception:
+                pass
+            return queued
+        return self.get_input()
+
+    def _begin_turn_busy(self, phase: str = "planning") -> None:
+        orch = self.io.ensure_turn_ux()
+        orch.enter_busy(phase)
+        try:
+            self.io.start_busy_queue_reader()
+        except Exception:
+            pass
+
+    def _end_turn_idle(self) -> None:
+        self._phase_spinner_stop()
+        try:
+            self.io.stop_busy_queue_reader()
+        except Exception:
+            pass
+        orch = getattr(self.io, "turn_orchestrator", None)
+        if orch is not None:
+            orch.enter_idle()
+
+    def _refresh_busy_status(self) -> None:
+        """Update spinner text with phase + Queued N (orchestrator status_label)."""
+        orch = getattr(self.io, "turn_orchestrator", None)
+        spinner = getattr(self, "waiting_spinner", None)
+        if orch is None or spinner is None:
+            return
+        from aider.z.ux_preamble import DEFAULT_BUSY_LABEL
+
+        base = orch.phase or DEFAULT_BUSY_LABEL
+        label = orch.status_label(base)
+        try:
+            if hasattr(spinner, "set_text"):
+                spinner.set_text(label)
+            elif hasattr(spinner, "text"):
+                spinner.text = label
+        except Exception:
+            pass
 
     def copy_context(self):
         if self.auto_copy_context:
             self.commands.cmd_copy_context()
 
     def get_input(self):
+        # Never leave planning/LLM spinner running into the next prompt.
+        self._phase_spinner_stop()
         inchat_files = self.get_inchat_relative_files()
         read_only_files = [self.get_rel_fname(fname) for fname in self.abs_read_only_fnames]
         all_files = sorted(set(inchat_files + read_only_files))
@@ -1204,69 +1338,108 @@ class Coder:
                 eng0.ctx.task_intent = intent
                 eng0.ctx.task_mode = mode.value if hasattr(mode, "value") else str(mode)
 
-            # Skills + overlapped explore, with continuous mascot/eyes updates.
-            # Explore forks off the critical path while checklist/plan draft (T3).
-            from aider.z.ux_preamble import TurnPreamble, ux_verbose
-
-            self._turn_preamble = TurnPreamble(verbose=ux_verbose(coder=self))
+            # Phase 5 — push TaskMode/intent to the routing gateway for this turn.
             try:
-                self._phase_spinner_start("Planning — matching skills…")
-                self._maybe_pull_skills(user_text, checkpoint="turn")
+                from aider.z.gateway_client import set_gateway_routing_hints
 
-                if mode.allows_explore_pass:
-                    try:
-                        from aider.z.explore import explore_pass_enabled
-
-                        if explore_pass_enabled():
-                            self._phase_spinner_start(
-                                "Planning — exploring related files…"
-                            )
-                    except Exception:
-                        pass
-                explore_fut = self._start_explore_pass_async(user_text)
-
-                # House instructions (AGENTS.md) — once per session
-                self._maybe_inject_house_instructions()
-
-                if mode.allows_requirement_decomposition:
-                    self._phase_spinner_start(
-                        "Planning — drafting approach checklist…"
+                esc_depth = int(getattr(self, "_gateway_escalation_depth", 0) or 0)
+                intent_text = None
+                if intent is not None:
+                    intent_text = (
+                        getattr(intent, "planning_text", None)
+                        or getattr(intent, "capability_text", None)
+                        or None
                     )
-                    self._maybe_begin_uncertainty_task(user_text)
-
-                # PLAN mode: inject reminder; skip high-stakes *implement* plan confirm
-                from aider.z.task_mode import TaskMode as _TM
-
-                if mode is _TM.PLAN:
-                    self._phase_spinner_start("Planning — refining plan interview…")
-                    self._maybe_advance_plan_interview(user_text)
-                    self._phase_spinner_stop()
-                    self._inject_plan_mode_reminder()
-                elif mode.allows_planning:
-                    self._phase_spinner_start(
-                        "Planning — drafting implementation plan…"
-                    )
-                    if not self._maybe_require_implementation_plan(user_text):
-                        self._cancel_explore_pass(explore_fut)
-                        return
-                else:
-                    # Ensure no stale plan from a prior turn leaks into this message
-                    eng = getattr(self, "uncertainty_engine", None)
-                    if eng is not None and getattr(eng, "ctx", None) is not None:
-                        eng.ctx.plan = None
-                        eng.ctx.plan_required = False
-                        eng.ctx.plan_approved = True
-            finally:
-                self._phase_spinner_stop()
-
-            # Join explore before the model turn so findings still land in context
-            self._finish_explore_pass(explore_fut)
-            try:
-                pre = getattr(self, "_turn_preamble", None)
-                if pre is not None:
-                    pre.flush(self.io)
+                    if isinstance(intent_text, str):
+                        intent_text = intent_text.strip() or None
+                if not intent_text and isinstance(user_text, str):
+                    intent_text = user_text
+                set_gateway_routing_hints(
+                    task_mode=mode,
+                    intent=intent_text,
+                    escalate=esc_depth > 0,
+                    escalation_depth=esc_depth,
+                    thread_id=getattr(self, "thread_id", None),
+                )
             except Exception:
                 pass
+
+            # Skills + overlapped explore, with continuous mascot/eyes updates.
+            # Explore forks off the critical path while checklist/plan draft (T3).
+            from aider.z.task_mode import TaskMode as _TM
+            from aider.z.task_mode import looks_like_casual_chat
+            from aider.z.ux_preamble import TurnPreamble, ux_verbose
+
+            # Greetings / small-talk: no skills/explore/plan chrome — just answer.
+            if looks_like_casual_chat(user_text):
+                eng = getattr(self, "uncertainty_engine", None)
+                if eng is not None and getattr(eng, "ctx", None) is not None:
+                    eng.ctx.plan = None
+                    eng.ctx.plan_required = False
+                    eng.ctx.plan_approved = True
+                self._turn_preamble = None
+                self._maybe_inject_house_instructions()
+            else:
+                self._turn_preamble = TurnPreamble(verbose=ux_verbose(coder=self))
+                explore_fut = None
+                try:
+                    self._phase_spinner_start("Planning — matching skills…")
+                    self._maybe_pull_skills(user_text, checkpoint="turn")
+
+                    if mode.allows_explore_pass:
+                        try:
+                            from aider.z.explore import explore_pass_enabled
+
+                            if explore_pass_enabled():
+                                self._phase_spinner_start(
+                                    "Planning — exploring related files…"
+                                )
+                        except Exception:
+                            pass
+                    explore_fut = self._start_explore_pass_async(user_text)
+                    self._explore_future = explore_fut
+
+                    # House instructions (AGENTS.md) — once per session
+                    self._maybe_inject_house_instructions()
+
+                    if mode.allows_requirement_decomposition:
+                        self._phase_spinner_start(
+                            "Planning — drafting approach checklist…"
+                        )
+                        self._maybe_begin_uncertainty_task(user_text)
+
+                    # PLAN mode: inject reminder; skip high-stakes *implement* plan confirm
+                    if mode is _TM.PLAN:
+                        self._phase_spinner_start("Planning — refining plan interview…")
+                        self._maybe_advance_plan_interview(user_text)
+                        self._phase_spinner_stop()
+                        self._inject_plan_mode_reminder()
+                    elif mode.allows_planning:
+                        self._phase_spinner_start(
+                            "Planning — drafting implementation plan…"
+                        )
+                        if not self._maybe_require_implementation_plan(user_text):
+                            self._cancel_explore_pass(explore_fut)
+                            return
+                    else:
+                        # Ensure no stale plan from a prior turn leaks into this message
+                        eng = getattr(self, "uncertainty_engine", None)
+                        if eng is not None and getattr(eng, "ctx", None) is not None:
+                            eng.ctx.plan = None
+                            eng.ctx.plan_required = False
+                            eng.ctx.plan_approved = True
+                finally:
+                    self._phase_spinner_stop()
+                    self._explore_future = None
+
+                # Join explore before the model turn so findings still land in context
+                self._finish_explore_pass(explore_fut)
+                try:
+                    pre = getattr(self, "_turn_preamble", None)
+                    if pre is not None:
+                        pre.flush(self.io)
+                except Exception:
+                    pass
 
         while message:
             self.reflected_message = None
@@ -1429,6 +1602,33 @@ class Coder:
                 pass
             self._maybe_suggest_skill(user_message)
 
+    def _report_gateway_routing_outcome(self, gate_passed: bool, gate_result=None) -> None:
+        """Phase 5b — feed verify/commit gate results into gateway calibration."""
+        try:
+            from aider.z.gateway_client import report_routing_outcome, router_uses_gateway
+
+            if not router_uses_gateway():
+                return
+            model_id = getattr(getattr(self, "main_model", None), "name", None) or "unknown"
+            mode = getattr(self, "task_mode", None)
+            from aider.z.routing.task_tier import tier_for_task_mode
+
+            tier = tier_for_task_mode(mode).value
+            checker = None
+            if gate_result is not None:
+                checker = getattr(gate_result, "reason", None)
+                if checker:
+                    checker = str(checker)[:200]
+            report_routing_outcome(
+                model_id=str(model_id),
+                tier=tier,
+                gate_passed=bool(gate_passed),
+                escalated=int(getattr(self, "_gateway_escalation_depth", 0) or 0) > 0,
+                checker_triggered=checker,
+            )
+        except Exception:
+            pass
+
     def _resolve_task_mode_and_intent(self, user_message: str):
         """Per-message TaskMode + TaskIntent (P0.1 / P0.2)."""
         from aider.z.task_mode import TaskMode, classify_task_mode
@@ -1519,15 +1719,13 @@ class Coder:
                 checkpoint=checkpoint,
             )
             self._phase_spinner_update("Planning — building capability plan…")
-            # Retrieve trace: verbose, --yes-always / NI, or Z_SKILL_RETRIEVE_LOG
+            # Retrieve trace: verbose or Z_SKILL_RETRIEVE_LOG (quiet by default)
             try:
                 import os
 
                 from aider.z.skills.near_dup import get_last_retrieve_trace
 
                 log_retrieve = bool(getattr(self, "verbose", False))
-                if getattr(self.io, "yes", None) is True:
-                    log_retrieve = True
                 if os.environ.get("Z_SKILL_RETRIEVE_LOG", "").strip().lower() in (
                     "1",
                     "true",
@@ -1543,9 +1741,6 @@ class Coder:
                 pass
             if getattr(self, "verbose", False) and skip_reasons:
                 for reason in skip_reasons[:6]:
-                    self.io.tool_output(f"Skill skip — {reason}")
-            elif skip_reasons and getattr(self.io, "yes", None) is True:
-                for reason in skip_reasons[:4]:
                     self.io.tool_output(f"Skill skip — {reason}")
 
             skill_caps = [s.capability for s in (skills or []) if getattr(s, "capability", None)]
@@ -1631,13 +1826,14 @@ class Coder:
                 self.io.tool_output(f"{label}: {names}")
                 if getattr(self, "verbose", False):
                     self.io.tool_output(f"  why: {why}")
-            if cap_plan.coverage_gaps:
+            # Gaps stay in context for the model; don't narrate unless verbose.
+            if cap_plan.coverage_gaps and not quiet:
                 self.io.tool_warning(
                     f"Capability gaps ({len(cap_plan.coverage_gaps)}): "
                     "compensate with workflow — no skill ≠ skip verification."
                 )
                 # Gaps are informational — never a turn abort.
-                if not skills and not quiet:
+                if not skills:
                     self.io.tool_output(
                         "No matching skill — continuing with native plan / "
                         "verify workflow (not stopped)."
@@ -1919,6 +2115,45 @@ class Coder:
         except Exception as err:
             if getattr(self, "verbose", False):
                 self.io.tool_warning(f"Tool-loop skipped: {err}")
+            return False
+
+    def _maybe_run_mcp_loop(self, content: str) -> bool:
+        """
+        Run z-mcp / Z_MCP_CALL fences (Phase 11 path B).
+        Returns True if a reflect was scheduled (caller should skip apply).
+        """
+        try:
+            from aider.z.mcp_turn import run_mcp_turn, mcp_turn_enabled
+
+            if not mcp_turn_enabled() or not content:
+                return False
+            if int(getattr(self, "num_reflections", 0) or 0) >= 6:
+                return False
+            notify = getattr(self, "_z_mcp_notify", None)
+            turn_id = getattr(self, "_z_mcp_turn_id", None)
+            if callable(turn_id):
+                turn_id = turn_id()
+            res = run_mcp_turn(
+                content,
+                io=self.io,
+                coder=self,
+                notify=notify if callable(notify) else None,
+                turn_id=turn_id,
+            )
+            if not res.ran:
+                return False
+            names = ", ".join(f"{c.server}.{c.tool}" for c in res.calls)
+            self.io.tool_output(f"MCP turn: ran {len(res.calls)} tool(s) ({names}).")
+            prev = getattr(self, "reflected_message", None) or ""
+            self.reflected_message = (
+                (prev + "\n\n" + res.reflect_message).strip()
+                if prev
+                else res.reflect_message
+            )
+            return True
+        except Exception as err:
+            if getattr(self, "verbose", False):
+                self.io.tool_warning(f"MCP turn skipped: {err}")
             return False
 
     def _maybe_soft_stop_done_claim(self) -> None:
@@ -2541,8 +2776,11 @@ class Coder:
         self._drift_asked_this_task = True
         prompt = confirm_prompt(signal)
         try:
+            # Long drift text goes in the escalation panel (subject); keep the
+            # prompt_toolkit line short so terminal resize does not garble it.
             accepted = self.io.confirm_ask(
-                prompt,
+                "Refocus on the original task?",
+                subject=prompt,
                 default="n",
                 explicit_yes_required=True,
             )
@@ -2787,7 +3025,24 @@ class Coder:
         return inp
 
     def keyboard_interrupt(self):
-        # Ensure cursor is visible on exit
+        # Ensure cursor is visible on exit; stop any busy spinner immediately.
+        # D8: keep the message queue across a single ^C.
+        qlen = 0
+        orch = getattr(self.io, "turn_orchestrator", None)
+        if orch is not None:
+            qlen = orch.queue_len
+            try:
+                orch.interrupt_busy()
+            except Exception:
+                pass
+        self._phase_spinner_stop()
+        # Cancel in-flight explore if present
+        try:
+            fut = getattr(self, "_explore_future", None)
+            if fut is not None:
+                self._cancel_explore_pass(fut)
+        except Exception:
+            pass
         Console().show_cursor(True)
 
         now = time.time()
@@ -2798,7 +3053,10 @@ class Coder:
             self.event("exit", reason="Control-C")
             sys.exit()
 
-        self.io.tool_warning("\n\n^C again to exit")
+        kept = f" · queued {qlen} kept" if qlen else ""
+        self.io.tool_warning(
+            f"\n\n^C again to exit  (agent work interrupted{kept})"
+        )
 
         self.last_keyboard_interrupt = now
 
@@ -3003,6 +3261,17 @@ class Coder:
                 from aider.z.plan_mode import format_plan_mode_reminder
 
                 final_reminders.append(format_plan_mode_reminder())
+        except Exception:
+            pass
+        # Phase 11 — inject connected MCP tool catalog when available
+        try:
+            from aider.z.mcp_turn import format_mcp_catalog_reminder
+
+            idx = getattr(self, "mcp_tool_index", None) or []
+            if idx:
+                rem = format_mcp_catalog_reminder(idx)
+                if rem:
+                    final_reminders.append(rem)
         except Exception:
             pass
         if self.main_model.lazy:
@@ -3270,12 +3539,27 @@ class Coder:
 
         self.multi_response_content = ""
         if self.show_pretty():
-            spinner_text = "Waiting for " + self.main_model.name
+            from aider.z.ux_preamble import public_busy_label
+
+            detailed = "Waiting for " + self.main_model.name
+            base = public_busy_label(detailed, coder=self, waiting_model=True)
+            try:
+                orch = self.io.ensure_turn_ux()
+                orch.enter_busy(base)
+                spinner_text = orch.status_label(base)
+            except Exception:
+                spinner_text = f"{base}  · Ctrl+C to interrupt"
             if getattr(self.io, "z_theme", True):
                 self.waiting_spinner = waiting_display(spinner_text)
             else:
                 self.waiting_spinner = WaitingSpinner(spinner_text)
             self.waiting_spinner.start()
+            try:
+                self.io.agent_busy = True
+                self.io._stop_agent_busy = self._stop_waiting_spinner
+                self.io.start_busy_queue_reader()
+            except Exception:
+                pass
             if self.stream:
                 self.mdstream = self.io.get_assistant_mdstream()
             else:
@@ -3352,8 +3636,19 @@ class Coder:
                 self.live_incremental_response(True)
                 self.mdstream = None
 
-            # Ensure any waiting spinner is stopped
+            # Ensure any waiting spinner is stopped before apply/confirms
             self._stop_waiting_spinner()
+            try:
+                self.io.stop_busy_queue_reader()
+            except Exception:
+                pass
+            # Don't keep a stale "Planning…" phase over Create-file confirms
+            orch = getattr(self.io, "turn_orchestrator", None)
+            if orch is not None:
+                try:
+                    orch.set_phase("applying edits")
+                except Exception:
+                    pass
 
             self.partial_response_content = self.get_multi_response_content_in_progress(True)
             self.remove_reasoning_content()
@@ -3429,6 +3724,10 @@ class Coder:
 
             # Thin read-only tool-loop before applying SEARCH/REPLACE
             if not interrupted and self._maybe_run_tool_loop(content):
+                return
+
+            # MCP tool fences (Phase 11) — after local z-tool, before apply
+            if not interrupted and self._maybe_run_mcp_loop(content):
                 return
 
         if interrupted:
@@ -3513,6 +3812,11 @@ class Coder:
                 gate_result = prepare_commit(self, commit_edited)
                 if gate_result.reflect_message:
                     self.reflected_message = gate_result.reflect_message
+                    self._report_gateway_routing_outcome(False, gate_result)
+                    # Next model call escalates one tier (Phase 5b).
+                    self._gateway_escalation_depth = (
+                        int(getattr(self, "_gateway_escalation_depth", 0) or 0) + 1
+                    )
                     return
                 if not gate_result.allow_commit:
                     from aider.z.uncertainty.gate import format_commit_blocked_message
@@ -3536,8 +3840,14 @@ class Coder:
                         )
                         self.io.tool_error(blocked_msg)
                     self.move_back_cur_messages(blocked_msg)
+                    self._report_gateway_routing_outcome(False, gate_result)
+                    self._gateway_escalation_depth = (
+                        int(getattr(self, "_gateway_escalation_depth", 0) or 0) + 1
+                    )
                     return
 
+                self._report_gateway_routing_outcome(True, gate_result)
+                self._gateway_escalation_depth = 0
                 saved_message = self.auto_commit(commit_edited)
                 # Tie explicit acknowledgments / force overrides to the commit hash
                 if saved_message and getattr(self, "last_aider_commit_hash", None):
@@ -4019,6 +4329,15 @@ class Coder:
                 self._stop_waiting_spinner()
             self.partial_response_content += text
 
+            # Z Editor / app-server: stream deltas over IPC even when pretty.
+            if text:
+                emit = getattr(self.io, "emit_llm_delta", None)
+                if callable(emit):
+                    try:
+                        emit(replace_reasoning_tags(text, self.reasoning_tag_name))
+                    except Exception:
+                        pass
+
             if self.show_pretty():
                 self.live_incremental_response(False)
             elif text:
@@ -4328,9 +4647,16 @@ class Coder:
             if self._blocks_dependency_fabrication(path, full_path):
                 return
 
-            if not self.io.confirm_ask("Create new file?", subject=path):
-                self.io.tool_output(f"Skipping edits to {path}")
-                return
+            # Default: auto-create new project files (Claude/OpenCode feel).
+            # Escape: Z_CONFIRM_NEW_FILES=1 restores per-file Y/N.
+            from aider.z.ux_preamble import confirm_new_files_enabled, ux_verbose
+
+            if confirm_new_files_enabled():
+                if not self.io.confirm_ask("Create new file?", subject=path):
+                    self.io.tool_output(f"Skipping edits to {path}")
+                    return
+            elif ux_verbose(coder=self):
+                self.io.tool_output(f"Creating {path}")
 
             if not self.dry_run:
                 if not utils.touch_file(full_path):

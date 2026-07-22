@@ -1,6 +1,6 @@
 # Terminal UX for software engineers
 
-**Status:** design — P0/P1 implemented (see tranche links); P2 open  
+**Status:** design — P0/P1/P2 implemented (see tranche links)  
 **Audience:** people shipping product code with Z in a TTY  
 **Non-goals:** landing page, marketing, web dashboard
 
@@ -54,6 +54,18 @@ Revision rounds reprint the full plan (`plan.interactive_plan_confirm`).
 `run_one` runs skills → explore → checklist → plan before the first model token.  
 Even with phase spinners, completed milestones still print multiple lines.
 
+**Busy vs input:** leftover prompt_toolkit chrome + `\r` mascot spinner made Busy look
+interactive. Honesty contract (#141):
+
+1. Spinner label includes `Ctrl+C to interrupt`.
+2. Spinner stops on KeyboardInterrupt and before every `get_input` / confirm / prompt_ask.
+3. Chat file paths print **above** the prompt (one per line), never inside PromptSession.
+
+**P3 turn flow:** one orchestrator owns Idle / Busy / WaitingInput / Queued — type while
+Busy to enqueue the next turn; blocking asks freeze the queue; auto-drain at Idle.
+
+**Plan:** [terminal-ux-p3-plan.md](./terminal-ux-p3-plan.md)
+
 ### 3.4 Mode discoverability
 
 - `/ask` with args ≠ sticky ASK; bare `/ask` only flips edit format  
@@ -64,7 +76,7 @@ Even with phase spinners, completed milestones still print multiple lines.
 
 - Token/cost after every LLM round (`show_usage_report`)  
 - Most `tool_output` mirrored into chat history as blockquotes (`io.tool_output`)  
-- Dual uncertainty UIs: production `uncertainty/ui.py` vs unused Rich `uncertainty_ui.py`
+- Dual uncertainty UIs: production `uncertainty/ui.py` vs unused Rich `uncertainty_ui.py` (P2: product uses production Rich; prototype deprecated)
 
 ---
 
@@ -180,7 +192,7 @@ Document this next to NI gate UX (`fault-plan-ni-verify-skills-gate.md`).
 
 ## 10. Uncertainty browse
 
-- Prefer one stack: either port Rich hierarchy into `uncertainty/ui.py` or wire `uncertainty_ui.py` to `/uncertainties`  
+- One stack: Rich hierarchy in production `uncertainty/ui.py` (prototype `uncertainty_ui.py` deprecated)  
 - Keep risk-first sort; actions Fix / Test / Explain / Ignore / Custom  
 - After edits: one T1 line `Uncertainty · 2 High · 1 Medium — /uncertainties` instead of long prose when possible
 
@@ -216,9 +228,24 @@ Document this next to NI gate UX (`fault-plan-ni-verify-skills-gate.md`).
 7. Unify `/uncertainties` presentation  
 8. Golden “one implement turn” transcript fixtures for noise budget  
 
+<<<<<<< HEAD
 **Extensive implementation plan (no code yet):** [terminal-ux-p2-plan.md](./terminal-ux-p2-plan.md)
 
 **Out of scope for these tranches:** removing plan gates, auto-skipping verify, web UI.
+=======
+**Extensive plan:** [terminal-ux-p2-plan.md](./terminal-ux-p2-plan.md) · **Implemented:** this PR
+
+### P3 — Turn flow (busy · queue · interrupt)
+
+9. Single turn orchestrator (Idle / Busy / WaitingInput)  
+10. Message queue while Busy; FIFO drain at Idle  
+11. One ^C / cancel contract that keeps the queue  
+
+**Extensive plan:** [terminal-ux-p3-plan.md](./terminal-ux-p3-plan.md) · **Implemented:** this PR
+
+**Out of scope for these tranches:** removing plan gates, auto-skipping verify, web UI,
+mid-stream steer (P4).
+>>>>>>> origin/main
 
 ---
 
@@ -248,6 +275,8 @@ Document this next to NI gate UX (`fault-plan-ni-verify-skills-gate.md`).
 ## 15. Open questions
 
 Resolved for P0 in [terminal-ux-p0-plan.md](./terminal-ux-p0-plan.md) §2 (View letter, status hex `#D8D8D8`, thin checklist in panel).  
-Resolved for P1 in [terminal-ux-p1-plan.md](./terminal-ux-p1-plan.md) §2 (`PLAN›`/`ASK›`/`›`, usage default-off, history filter). Remaining:
+Resolved for P1 in [terminal-ux-p1-plan.md](./terminal-ux-p1-plan.md) §2 (`PLAN›`/`ASK›`/`›`, usage default-off, history filter).  
 
-1. Should ambiguous noun phrases (`users and sessions`) stay IMPLEMENT or become ASK? (Today: IMPLEMENT.)
+1. Ambiguous noun phrases (`users and sessions`) → **ASK** via local classifier (Option A).  
+   **Extensive plan (no code yet):** [mode-classifier-local-plan.md](./mode-classifier-local-plan.md)  
+   (Previously defaulted to IMPLEMENT; flipping avoids surprise plan panels.)

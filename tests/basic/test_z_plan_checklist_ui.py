@@ -106,10 +106,14 @@ class PlanChangeOptionTest(unittest.TestCase):
         plan = draft_plan_from_request("build me a slack chatbot")
         io = MagicMock()
         io.yes = None
+        io.pretty = True
+        io.z_theme = False  # skip Rich panel in unit test
         io.plan_confirm_ask = MagicMock(side_effect=["change", "yes"])
         io.prompt_ask = MagicMock(return_value="use socket mode and python")
         io._pending_plan_change = None
         io.confirm_ask = MagicMock(return_value=True)
+        io.tool_warning = MagicMock()
+        io.tool_output = MagicMock()
 
         ok, final = interactive_plan_confirm(
             io,
@@ -121,17 +125,54 @@ class PlanChangeOptionTest(unittest.TestCase):
         self.assertIsNotNone(final)
         self.assertEqual(io.plan_confirm_ask.call_count, 2)
         self.assertTrue(io.prompt_ask.called)
-        blob = " ".join(final.steps).lower()
+        # Change re-confirms compactly — no full-plan dump / Enter pause
+        pause_calls = [
+            c for c in io.prompt_ask.call_args_list
+            if c.args and "done reading" in str(c.args[0]).lower()
+        ]
+        self.assertFalse(pause_calls, "Change should not dump full plan + Enter pause")
+        out_blob = " ".join(
+            str(c.args[0]) for c in io.tool_output.call_args_list if c.args
+        )
+        self.assertIn("Plan updated", out_blob)
+        blob = " ".join(final.steps).lower() + " " + (final.approach or "").lower()
         self.assertIn("socket", blob)
+        self.assertIn("python", blob)
+
+    def test_view_pauses_before_reconfirm(self):
+        plan = draft_plan_from_request("build me a slack chatbot")
+        io = MagicMock()
+        io.yes = None
+        io.pretty = True
+        io.z_theme = False
+        io.plan_confirm_ask = MagicMock(side_effect=["view", "yes"])
+        io.prompt_ask = MagicMock(return_value="")
+        io.tool_warning = MagicMock()
+        io.tool_output = MagicMock()
+
+        ok, final = interactive_plan_confirm(io, plan)
+        self.assertTrue(ok)
+        self.assertEqual(io.plan_confirm_ask.call_count, 2)
+        pause_calls = [
+            c for c in io.prompt_ask.call_args_list
+            if c.args and "done reading" in str(c.args[0]).lower()
+        ]
+        self.assertTrue(pause_calls)
+        # Full plan was shown (warning header or tool_output body)
+        self.assertTrue(io.tool_warning.called or io.tool_output.called)
 
     def test_free_text_pending_change_at_confirm(self):
         plan = draft_plan_from_request("build me a slack chatbot")
         mock_io = MagicMock()
         mock_io.yes = None
+        mock_io.pretty = True
+        mock_io.z_theme = False
         mock_io.plan_confirm_ask = MagicMock(side_effect=["change", "yes"])
         mock_io._pending_plan_change = "webhook only, typescript"
         mock_io.prompt_ask = MagicMock(return_value="")
         mock_io.confirm_ask = MagicMock(return_value=True)
+        mock_io.tool_warning = MagicMock()
+        mock_io.tool_output = MagicMock()
 
         ok, final = interactive_plan_confirm(
             mock_io,

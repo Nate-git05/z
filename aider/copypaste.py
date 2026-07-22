@@ -26,6 +26,17 @@ class ClipboardWatcher:
                     current = pyperclip.paste()
                     if current != self.last_clipboard:
                         self.last_clipboard = current
+                        orch = getattr(self.io, "turn_orchestrator", None)
+                        if orch is not None:
+                            from aider.z.turn_ux import TurnState
+
+                            if orch.state == TurnState.BUSY:
+                                # D12: enqueue clipboard while Busy (don't interrupt dead session)
+                                text = current
+                                if len(current.splitlines()) > 1:
+                                    text = "\n" + current + "\n"
+                                self.io.enqueue_user_message(text)
+                                continue
                         self.io.interrupt_input()
                         self.io.placeholder = current
                         if len(current.splitlines()) > 1:

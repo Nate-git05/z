@@ -13,6 +13,7 @@ from z_server.config import get_settings
 from z_server.db import init_db
 from z_server.routers import auth as auth_router
 from z_server.routers import dashboard as dashboard_router
+from z_server.routers import gateway as gateway_router
 from z_server.routers import mcp as mcp_router
 from z_server.routers import skills as skills_router
 from z_server.routers import uncertainty as uncertainty_router
@@ -58,9 +59,9 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title=f"{settings.app_name}",
         description=(
-            "Z account, workspace, and MCP integrations API. "
+            "Z account, workspace, MCP, and routing-gateway API. "
             "User accounts live in PostgreSQL via SQLAlchemy. "
-            "Model API keys remain bring-your-own and are not stored here."
+            "Provider model keys stay on the server (gateway); clients use Z auth."
         ),
         version="0.1.0",
         lifespan=lifespan,
@@ -73,6 +74,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(auth_router.router)
+    app.include_router(gateway_router.router)
     app.include_router(mcp_router.router)
     app.include_router(uncertainty_router.router)
     app.include_router(waitlist_router.router)

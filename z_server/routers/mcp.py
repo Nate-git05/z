@@ -242,6 +242,7 @@ def _user_owns(db: Session, user: User, conn: McpConnection) -> bool:
 def oauth_start(
     server_name: str = Query(...),
     scope: str = Query("personal"),
+    client: str | None = Query(None, description="z-editor → deep-link after callback"),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -259,12 +260,13 @@ def oauth_start(
 
     settings = get_settings()
     state = secrets.token_urlsafe(24)
-    # Encode scope + server + user in state row
+    # Encode scope + server + user (+ optional desktop client) in state row
+    client_tag = "z-editor" if (client or "").strip().lower() in ("z-editor", "desktop") else "web"
     redirect_uri = f"{settings.public_base_url}/v1/mcp/oauth/callback"
     db.add(
         OAuthState(
             state=state,
-            code_challenge=f"mcp:{server_name}:{scope}:{user.id}",
+            code_challenge=f"mcp:{server_name}:{scope}:{user.id}:{client_tag}",
             redirect_uri=redirect_uri,
             expires_at=_utcnow() + timedelta(minutes=15),
         )
@@ -295,9 +297,13 @@ def oauth_callback(
     if exp < _utcnow():
         raise HTTPException(400, "OAuth state expired.")
 
-    # code_challenge stores mcp:server:scope:user_id
+    # code_challenge stores mcp:server:scope:user_id[:client]
     try:
-        _, server_name, scope, user_id_str = row.code_challenge.split(":", 3)
+        parts = row.code_challenge.split(":")
+        if len(parts) < 4 or parts[0] != "mcp":
+            raise ValueError("bad challenge")
+        _, server_name, scope, user_id_str = parts[0], parts[1], parts[2], parts[3]
+        client_tag = parts[4] if len(parts) > 4 else "web"
     except ValueError as err:
         raise HTTPException(400, "Corrupt OAuth state.") from err
 
@@ -373,4 +379,9 @@ def oauth_callback(
         )
     db.delete(row)
     settings = get_settings()
+    if client_tag == "z-editor":
+        # Phase 13 — bounce back into the desktop app
+        return RedirectResponse(
+            f"z-editor://mcp/oauth/done?server={server_name}&status=ok"
+        )
     return RedirectResponse(f"{settings.public_base_url}/app/integrations?connected={server_name}")

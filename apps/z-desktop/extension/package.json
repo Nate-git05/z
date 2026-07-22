@@ -1,0 +1,187 @@
+{
+  "name": "z-editor",
+  "displayName": "Z",
+  "description": "Z coding agent — agent-first chat, uncertainty chain, skills, commit gate (Z Terminal orange/black)",
+  "version": "0.8.1",
+  "publisher": "z",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Nate-git05/z.git"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [
+    "onStartupFinished",
+    "onUri"
+  ],
+  "main": "./out/extension.js",
+  "icon": "media/z-activity.png",
+  "contributes": {
+    "themes": [
+      {
+        "label": "Z Terminal",
+        "uiTheme": "vs-dark",
+        "path": "./themes/z-terminal-color-theme.json"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "z-left",
+          "title": "Uncertainty",
+          "icon": "media/z-activity.svg"
+        }
+      ],
+      "secondarySidebar": [
+        {
+          "id": "z-right",
+          "title": "Commit Gate",
+          "icon": "media/z-activity.svg"
+        }
+      ]
+    },
+    "views": {
+      "z-left": [
+        {
+          "id": "z.uncertainty",
+          "name": "Uncertainty Tree",
+          "type": "webview"
+        },
+        {
+          "id": "z.skills",
+          "name": "Skills",
+          "type": "webview"
+        },
+        {
+          "id": "z.mcp",
+          "name": "MCP",
+          "type": "webview"
+        },
+        {
+          "id": "z.profile",
+          "name": "Profile",
+          "type": "webview"
+        }
+      ],
+      "z-right": [
+        {
+          "id": "z.commitGate",
+          "name": "Commit Gate",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "z.openChat",
+        "title": "Z: Open Chat"
+      },
+      {
+        "command": "z.focusUncertainty",
+        "title": "Z: Focus Uncertainty Tree"
+      },
+      {
+        "command": "z.focusCommitGate",
+        "title": "Z: Focus Commit Gate"
+      },
+      {
+        "command": "z.focusSkills",
+        "title": "Z: Focus Skills"
+      },
+      {
+        "command": "z.focusMcp",
+        "title": "Z: Focus MCP"
+      },
+      {
+        "command": "z.applyTerminalTheme",
+        "title": "Z: Apply Terminal Theme (orange / black)"
+      },
+      {
+        "command": "z.startAppServer",
+        "title": "Z: Start app-server"
+      },
+      {
+        "command": "z.stopAppServer",
+        "title": "Z: Stop app-server"
+      },
+      {
+        "command": "z.reconnectAppServer",
+        "title": "Z: Reconnect app-server"
+      },
+      {
+        "command": "z.showStatus",
+        "title": "Z: Show connection status"
+      },
+      {
+        "command": "z.signIn",
+        "title": "Z: Sign in"
+      },
+      {
+        "command": "z.signOut",
+        "title": "Z: Sign out"
+      },
+      {
+        "command": "z.cancelSignIn",
+        "title": "Z: Cancel sign-in"
+      },
+      {
+        "command": "z.installEngineHelp",
+        "title": "Z: Install engine help"
+      }
+    ],
+    "configuration": {
+      "title": "Z",
+      "properties": {
+        "z.appServerUrl": {
+          "type": "string",
+          "default": "ws://127.0.0.1:8741",
+          "description": "WebSocket URL for local z-app-server (override with Z_APP_SERVER_URL)."
+        },
+        "z.autoStartAppServer": {
+          "type": "boolean",
+          "default": true,
+          "description": "Spawn `z app-server` when the extension activates if not already reachable."
+        },
+        "z.zBinary": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the `z` CLI binary. Empty = resolve via PATH."
+        },
+        "z.openChatOnActivate": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open the center Chat panel when the extension activates (agent-first main interface)."
+        },
+        "z.applyTerminalThemeOnActivate": {
+          "type": "boolean",
+          "default": true,
+          "description": "Apply the Z Terminal color theme (burnt orange on near-black, matching the CLI) when the extension activates."
+        },
+        "z.promptInstallEngine": {
+          "type": "boolean",
+          "default": true,
+          "description": "When the Z engine (`z` CLI) is missing, show the first-run install wizard."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile",
+    "package": "npm run compile && vsce package --no-dependencies --allow-missing-repository"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@types/ws": "^8.5.10",
+    "@vscode/vsce": "^3.2.1",
+    "typescript": "^5.3.3"
+  }
+}

@@ -139,6 +139,13 @@ class FileWatcher:
 
         changed_files = {str(Path(change[1])) for change in changes}
         self.changed_files.update(changed_files)
+        orch = getattr(self.io, "turn_orchestrator", None)
+        if orch is not None:
+            from aider.z.turn_ux import TurnState
+
+            # During Busy there is no live PromptSession — don't interrupt_input.
+            if orch.state == TurnState.BUSY:
+                return True
         self.io.interrupt_input()
         return True
 

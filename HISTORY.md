@@ -2,6 +2,16 @@
 
 ### main branch
 
+- Hard-stop Planning/Busy spinner before any confirm so "Create new file?" never shares a line with `Ctrl+C to interrupt`.
+- Status/spinner chrome is orange text only (no reverse/highlight bar); `tool_output(bold=)` uses bold weight, not invert.
+- Plan View no longer flashes away: full plan shows in an orange panel and waits for Enter; after Change the updated plan is shown the same way. Y/N/C/V option labels use orange.
+- Implemented P3 turn flow: Idle / Busy / WaitingInput orchestrator with message queue while Busy (see `docs/uncertainty/terminal-ux-p3-plan.md`).
+- Documented P3 terminal UX plan: unified turn flow (Idle / Busy / WaitingInput / message queue) — see `docs/uncertainty/terminal-ux-p3-plan.md`.
+- Fixed false-positive verify gate on green `ctest` (parser expected pytest-style `N passed`; now reads CTest summary / per-test lines and reconciles discovery from `ctest -N`).
+- Clearer busy UI: planning/LLM spinner shows `Ctrl+C to interrupt`, stops on interrupt and before any prompt; chat file list is one path per line outside prompt_toolkit (stops glued/duplicated paths).
+- Fixed terminal-resize garble on drift/plan escalation prompts: long text stays in the Rich panel; prompt_toolkit only sees a short `(Y)es/(N)o` line.
+- Ambiguous noun-phrase prompts (e.g. `users and sessions`) now classify as ASK instead of IMPLEMENT, avoiding surprise plan panels (`looks_like_ambiguous_topic`; escape `Z_MODE_CLASSIFY=0`).
+- P2 terminal UX: Rich `/uncertainties` on the production tree, compact `Uncertainty · N High · M Medium — /uncertainties` summary, and golden implement-turn noise-budget fixtures.
 - P1 terminal UX: prompt mode chrome (`PLAN›` / `ASK›` / `›`), usage report opt-in (`--show-cost` / `Z_SHOW_USAGE`), and quieter chat-history mirroring (status lines no longer blockquoted by default).
 - Expanded `ANTHROPIC_MODELS` list with Claude Opus 4.1/4.5/4.6/4.7 dated variants and Claude Sonnet 3.7 so the Anthropic API key auto-detection (`models.sanity_check_models`) recognises them.
 - Added support for Claude 4.5/4.6 models and updated model aliases (sonnet/haiku/opus).

@@ -17,8 +17,16 @@ from .registry import (
     ModelProfile,
     PricingCache,
     model_by_id,
+    normalize_model_id,
 )
-from .select import NoEligibleModelError, circuit_breaker, select_model
+from .select import NoEligibleModelError, circuit_breaker, select_model, select_or_prefer
+from .task_tier import (
+    OPENAI_TIER_FALLBACK,
+    bump_tier,
+    resolve_capability_tier,
+    tier_for_task_mode,
+    tier_from_intent_text,
+)
 
 __all__ = [
     "CapabilityTier",
@@ -26,17 +34,24 @@ __all__ = [
     "MODEL_REGISTRY",
     "ModelProfile",
     "NoEligibleModelError",
+    "OPENAI_TIER_FALLBACK",
     "PricingCache",
     "ProviderEndpoint",
     "RoutingAttempt",
     "RoutingOutcomeRecord",
     "RoutingPolicy",
+    "bump_tier",
     "circuit_breaker",
     "classify_task",
     "estimate_blast_radius",
     "estimate_context_tokens",
     "model_by_id",
+    "normalize_model_id",
+    "resolve_capability_tier",
     "run_with_escalation",
     "select_model",
+    "select_or_prefer",
+    "tier_for_task_mode",
+    "tier_from_intent_text",
     "true_task_cost",
 ]

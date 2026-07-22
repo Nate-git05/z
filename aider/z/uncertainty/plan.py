@@ -241,6 +241,11 @@ def _extract_public_inputs(user_text: str, checklist: Optional[TaskChecklist]) -
     seen = set()
     for m in _PUBLIC_INPUT_RE.finditer(blob):
         name = m.group(1).lower().replace(" ", "_")
+        # Skip negated mentions ("no email", "without webhook", "not a path")
+        start = m.start()
+        prefix = blob[max(0, start - 24) : start].lower()
+        if re.search(r"(?i)\b(no|not|without|dont|don't|never)\b[\s/,-]*$", prefix):
+            continue
         if name not in seen:
             seen.add(name)
             found.append(name)
@@ -428,6 +433,29 @@ def _draft_approach_and_steps(
             "Locate root cause; avoid weakening tests or typecheck.",
             "Apply minimal fix; re-run the original verification.",
         ]
+    elif re.search(
+        r"(?i)\b(logwatch|log\s*tail|tail(s|ing)?\s+logs?|rolling\s+(?:time\s+)?window|"
+        r"cli\s+tool|command[- ]line\s+tool)\b",
+        lower,
+    ) and not _prohibited("cli"):
+        approach = (
+            "Build a focused log-watching CLI: stream inputs, match rules, "
+            "count hits in a rolling window, and alert on stderr — with tests "
+            "for matcher + window math."
+        )
+        steps = [
+            "Scaffold CLI project (entrypoint, args: files, rules, threshold N, window).",
+            "Implement follow/tail for one or more log files (incl. rotate-safe read).",
+            "Rule engine: regex and plain-substring matchers with clear errors.",
+            "Rolling-window counters per rule; alert to stderr when N is exceeded.",
+            "Unit tests for matcher + window; smoke the CLI on a sample log.",
+        ]
+        if re.search(r"(?i)\b(no\s+email|without\s+email|no\s+webhook|without\s+webhook)\b", lower):
+            out_of_scope.extend(
+                [
+                    "Email / webhook / pager alerts (stderr-only for now).",
+                ]
+            )
     else:
         # Prefer concrete requested actions as steps when they are specific.
         # Never fall through to "Do: <entire vague request>" — that is what
@@ -1046,13 +1074,105 @@ def plan_invariant_texts(plan: Optional[PlanningArtifact]) -> List[str]:
     return [i for i in plan.invariants if i and i.strip()]
 
 
+_LANG_FEEDBACK_RE = re.compile(
+    r"(?i)\b("
+    r"rust|python|typescript|javascript|node\.?js|golang|go|"
+    r"c\+\+|cpp|c#|csharp|java|kotlin|swift|ruby|php|scala|elixir|zig|haskell"
+    r")\b"
+)
+
+_LANG_DISPLAY = {
+    "node.js": "Node.js",
+    "nodejs": "Node.js",
+    "golang": "Go",
+    "go": "Go",
+    "c++": "C++",
+    "cpp": "C++",
+    "c#": "C#",
+    "csharp": "C#",
+    "rust": "Rust",
+    "python": "Python",
+    "typescript": "TypeScript",
+    "javascript": "JavaScript",
+    "java": "Java",
+    "kotlin": "Kotlin",
+    "swift": "Swift",
+    "ruby": "Ruby",
+    "php": "PHP",
+    "scala": "Scala",
+    "elixir": "Elixir",
+    "zig": "Zig",
+    "haskell": "Haskell",
+}
+
+
+def _normalize_lang(raw: str) -> str:
+    key = (raw or "").strip().lower().replace("node.js", "nodejs")
+    if key == "nodejs":
+        return "Node.js"
+    return _LANG_DISPLAY.get(key, (raw or "").strip().title())
+
+
+def _scrub_feedback_echo_steps(plan: PlanningArtifact, feedback: str) -> None:
+    """Drop steps that are just the raw Change text glued on as Do: …"""
+    fb = (feedback or "").strip().lower()
+    if not fb:
+        return
+    fb_compact = re.sub(r"\s+", " ", fb)
+    kept: List[str] = []
+    for s in plan.steps:
+        sl = re.sub(r"\s+", " ", (s or "").strip().lower())
+        body = re.sub(r"(?i)^\s*do:\s*", "", sl).strip()
+        if body == fb_compact or sl == fb_compact:
+            continue
+        if body.startswith(fb_compact[:48]) and len(fb_compact) >= 24:
+            continue
+        if "user plan revisions" in body:
+            continue
+        kept.append(s)
+    plan.steps = kept or plan.steps[:1]
+
+
+def _refresh_invariants_from_steps(plan: PlanningArtifact) -> None:
+    """Rebuild product invariants from concrete steps (drop echo Do: lines)."""
+    boilerplate = [
+        "Invalid public inputs are rejected at the boundary (no limp-forward defaults).",
+        "Do not fabricate local stand-ins for missing third-party packages.",
+        "Do not weaken typecheck/tests/CI/lint to go green without human approval.",
+        "Do not claim completion without correctly typed evidence for critical journeys.",
+        "For each established-solution category: use the named standard "
+        "approach (stdlib / known algorithm), or record an explicit custom "
+        "justification — do not invent a parser/structure from scratch silently.",
+    ]
+    product: List[str] = []
+    for step in (plan.steps or [])[:6]:
+        t = (step or "").strip()
+        if not t or t.lower().startswith("do:"):
+            continue
+        if len(t) <= 160 and t not in product:
+            product.append(t)
+    for b in boilerplate:
+        if b not in product:
+            product.append(b)
+    # Keep quality invariants already patched in
+    for inv in plan.invariants or []:
+        if inv and inv not in product and (
+            "production" in inv.lower()
+            or "meta" in inv.lower()
+            or "rust" in inv.lower()
+            or inv.startswith("Language:")
+        ):
+            product.insert(0, inv)
+    plan.invariants = product
+
+
 def _apply_feedback_patches(plan: PlanningArtifact, feedback: str) -> None:
     """Keyword patches on top of a re-drafted plan (mutates ``plan``)."""
     low = (feedback or "").lower()
     if not low.strip():
         return
 
-    def _upsert_step(text: str, *, near: str = "") -> None:
+    def _upsert_step(text: str, *, near: str = "", at: int = 1) -> None:
         key = text.lower()
         if any(key[:40] in (s or "").lower() for s in plan.steps):
             return
@@ -1061,7 +1181,7 @@ def _apply_feedback_patches(plan: PlanningArtifact, feedback: str) -> None:
                 if near in (s or "").lower():
                     plan.steps[i] = text
                     return
-        plan.steps.insert(min(2, len(plan.steps)), text)
+        plan.steps.insert(min(max(0, at), len(plan.steps)), text)
 
     def _drop_steps_matching(*needles: str) -> None:
         plan.steps = [
@@ -1074,6 +1194,8 @@ def _apply_feedback_patches(plan: PlanningArtifact, feedback: str) -> None:
         if any(text.lower() in (o or "").lower() for o in plan.out_of_scope):
             return
         plan.out_of_scope.append(text)
+
+    _scrub_feedback_echo_steps(plan, feedback)
 
     if re.search(r"(?i)\bsocket\s*mode\b", low):
         _upsert_step(
@@ -1092,13 +1214,63 @@ def _apply_feedback_patches(plan: PlanningArtifact, feedback: str) -> None:
             "Expose an HTTP Events API webhook with signing-secret verification.",
             near="webhook",
         )
-    if re.search(r"(?i)\b(python|typescript|node\.?js|go)\b", low):
-        m = re.search(r"(?i)\b(python|typescript|node\.?js|go)\b", low)
-        lang = (m.group(1) if m else "Python").replace("node.js", "Node.js")
-        _upsert_step(f"Implement in {lang} (per user revision).")
-        plan.approach = (
-            f"{(plan.approach or '').rstrip()} Prefer {lang}."
+    lang_m = _LANG_FEEDBACK_RE.search(low)
+    if lang_m:
+        lang = _normalize_lang(lang_m.group(1))
+        lang_step = (
+            f"Implement in {lang} "
+            f"({'Cargo workspace, idiomatic Rust, clippy+tests' if lang == 'Rust' else 'idiomatic project layout + tests'})."
+        )
+        _upsert_step(lang_step, near="implement in", at=0)
+        # Lead approach with the language — don't append a weak Prefer …
+        ap = (plan.approach or "").strip()
+        ap = re.sub(
+            r"(?i)^\s*(build in|implement in|prefer)\s+\w+[\s.—-]*",
+            "",
+            ap,
         ).strip()
+        plan.approach = f"Build in {lang}. {ap}".strip()
+        # Drop leftover giant Do: echo steps — template steps already cover them
+        plan.steps = [
+            s
+            for s in plan.steps
+            if not (
+                (s or "").lower().startswith("do:")
+                and len(s) > 100
+            )
+        ] or plan.steps
+        if not any(lang.lower() in (s or "").lower() for s in plan.steps):
+            plan.steps.insert(0, lang_step)
+        plan.invariants = [
+            i
+            for i in (plan.invariants or [])
+            if not (i or "").lower().startswith("do:")
+        ]
+        lang_inv = f"Language: {lang} (per user revision)."
+        if lang_inv not in plan.invariants:
+            plan.invariants.insert(0, lang_inv)
+    if re.search(
+        r"(?i)\b(meta|faang|production[- ]grade|production\s+quality|"
+        r"senior|rigorous|software\s+engineers?\s+for)\b",
+        low,
+    ):
+        _upsert_step(
+            "Production bar: clear module boundaries, typed errors, tests, "
+            "and docs a Meta-level reviewer would accept.",
+            near="production bar",
+            at=1,
+        )
+        q_inv = (
+            "Meet a production engineering bar: no silent failures, "
+            "explicit error paths, and evidence before claiming done."
+        )
+        if q_inv not in (plan.invariants or []):
+            plan.invariants.insert(0, q_inv)
+        ap = (plan.approach or "").strip()
+        if "production" not in ap.lower():
+            plan.approach = (
+                f"{ap} Hold a production / Meta-style engineering bar."
+            ).strip()
     if re.search(r"(?i)\b(no\s+llm|without\s+llm|dont\s+use\s+llm|don't\s+use\s+llm)\b", low):
         _ensure_oos("LLM / generative replies (user forbade).")
         _drop_steps_matching("llm")
@@ -1110,6 +1282,9 @@ def _apply_feedback_patches(plan: PlanningArtifact, feedback: str) -> None:
     if re.search(r"(?i)\b(bolt|block\s*kit)\b", low):
         _upsert_step("Use Bolt/Block Kit for interactive messages where useful.")
 
+    _scrub_feedback_echo_steps(plan, feedback)
+    _refresh_invariants_from_steps(plan)
+
 
 def revise_plan_with_feedback(
     plan: PlanningArtifact,
@@ -1120,21 +1295,25 @@ def revise_plan_with_feedback(
     """
     Revise an implementation plan from natural-language user feedback.
 
-    Re-drafts from ``original_request + revisions``, then applies keyword
-    patches and records the feedback as an ambiguity resolution.
+    Re-drafts from the **original request only** (never treats Change text as a
+    new product action), then applies structured patches (language, quality bar,
+    socket/webhook, …). Feedback is recorded as an ambiguity resolution.
     """
     feedback = (feedback or "").strip()
     if not feedback or plan is None:
         return plan
 
-    combined = (original_request or plan.title or "").strip()
-    if combined:
-        combined = f"{combined}\n\nUser plan revisions:\n{feedback}"
-    else:
-        combined = f"User plan revisions:\n{feedback}"
+    # Critical: do NOT concatenate feedback into the request — that produced
+    # "Do: build this in rust…" echo steps and left the plan unchanged.
+    base = (original_request or "").strip()
+    if not base:
+        # Fall back to prior planning text without the revision echo
+        base = (plan.title or "").replace(" — plan", "").strip()
+    if not base:
+        base = feedback
 
     revised = draft_plan_from_request(
-        combined,
+        base,
         title=plan.title or "",
         reason=(plan.reason or "") + ";user_revise",
     )
@@ -1146,21 +1325,71 @@ def revise_plan_with_feedback(
             resolution=feedback,
         )
     ]
-    # Keep established solutions / architecture if re-draft dropped them
+    # Keep structure if re-draft dropped it — but never stale Do:/contracts
     if plan.established_solutions and not revised.established_solutions:
         revised.established_solutions = list(plan.established_solutions)
     if plan.architecture and not revised.architecture:
         revised.architecture = plan.architecture
     if plan.capability_plan and not revised.capability_plan:
         revised.capability_plan = plan.capability_plan
-    if plan.validation_contracts and not revised.validation_contracts:
-        revised.validation_contracts = list(plan.validation_contracts)
-    if plan.invariants and not revised.invariants:
-        revised.invariants = list(plan.invariants)
+    # Do NOT carry validation_contracts / invariants from the old plan —
+    # they often echo the pre-revision Do: dump or false-positive inputs.
 
     _apply_feedback_patches(revised, feedback)
     revised.approved = False
     return revised
+
+
+def show_full_plan_view(io, plan: PlanningArtifact) -> None:
+    """
+    Show the full plan in an orange escalation panel and wait for Enter.
+
+    Without a pause, View printed then immediately re-opened the compact confirm,
+    scrolling the plan away (felt like a timeout).
+    """
+    body = format_plan_for_user(plan)
+    pretty = bool(getattr(io, "pretty", True))
+    z_theme = bool(getattr(io, "z_theme", False))
+    try:
+        if z_theme and pretty:
+            from aider.z.escalation import render_escalation
+
+            console = getattr(io, "console", None)
+            render_escalation(
+                "Full implementation plan",
+                console=console,
+                context=body,
+                pretty=True,
+                accent_context=True,
+            )
+        else:
+            warn = getattr(io, "tool_warning", None)
+            out = getattr(io, "tool_output", None)
+            if warn:
+                warn("—— Full implementation plan ——")
+            if out:
+                out("")
+                out(body)
+                out("")
+    except Exception:
+        out = getattr(io, "tool_output", None)
+        if out:
+            out(body)
+
+    # Pause so the developer can read before the compact Y/N/C/V returns.
+    if getattr(io, "yes", None) in (True, False):
+        return
+    prompt_ask = getattr(io, "prompt_ask", None)
+    if prompt_ask:
+        try:
+            prompt_ask("Press Enter when done reading the plan", default="")
+        except Exception:
+            pass
+    else:
+        try:
+            input("Press Enter when done reading the plan ")
+        except Exception:
+            pass
 
 
 def interactive_plan_confirm(
@@ -1178,7 +1407,8 @@ def interactive_plan_confirm(
 
     Returns ``(approved: bool, plan)``. On Change, collects free-text
     revisions, revises the plan, and re-asks with a compact panel.
-    View prints the full plan once then re-asks (does not consume a change round).
+    View shows the full plan in an orange panel and waits for Enter
+    (does not consume a change round).
     """
     if plan is None:
         return False, plan
@@ -1209,12 +1439,7 @@ def interactive_plan_confirm(
             choice = "yes" if ok else "no"
 
         if choice == "view":
-            try:
-                io.tool_output("")
-                io.tool_output(format_plan_for_user(current))
-                io.tool_output("")
-            except Exception:
-                pass
+            show_full_plan_view(io, current)
             continue
 
         if choice == "yes":
@@ -1252,7 +1477,19 @@ def interactive_plan_confirm(
             feedback,
             original_request=original_request,
         )
-        # Compact re-confirm only — full plan via View
+        # Compact re-confirm with the *updated* thin subject — do not dump the
+        # full plan wall (View still available). One status line of what changed.
+        try:
+            lang_hint = ""
+            m = _LANG_FEEDBACK_RE.search(feedback)
+            if m:
+                lang_hint = f" → {_normalize_lang(m.group(1))}"
+            io.tool_output(
+                f"Plan updated{lang_hint}. Review the summary, then Yes / No / Change / View."
+            )
+        except Exception:
+            pass
+        # Compact re-confirm with revised approach/steps in subject
     # Exhausted rounds — last chance yes/no only
     io.tool_warning(
         "Change limit reached — Yes to proceed with the latest plan, No to abort."

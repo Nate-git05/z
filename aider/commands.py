@@ -520,6 +520,29 @@ class Commands:
         self._clear_chat_history()
         self.io.tool_output("All chat history cleared.")
 
+    def cmd_queue(self, args):
+        "List messages queued while the agent was busy (P3 turn flow)"
+        orch = self.io.ensure_turn_ux()
+        items = orch.list_queue()
+        if not items:
+            self.io.tool_output("Queue empty — type while Z is working to enqueue the next turn.")
+            return
+        self.io.tool_output(f"Queued · {len(items)} (FIFO — auto-runs at idle):")
+        for i, msg in enumerate(items, 1):
+            one = " ".join(msg.split())
+            if len(one) > 80:
+                one = one[:79] + "…"
+            self.io.tool_output(f"  {i}. {one}")
+
+    def cmd_queue_clear(self, args):
+        "Clear the busy-turn message queue"
+        orch = self.io.ensure_turn_ux()
+        n = orch.clear_queue()
+        if n:
+            self.io.tool_output(f"Cleared {n} queued message(s).")
+        else:
+            self.io.tool_output("Queue already empty.")
+
     def _drop_all_files(self):
         self.coder.abs_fnames = set()
 
@@ -2100,18 +2123,27 @@ Just show me the edits I need to make.
             mode = "risk"
         elif args.isdigit():
             # Direct open by index
-            from aider.z.uncertainty.tree import build_tree, flatten_for_display
-            from aider.z.uncertainty.ui import format_detail
+            from aider.z.uncertainty.ui import (
+                format_detail,
+                render_detail_rich,
+                rows_for_listing,
+            )
             from aider.z.uncertainty.actions import apply_action
 
-            nodes = store.list(include_resolved=False)
-            rows = flatten_for_display(build_tree(nodes, mode="risk"), mode="risk")
+            rows = rows_for_listing(store, mode="risk")
             idx = int(args)
             if idx < 1 or idx > len(rows):
                 self.io.tool_warning("Node number out of range. Use /uncertainties to list.")
                 return
             node = rows[idx - 1][1]
-            self.io.tool_output(format_detail(node))
+            pretty = bool(getattr(self.io, "pretty", True))
+            if pretty and getattr(self.io, "console", None) is not None:
+                try:
+                    render_detail_rich(node, self.io.console)
+                except Exception:
+                    self.io.tool_output(format_detail(node))
+            else:
+                self.io.tool_output(format_detail(node))
             act = self.io.prompt_ask(
                 "Action [F]ix / [T]est / [E]xplain / [I]gnore / [C]ustom / Enter skip",
                 default="",

@@ -335,6 +335,13 @@ class InputOutput:
         )
         self.dry_run = dry_run
 
+        # Set by Coder to stop mascot/LLM spinners before any prompt.
+        self._stop_agent_busy = None
+        self.agent_busy = False
+        # P3 turn orchestrator + Busy queue reader (wired by Coder / ensure_turn_ux)
+        self.turn_orchestrator = None
+        self._busy_queue_reader = None
+
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.append_chat_history(f"\n# aider chat started at {current_time}\n\n")
 
@@ -519,7 +526,179 @@ class InputOutput:
         else:
             print()
 
+    def ensure_turn_ux(self):
+        """Lazily create the P3 turn orchestrator (Idle / Busy / WaitingInput)."""
+        if getattr(self, "turn_orchestrator", None) is not None:
+            return self.turn_orchestrator
+        from aider.z.turn_ux import TurnOrchestrator, attach_orchestrator_to_io
+
+        orch = TurnOrchestrator(
+            on_queue_change=self._on_turn_queue_change,
+        )
+        attach_orchestrator_to_io(self, orch)
+        return orch
+
+    def _on_turn_queue_change(self, n: int) -> None:
+        """Refresh Busy spinner label when queue length changes."""
+        stopper = getattr(self, "_refresh_busy_status", None)
+        if callable(stopper):
+            try:
+                stopper()
+            except Exception:
+                pass
+
+    def start_busy_queue_reader(self) -> None:
+        from aider.z.turn_ux import BusyQueueReader, turn_queue_enabled
+
+        orch = self.ensure_turn_ux()
+        self.stop_busy_queue_reader()
+        if not turn_queue_enabled(z_theme=bool(getattr(self, "z_theme", True))):
+            return
+        if not getattr(self, "pretty", True):
+            return
+
+        def _on_enqueued(text, n):
+            preview = orch.format_queued_preview(text)
+            try:
+                # Print below spinner row without fighting \r too hard
+                import sys
+
+                sys.stdout.write(f"\n{preview}\n")
+                sys.stdout.flush()
+            except Exception:
+                pass
+            refresh = getattr(self, "_refresh_busy_status", None)
+            if callable(refresh):
+                try:
+                    refresh()
+                except Exception:
+                    pass
+
+        reader = BusyQueueReader(orch, enabled=True, on_enqueued=_on_enqueued)
+        self._busy_queue_reader = reader
+        reader.start()
+
+    def stop_busy_queue_reader(self) -> None:
+        reader = getattr(self, "_busy_queue_reader", None)
+        if reader is not None:
+            try:
+                reader.stop()
+            except Exception:
+                pass
+        self._busy_queue_reader = None
+
+    def enqueue_user_message(self, text: str, *, force: bool = False) -> bool:
+        """Queue a next-turn message (Busy only unless force)."""
+        orch = self.ensure_turn_ux()
+        if force:
+            return orch.enqueue_forced(text)
+        return orch.enqueue(text)
+
+    def pop_queued_user_message(self):
+        orch = getattr(self, "turn_orchestrator", None)
+        if orch is None:
+            return None
+        return orch.pop_queued()
+
+    def _ensure_prompt_ready(self, kind: str = "confirm"):
+        """
+        Enter WaitingInput and kill Busy chrome before any interactive prompt.
+
+        Never leave a Planning / Ctrl+C spinner running over a Y/N panel —
+        that collision is what made Create-file confirms look still-running.
+        """
+        self._resume_queue_after_prompt = False
+        check = getattr(self, "_busy_spinner_active", None)
+        if callable(check):
+            try:
+                self._resume_queue_after_prompt = bool(check())
+            except Exception:
+                self._resume_queue_after_prompt = False
+
+        # Always halt queue reader + spinner, regardless of orchestrator state.
+        try:
+            self.stop_busy_queue_reader()
+        except Exception:
+            pass
+        self.agent_busy = False
+        stopper = getattr(self, "_stop_agent_busy", None)
+        if callable(stopper):
+            try:
+                stopper()
+            except Exception:
+                pass
+        # Belt-and-suspenders: clear any leftover \r status row
+        try:
+            import sys
+
+            sys.stdout.write("\r\n")
+            sys.stdout.flush()
+        except Exception:
+            pass
+
+        orch = getattr(self, "turn_orchestrator", None)
+        if orch is not None:
+            try:
+                orch.enter_waiting_input(kind)
+            except Exception:
+                pass
+
+    def _restore_after_prompt(self):
+        """
+        Leave WaitingInput → Busy (queue kept).
+
+        Do **not** restart the mascot spinner here — that reintroduced
+        "Planning · Ctrl+C" over the next Create-file confirm. Only resume
+        the queue reader when a live Busy spinner was active before the ask.
+        """
+        orch = getattr(self, "turn_orchestrator", None)
+        if orch is None:
+            return
+        from aider.z.turn_ux import TurnState, turn_queue_enabled
+
+        if orch.state != TurnState.WAITING_INPUT:
+            return
+        phase = orch.leave_waiting_input()
+        resume = bool(getattr(self, "_resume_queue_after_prompt", False))
+        self._resume_queue_after_prompt = False
+        if (
+            resume
+            and phase
+            and turn_queue_enabled(z_theme=bool(getattr(self, "z_theme", True)))
+        ):
+            # Only if a spinner is still the live Busy owner
+            check = getattr(self, "_busy_spinner_active", None)
+            still = False
+            if callable(check):
+                try:
+                    still = bool(check())
+                except Exception:
+                    still = False
+            if still:
+                self.start_busy_queue_reader()
+
+    def _waiting_input_scope(self, kind: str = "confirm"):
+        """Context manager: Busy → WaitingInput → restore Busy (queue frozen)."""
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _scope():
+            self._ensure_prompt_ready(kind)
+            try:
+                yield
+            finally:
+                self._restore_after_prompt()
+
+        return _scope()
+
     def interrupt_input(self):
+        orch = getattr(self, "turn_orchestrator", None)
+        if orch is not None:
+            from aider.z.turn_ux import TurnState
+
+            # During Busy there is no live PromptSession — enqueue instead (D12).
+            if orch.state == TurnState.BUSY:
+                return
         if self.prompt_session and self.prompt_session.app:
             # Store any partial input before interrupting
             self.placeholder = self.prompt_session.app.current_buffer.text
@@ -536,6 +715,17 @@ class InputOutput:
         edit_format=None,
         prompt_chrome=None,
     ):
+        # Idle full prompt — never leave Busy chrome / queue reader running.
+        orch = self.ensure_turn_ux()
+        orch.enter_idle()
+        self.stop_busy_queue_reader()
+        self.agent_busy = False
+        stopper = getattr(self, "_stop_agent_busy", None)
+        if callable(stopper):
+            try:
+                stopper()
+            except Exception:
+                pass
         self.rule()
 
         # Ring the bell if needed
@@ -543,11 +733,23 @@ class InputOutput:
 
         rel_fnames = list(rel_fnames)
         show = ""
+        files_printed_outside = False
         if rel_fnames:
             rel_read_only_fnames = [
                 get_rel_fname(fname, root) for fname in (abs_read_only_fnames or [])
             ]
-            show = self.format_files_for_input(rel_fnames, rel_read_only_fnames)
+            file_block = self.format_files_for_input(rel_fnames, rel_read_only_fnames)
+            # Z theme: print files once above the prompt (not inside prompt_toolkit).
+            # Embedding Rich Columns in the prompt message causes path concatenation
+            # and duplicate redraws when the mascot spinner uses \r on the same TTY.
+            if getattr(self, "z_theme", False) and self.pretty and self.prompt_session:
+                if file_block.strip():
+                    # Prefer live console so paths are not re-measured by prompt_toolkit
+                    for line in file_block.rstrip("\n").splitlines():
+                        self.console.print(line)
+                    files_printed_outside = True
+            else:
+                show = file_block
 
         if prompt_chrome is not None:
             prompt_prefix = prompt_chrome
@@ -559,7 +761,12 @@ class InputOutput:
                 prompt_prefix += (" " if edit_format else "") + "multi"
             prompt_prefix += "> "
 
-        show += prompt_prefix
+        if files_printed_outside:
+            show = prompt_prefix
+        else:
+            if show and not show.endswith("\n"):
+                show += "\n"
+            show += prompt_prefix
         self.prompt_prefix = prompt_prefix
 
         inp = ""
@@ -827,6 +1034,25 @@ class InputOutput:
         group=None,
         allow_never=False,
     ):
+        with self._waiting_input_scope("confirm"):
+            return self._confirm_ask_inner(
+                question,
+                default=default,
+                subject=subject,
+                explicit_yes_required=explicit_yes_required,
+                group=group,
+                allow_never=allow_never,
+            )
+
+    def _confirm_ask_inner(
+        self,
+        question,
+        default="y",
+        subject=None,
+        explicit_yes_required=False,
+        group=None,
+        allow_never=False,
+    ):
         self.num_user_asks += 1
 
         # Ring the bell if needed
@@ -859,6 +1085,17 @@ class InputOutput:
         else:
             question += options + f" [{default}]: "
 
+        # After a Rich escalation panel, keep the prompt_toolkit prompt SHORT.
+        # Feeding the full "Possible drift: …" string into prompt_session causes
+        # catastrophic wrap/redraw garble on terminal resize (SIGWINCH).
+        escalation_shown = False
+        if default.lower().startswith("y"):
+            short_cli_prompt = f"{options.strip()} [Yes]: "
+        elif default.lower().startswith("n"):
+            short_cli_prompt = f"{options.strip()} [No]: "
+        else:
+            short_cli_prompt = f"{options.strip()} [{default}]: "
+
         if subject:
             self.tool_output()
             if getattr(self, "z_theme", False) and self.pretty:
@@ -870,6 +1107,7 @@ class InputOutput:
                     context=subject if isinstance(subject, str) else None,
                     pretty=True,
                 )
+                escalation_shown = True
             elif "\n" in subject:
                 lines = subject.splitlines()
                 max_length = max(len(line) for line in lines)
@@ -884,6 +1122,9 @@ class InputOutput:
 
             q_display = question.split(" (Y)es")[0].strip() if " (Y)es" in question else question
             render_escalation(q_display, console=self.console, pretty=True)
+            escalation_shown = True
+
+        cli_prompt = short_cli_prompt if escalation_shown else question
 
         style = self._get_style()
 
@@ -908,12 +1149,12 @@ class InputOutput:
                 try:
                     if self.prompt_session:
                         res = self.prompt_session.prompt(
-                            question,
+                            cli_prompt,
                             style=style,
                             complete_while_typing=False,
                         )
                     else:
-                        res = input(question)
+                        res = input(cli_prompt)
                 except EOFError:
                     # Non-interactive / piped stdin: fail loud instead of
                     # silently accepting the default and then exiting on the
@@ -994,17 +1235,27 @@ class InputOutput:
         Returns ``\"yes\"`` | ``\"no\"`` | ``\"change\"`` | ``\"view\"``.
         ``--yes-always`` auto-returns ``\"yes\"``.
         """
+        with self._waiting_input_scope("plan_confirm"):
+            return self._plan_confirm_ask_inner(
+                question, subject=subject, default=default
+            )
+
+    def _plan_confirm_ask_inner(self, question, *, subject=None, default="y"):
         self.num_user_asks += 1
         self.ring_bell()
 
         options = " (Y)es/(N)o/(C)hange/(V)iew"
         if default.lower().startswith("y"):
             prompt = f"{question}{options} [Yes]: "
+            short_cli_prompt = f"{options.strip()} [Yes]: "
         elif default.lower().startswith("n"):
             prompt = f"{question}{options} [No]: "
+            short_cli_prompt = f"{options.strip()} [No]: "
         else:
             prompt = f"{question}{options} [{default}]: "
+            short_cli_prompt = f"{options.strip()} [{default}]: "
 
+        escalation_shown = False
         if subject:
             self.tool_output()
             if getattr(self, "z_theme", False) and self.pretty:
@@ -1022,6 +1273,9 @@ class InputOutput:
                     ],
                     pretty=True,
                 )
+                escalation_shown = True
+                # Orange affordance line so Y/N/C/V isn't lost in status chrome
+                self.tool_warning("(Y)es  (N)o  (C)hange  (V)iew")
             elif "\n" in subject:
                 lines = subject.splitlines()
                 max_length = max(len(line) for line in lines)
@@ -1029,6 +1283,8 @@ class InputOutput:
                 self.tool_output("\n".join(padded_lines), bold=True)
             else:
                 self.tool_output(subject, bold=True)
+
+        cli_prompt = short_cli_prompt if escalation_shown else prompt
 
         valid = ("yes", "no", "change", "view")
         if self.yes is True:
@@ -1041,12 +1297,12 @@ class InputOutput:
                 try:
                     if self.prompt_session:
                         res = self.prompt_session.prompt(
-                            prompt,
+                            cli_prompt,
                             style=style,
                             complete_while_typing=False,
                         )
                     else:
-                        res = input(prompt)
+                        res = input(cli_prompt)
                 except EOFError:
                     interactive = False
                     try:
@@ -1107,6 +1363,10 @@ class InputOutput:
 
     @restore_multiline
     def prompt_ask(self, question, default="", subject=None):
+        with self._waiting_input_scope("prompt"):
+            return self._prompt_ask_inner(question, default=default, subject=subject)
+
+    def _prompt_ask_inner(self, question, default="", subject=None):
         self.num_user_asks += 1
 
         # Ring the bell if needed
@@ -1209,7 +1469,10 @@ class InputOutput:
         if self.pretty:
             if self.tool_output_color:
                 style["color"] = ensure_hash_prefix(self.tool_output_color)
-            style["reverse"] = bold
+            # Bold = brighter weight only. Never reverse/invert — that reads as a
+            # yellow highlight bar instead of orange text.
+            if bold:
+                style["bold"] = True
 
         style = RichStyle(**style)
         self.console.print(*messages, style=style)
@@ -1355,6 +1618,23 @@ class InputOutput:
                 editable_files.append(f"{full_path}")
 
             return "\n".join(read_only_files + editable_files) + "\n"
+
+        # Z theme: one path per line. Rich Columns packs paths onto one line and
+        # the mascot \r spinner can erase spaces → glued names like event_bus.hppCMakeLists.txt.
+        if getattr(self, "z_theme", False):
+            lines = []
+            read_only_files = sorted(rel_read_only_fnames or [])
+            editable_files = [f for f in sorted(rel_fnames) if f not in (rel_read_only_fnames or [])]
+            if read_only_files:
+                lines.append("Readonly:")
+                for rel_path in read_only_files:
+                    abs_path = os.path.abspath(os.path.join(self.root, rel_path))
+                    lines.append(abs_path if len(abs_path) < len(rel_path) else rel_path)
+            if editable_files:
+                if read_only_files:
+                    lines.append("Editable:")
+                lines.extend(editable_files)
+            return ("\n".join(lines) + "\n") if lines else ""
 
         output = StringIO()
         console = Console(file=output, force_terminal=False)
