@@ -89,6 +89,7 @@ _ACTION_RE = re.compile(
     r"(?i)\b(implement|build|add|create|fix|change|update|refactor|"
     r"write|ship|introduce|make\s+(?:it|a|the))\b"
 )
+_BULLET_RE = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+\S")
 
 
 def _span_for(message: str, fragment: str) -> Tuple[int, int]:
@@ -151,6 +152,14 @@ def classify_clause_text(text: str) -> Tuple[ClauseKind, Polarity, float]:
 
     if _ACTION_RE.search(t) or re.search(r"(?i)^\s*only\s+fix\b", t):
         return "requested_action", "required", 0.85
+
+    # An explicit bullet/numbered list item that didn't match a more specific
+    # category (constraint, process rule, observation, ...) is almost always
+    # a requested action — the verb just isn't in _ACTION_RE's fixed list
+    # (e.g. "email", "use", "notify", "deploy"). Treat it as one instead of
+    # silently dropping it as background noise.
+    if _BULLET_RE.match(t):
+        return "requested_action", "required", 0.6
 
     # Low confidence — least actionable
     return "background", "neutral", 0.45

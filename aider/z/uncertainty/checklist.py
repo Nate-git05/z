@@ -524,6 +524,22 @@ def decompose_request(
                 c, "polarity", "required"
             ) != "prohibited":
                 rk = _clause_kind_to_requirement_kind(c.kind) or "product"
+                if c.kind == "requested_action":
+                    # Some requested actions describe HOW to work, not WHAT
+                    # to build (e.g. "use the uncertainty gate during the
+                    # work") — refine with the finer-grained classifier so
+                    # these surface as visible process/verification/decision
+                    # items (checked against execution-log evidence) instead
+                    # of being flattened into an undifferentiated "product".
+                    refined = classify_requirement_kind(c.text)
+                    if refined in (
+                        "process",
+                        "verification",
+                        "decision",
+                        "documentation",
+                        "quality",
+                    ):
+                        rk = refined
                 _add_item(c.text, kind=rk)
             # Investigation targets become investigation items (finding-resolved)
             elif getattr(c, "kind", None) == "investigation_target":

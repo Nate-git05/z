@@ -205,7 +205,9 @@ def test_byok_setup_trip_uses_skip_login_true():
     )
     captured = {}
 
-    with patch("aider.z.auth.current_session", return_value=creds), patch(
+    with patch.dict("os.environ", {"Z_ALLOW_BYOK": "1"}), patch(
+        "aider.z.auth.current_session", return_value=creds
+    ), patch(
         "aider.z.auth.open_web_login"
     ) as login, patch(
         "aider.z.onboarding.load_config", return_value=OnboardingConfig()
@@ -242,7 +244,9 @@ def test_login_happens_before_mode_choice_on_fresh_config():
         order.append("byok")
         return True
 
-    with patch("aider.z.auth.current_session", return_value=None), patch(
+    with patch.dict("os.environ", {"Z_ALLOW_BYOK": "1"}), patch(
+        "aider.z.auth.current_session", return_value=None
+    ), patch(
         "aider.z.auth.open_web_login", side_effect=fake_login
     ), patch("aider.z.onboarding.load_config", return_value=OnboardingConfig()), patch(
         "aider.z.login_screen.prompt_auth_mode_choice", side_effect=fake_mode
@@ -481,7 +485,9 @@ def test_auth_switch_uses_web_login_and_byok_skip_login():
         expires_at=9_999_999_999,
     )
 
-    with patch("aider.z.auth.current_session", return_value=None), patch(
+    with patch.dict("os.environ", {"Z_ALLOW_BYOK": "1"}), patch(
+        "aider.z.auth.current_session", return_value=None
+    ), patch(
         "aider.z.auth.open_web_login", return_value=creds
     ) as login, patch(
         "aider.z.onboarding.clear_setup"

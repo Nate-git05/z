@@ -1862,8 +1862,12 @@ class Coder:
                 self.io.tool_output(f"{label}: {names}")
                 if getattr(self, "verbose", False):
                     self.io.tool_output(f"  why: {why}")
-            # Gaps stay in context for the model; don't narrate unless verbose.
-            if cap_plan.coverage_gaps and not quiet:
+            # Capability gaps are a false-completion safeguard, not routine
+            # chatter — always surface them so Z never silently *looks*
+            # finished while a required capability has no skill/native
+            # coverage. (Unlike the skill-application label above, this is
+            # not gated on verbose.)
+            if cap_plan.coverage_gaps:
                 self.io.tool_warning(
                     f"Capability gaps ({len(cap_plan.coverage_gaps)}): "
                     "compensate with workflow — no skill ≠ skip verification."

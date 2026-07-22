@@ -53,7 +53,7 @@ class PackageDiscoveryTest(unittest.TestCase):
             found = find_nearest_package_json(
                 root, "packages/opencode/src/tool/foo.ts"
             )
-            self.assertEqual(found, pkg / "package.json")
+            self.assertEqual(found, (pkg / "package.json").resolve())
 
     def test_discovers_typecheck_before_test(self):
         with tempfile.TemporaryDirectory() as td:
