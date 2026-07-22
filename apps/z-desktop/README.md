@@ -2,7 +2,8 @@
 
 **Status:** Phase 0–15 — agent-first Chat, MCP **runtime** (tools in turns), OAuth deep-link, usage honesty, branded shell scripts, Chat polish.  
 **Look:** Z Terminal palette (burnt orange `#C96A2B` on near-black `#0A0A0A`) — same as the CLI.  
-**Completion plan:** [`docs/app/z-editor-completion-plan.md`](../../docs/app/z-editor-completion-plan.md)
+**Completion plan:** [`docs/app/z-editor-completion-plan.md`](../../docs/app/z-editor-completion-plan.md)  
+**Installable packaging plan:** [`docs/app/z-editor-installable-plan.md`](../../docs/app/z-editor-installable-plan.md) — VSIX → unsigned Electron artifacts → signed releases (not shipped yet).
 
 **Read first:** [`docs/app/z-editor-v1-implementation-plan.md`](../../docs/app/z-editor-v1-implementation-plan.md)
 
