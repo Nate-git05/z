@@ -1,7 +1,8 @@
 # Z Desktop (app shell)
 
-**Status:** Phase 0–10 — agent-first Chat, gateway routing, Uncertainty, Skills, Commit Gate, Profile usage, MCP in-app.  
-**Look:** Z Terminal palette (burnt orange `#C96A2B` on near-black `#0A0A0A`) — same as the CLI.
+**Status:** Phase 0–15 — agent-first Chat, MCP **runtime** (tools in turns), OAuth deep-link, usage honesty, branded shell scripts, Chat polish.  
+**Look:** Z Terminal palette (burnt orange `#C96A2B` on near-black `#0A0A0A`) — same as the CLI.  
+**Completion plan:** [`docs/app/z-editor-completion-plan.md`](../../docs/app/z-editor-completion-plan.md)
 
 **Read first:** [`docs/app/z-editor-v1-implementation-plan.md`](../../docs/app/z-editor-v1-implementation-plan.md)
 
@@ -121,7 +122,49 @@ Flow:
 - First-use (D9): `turn/waiting_input` kind `mcp_tool` via `AppServerIO.confirm_mcp_first_use`
 - OAuth MCP: deep-link to web; full stdio tool runtime still out of scope
 
-## Next
+## Phase 11 — MCP tool runtime
 
-1. Apply `product.z.json` when building from `vendor/vscode`
-2. Full MCP stdio session / tool invocation inside app-server
+- `aider/z/mcp_runtime.py` — stdio JSON-RPC SessionManager (`tools/list`, `tools/call`, probe)
+- Turn fence: ```` ```z-mcp ```` JSON `{server,tool,arguments}` (path B)
+- First-use (D9) via Chat `mcp_tool` waiting_input
+- Notifications: `mcp/tool_started|finished|error` → Chat tool rows
+- Escape: `Z_MCP_RUNTIME=0`
+
+## Phase 12 — Branded shell scripts
+
+```bash
+# After cloning Seam → apps/z-desktop/vendor/vscode
+./apps/z-desktop/scripts/apply-product.sh          # merge product.z.json
+./apps/z-desktop/scripts/apply-product.sh --check  # CI
+./apps/z-desktop/scripts/package.sh                # apply + compile extension + print build steps
+```
+
+Brand mark: `apps/z-desktop/brand/z-mark.svg`
+
+## Phase 13 — OAuth MCP in-app
+
+- GitHub: OAuth primary + PAT fallback in MCP panel
+- `mcp/oauthStart` → browser → `z_server` callback → `z-editor://mcp/oauth/done`
+- Requires server env `Z_MCP_GITHUB_CLIENT_ID` / `Z_MCP_GITHUB_CLIENT_SECRET`
+
+## Phase 14 — Usage honesty
+
+- Unsigned-in Profile shows empty + CTA (no demo bars)
+- Stub only with explicit `Z_GATEWAY_USAGE_STUB`
+- Gateway `cost_usd` estimated when provider omits price
+
+## Phase 15 — Chat polish
+
+- Sticky composer, reconnect banner, throttled streaming posts
+- Tool rows + waiting-input kind styles + friendlier errors
+
+## Escapes
+
+| Env | Effect |
+|-----|--------|
+| `Z_USE_GATEWAY=0` | Disable gateway client |
+| `Z_MCP_RUNTIME=0` | Connect UI only; no tool spawn |
+| `Z_MCP_TURN=0` | Disable z-mcp fence execution |
+| `Z_GATEWAY_USAGE_STUB` | Force usage stub JSON (tests) |
+| `Z_ALLOW_BYOK=1` | Legacy BYOK |
+| `Z_SKIP_ACCOUNT=1` | Dev account bypass |

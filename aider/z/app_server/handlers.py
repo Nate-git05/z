@@ -84,6 +84,10 @@ class AppServerSession:
             return self._mcp_first_use_status(params)
         if method == "mcp/sync":
             return self._mcp_sync(params)
+        if method == "mcp/tools":
+            return self._mcp_tools(params)
+        if method == "mcp/oauthStart":
+            return self._mcp_oauth_start(params)
         if method == "auth/status":
             return self._auth_status(params)
         if method == "auth/loginStart":
@@ -125,6 +129,8 @@ class AppServerSession:
                 "commit_blocks",
                 "mcp",
                 "mcp_manage",
+                "mcp_runtime",
+                "mcp_oauth",
                 "usage",
                 "turns",
                 "auth",
@@ -650,7 +656,7 @@ class AppServerSession:
             try:
                 from aider.z import mcp_local
 
-                return mcp_local.test_connection(connection_id)
+                return mcp_local.test_connection(connection_id, prefer_runtime=True)
             except Exception as err:
                 raise HandlerError(-32033, f"mcp/test failed: {err}") from err
 
@@ -661,7 +667,6 @@ class AppServerSession:
         try:
             from aider.z import mcp_local
 
-            # Temporary connect-like validation without permanent write when skipPersist
             skip_persist = bool(params.get("skipPersist", True))
             if skip_persist:
                 entry = mcp_local.get_catalog_entry(server_name)
@@ -672,7 +677,6 @@ class AppServerSession:
                 command = str(
                     cfg.get("command") or (params.get("credentials") or {}).get("command") or ""
                 )
-                # Soft field validation
                 credentials = params.get("credentials") or {}
                 for field_def in entry.get("fields") or []:
                     if not isinstance(field_def, dict) or not field_def.get("required"):
@@ -680,6 +684,14 @@ class AppServerSession:
                     key = str(field_def.get("key") or "")
                     if key and not credentials.get(key) and key not in cfg:
                         return {"ok": False, "error": f"Missing required field: {key}"}
+                # OAuth+PAT servers: token required for ad-hoc test when not oauth
+                if entry.get("allowPatFallback") and not (
+                    credentials.get("token") or credentials.get("access_token")
+                ):
+                    return {
+                        "ok": False,
+                        "error": "Provide a PAT for test, or use OAuth connect.",
+                    }
                 if url:
                     return mcp_local._test_http(url)
                 if command:
@@ -694,7 +706,7 @@ class AppServerSession:
                             "ok": True,
                             "mode": "stdio",
                             "command": command,
-                            "note": "node available",
+                            "note": "node available — full handshake runs after connect",
                         }
                     return {"ok": False, "error": f"Command not found: {exe}"}
                 if credentials:
@@ -712,6 +724,86 @@ class AppServerSession:
             raise
         except Exception as err:
             raise HandlerError(-32033, f"mcp/test failed: {err}") from err
+
+    def _mcp_tools(self, params: dict) -> dict:
+        connection_id = (params.get("id") or params.get("connectionId") or "").strip()
+        try:
+            from aider.z.mcp_runtime import get_session_manager, runtime_enabled
+
+            if not runtime_enabled():
+                return {"tools": [], "error": "MCP runtime disabled"}
+            mgr = get_session_manager()
+            if connection_id:
+                tools = [t.public_dict() for t in mgr.list_tools(connection_id)]
+                return {"connectionId": connection_id, "tools": tools}
+            return {"tools": mgr.index_all_tools(spawn=False)}
+        except Exception as err:
+            raise HandlerError(-32038, f"mcp/tools failed: {err}") from err
+
+    def _mcp_oauth_start(self, params: dict) -> dict:
+        server_name = (params.get("serverName") or params.get("server_name") or "").strip()
+        if not server_name:
+            raise HandlerError(-32602, "mcp/oauthStart requires serverName")
+        scope = str(params.get("scope") or "personal")
+        try:
+            from aider.z.auth import get_auth_base_url
+            from aider.z.credentials import load_credentials
+            import json as _json
+            import urllib.error
+            import urllib.parse
+            import urllib.request
+
+            creds = load_credentials()
+            if creds is None or not getattr(creds, "access_token", None):
+                raise HandlerError(-32039, "Sign in required for MCP OAuth")
+            base = get_auth_base_url().rstrip("/")
+            # Prefer JSON-friendly start: hit oauth/start and capture Location,
+            # or build authorize URL client-side via catalog path.
+            url = (
+                f"{base}/v1/mcp/oauth/start?"
+                + urllib.parse.urlencode(
+                    {"server_name": server_name, "scope": scope, "client": "z-editor"}
+                )
+            )
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "Authorization": f"Bearer {creds.access_token}",
+                    "Accept": "application/json",
+                },
+                method="GET",
+            )
+            # Do not follow redirects — we need the provider authorize URL
+            class _NoRedirect(urllib.request.HTTPRedirectHandler):
+                def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: N802
+                    return None
+
+            opener = urllib.request.build_opener(_NoRedirect)
+            try:
+                with opener.open(req, timeout=20) as resp:
+                    body = resp.read().decode("utf-8")
+                    if body.strip().startswith("{"):
+                        data = _json.loads(body)
+                        return {
+                            "authorizeUrl": data.get("authorizeUrl")
+                            or data.get("url")
+                            or url,
+                            "serverName": server_name,
+                            "state": data.get("state"),
+                        }
+                    return {"authorizeUrl": resp.geturl(), "serverName": server_name}
+            except urllib.error.HTTPError as err:
+                if err.code in (301, 302, 303, 307, 308):
+                    loc = err.headers.get("Location")
+                    if loc:
+                        return {"authorizeUrl": loc, "serverName": server_name}
+                raise HandlerError(
+                    -32039, f"oauthStart failed: HTTP {err.code} {err.read()[:200]!r}"
+                ) from err
+        except HandlerError:
+            raise
+        except Exception as err:
+            raise HandlerError(-32039, f"mcp/oauthStart failed: {err}") from err
 
     def _mcp_confirm_first_use(self, params: dict) -> dict:
         server_name = (params.get("serverName") or params.get("server_name") or "").strip()

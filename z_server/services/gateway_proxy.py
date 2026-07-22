@@ -18,6 +18,33 @@ from z_server.services.gateway_routing import (
 # Back-compat alias (tests / older imports)
 # v0-hardcoded → v1-taskmode
 
+# Rough USD / 1M tokens for cost_usd when upstream omits pricing (Phase 14b).
+_PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
+    "gpt-4o": (2.50, 10.00),
+    "gpt-4o-mini": (0.15, 0.60),
+    "gpt-4.1": (2.00, 8.00),
+    "gpt-4.1-mini": (0.40, 1.60),
+    "o3-mini": (1.10, 4.40),
+    "claude-sonnet": (3.00, 15.00),
+    "claude-haiku": (0.80, 4.00),
+    "z-composer": (1.00, 4.00),
+    "z-sonnet": (3.00, 15.00),
+}
+
+
+def _estimate_cost_usd(model_id: str, input_tokens: int, output_tokens: int) -> float:
+    mid = (model_id or "").strip().lower()
+    in_rate, out_rate = 1.0, 4.0  # default fallback
+    for key, rates in _PRICE_PER_MTOK.items():
+        if key in mid:
+            in_rate, out_rate = rates
+            break
+    return round(
+        (max(0, input_tokens) / 1_000_000.0) * in_rate
+        + (max(0, output_tokens) / 1_000_000.0) * out_rate,
+        6,
+    )
+
 
 def resolve_route(
     preferred_model: str,
@@ -253,8 +280,17 @@ def proxy_chat_completion(
     def _finish_ok(body: dict[str, Any], status: str) -> Tuple[dict[str, Any], dict[str, Any]]:
         usage = body.get("usage") or {}
         meta["status"] = status
-        meta["input_tokens"] = usage.get("prompt_tokens")
-        meta["output_tokens"] = usage.get("completion_tokens")
+        in_tok = usage.get("prompt_tokens")
+        out_tok = usage.get("completion_tokens")
+        meta["input_tokens"] = in_tok
+        meta["output_tokens"] = out_tok
+        # Phase 14b — estimate cost when provider omits it
+        if meta.get("cost_usd") is None:
+            meta["cost_usd"] = _estimate_cost_usd(
+                str(meta.get("model_id") or route.get("upstream_model") or ""),
+                int(in_tok or 0),
+                int(out_tok or 0),
+            )
         meta["latency_ms"] = int((time.perf_counter() - t0) * 1000)
         body = dict(body)
         body["z_routing"] = {

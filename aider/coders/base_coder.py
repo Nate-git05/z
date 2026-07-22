@@ -2101,6 +2101,45 @@ class Coder:
                 self.io.tool_warning(f"Tool-loop skipped: {err}")
             return False
 
+    def _maybe_run_mcp_loop(self, content: str) -> bool:
+        """
+        Run z-mcp / Z_MCP_CALL fences (Phase 11 path B).
+        Returns True if a reflect was scheduled (caller should skip apply).
+        """
+        try:
+            from aider.z.mcp_turn import run_mcp_turn, mcp_turn_enabled
+
+            if not mcp_turn_enabled() or not content:
+                return False
+            if int(getattr(self, "num_reflections", 0) or 0) >= 6:
+                return False
+            notify = getattr(self, "_z_mcp_notify", None)
+            turn_id = getattr(self, "_z_mcp_turn_id", None)
+            if callable(turn_id):
+                turn_id = turn_id()
+            res = run_mcp_turn(
+                content,
+                io=self.io,
+                coder=self,
+                notify=notify if callable(notify) else None,
+                turn_id=turn_id,
+            )
+            if not res.ran:
+                return False
+            names = ", ".join(f"{c.server}.{c.tool}" for c in res.calls)
+            self.io.tool_output(f"MCP turn: ran {len(res.calls)} tool(s) ({names}).")
+            prev = getattr(self, "reflected_message", None) or ""
+            self.reflected_message = (
+                (prev + "\n\n" + res.reflect_message).strip()
+                if prev
+                else res.reflect_message
+            )
+            return True
+        except Exception as err:
+            if getattr(self, "verbose", False):
+                self.io.tool_warning(f"MCP turn skipped: {err}")
+            return False
+
     def _maybe_soft_stop_done_claim(self) -> None:
         from aider.z.uncertainty.done_gate import (
             count_open_high,
@@ -3208,6 +3247,17 @@ class Coder:
                 final_reminders.append(format_plan_mode_reminder())
         except Exception:
             pass
+        # Phase 11 — inject connected MCP tool catalog when available
+        try:
+            from aider.z.mcp_turn import format_mcp_catalog_reminder
+
+            idx = getattr(self, "mcp_tool_index", None) or []
+            if idx:
+                rem = format_mcp_catalog_reminder(idx)
+                if rem:
+                    final_reminders.append(rem)
+        except Exception:
+            pass
         if self.main_model.lazy:
             final_reminders.append(self.gpt_prompts.lazy_prompt)
         if self.main_model.overeager:
@@ -3655,6 +3705,10 @@ class Coder:
 
             # Thin read-only tool-loop before applying SEARCH/REPLACE
             if not interrupted and self._maybe_run_tool_loop(content):
+                return
+
+            # MCP tool fences (Phase 11) — after local z-tool, before apply
+            if not interrupted and self._maybe_run_mcp_loop(content):
                 return
 
         if interrupted:

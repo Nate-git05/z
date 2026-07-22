@@ -178,6 +178,37 @@ class ThreadTurnRunner:
             suggest_shell_commands=True,
             map_tokens=1024,
         )
+        # Phase 11 — local MCP tool index for turn fences + notifications
+        try:
+            from aider.z.mcp_runtime import get_session_manager, runtime_enabled
+
+            self._coder._z_mcp_notify = self._notify
+            self._coder._z_mcp_turn_id = self._turn_id
+            if runtime_enabled():
+                mgr = get_session_manager()
+                # Prefer listing tools without forcing every spawn at init —
+                # build a light index from connections; enrich lazily on first call.
+                index = []
+                try:
+                    index = mgr.index_all_tools()
+                except Exception:
+                    logger.debug("mcp index_all_tools failed", exc_info=True)
+                self._coder.mcp_tool_index = index
+                self._coder.mcp_tools = index
+                if index:
+                    names = sorted({r.get("serverName") for r in index if r.get("serverName")})
+                    self._io.tool_output(
+                        f"MCP tools ready: {len(index)} tool(s) from {', '.join(names)}"
+                    )
+            else:
+                self._coder.mcp_tool_index = []
+                self._coder.mcp_tools = []
+        except Exception:
+            logger.debug("mcp turn index skipped", exc_info=True)
+            try:
+                self._coder.mcp_tool_index = []
+            except Exception:
+                pass
         # Announce once
         try:
             for line in self._coder.get_announcements():

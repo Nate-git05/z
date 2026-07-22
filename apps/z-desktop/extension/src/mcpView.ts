@@ -25,6 +25,7 @@ interface CatalogEntry {
   displayName: string;
   connectionType?: string;
   description?: string;
+  allowPatFallback?: boolean;
   fields?: Array<{
     key: string;
     label: string;
@@ -89,12 +90,31 @@ export class McpViewProvider implements vscode.WebviewViewProvider {
       await this.sync();
       return;
     }
-    if (type === "openOauth" && msg.path) {
-      const base = process.env.Z_AUTH || process.env.Z_API_BASE || "https://api.z.dev";
-      const path = String(msg.path);
-      const url = path.startsWith("http") ? path : `${base.replace(/\/$/, "")}${path}`;
-      await vscode.env.openExternal(vscode.Uri.parse(url));
+    if (type === "openOauth") {
+      await this.startOauth(String(msg.serverName || this.selectedServer || ""));
       return;
+    }
+  }
+
+  private async startOauth(serverName: string): Promise<void> {
+    if (!this.manager.rpc || !serverName) return;
+    try {
+      const result = (await this.manager.rpc.request("mcp/oauthStart", {
+        serverName,
+        scope: "personal",
+      })) as { authorizeUrl?: string };
+      const url = result?.authorizeUrl;
+      if (!url) {
+        this.error = "OAuth start returned no authorize URL";
+        this.post();
+        return;
+      }
+      await vscode.env.openExternal(vscode.Uri.parse(url));
+      this.status = "Browser opened for OAuth — return here when done";
+      this.post();
+    } catch (err) {
+      this.error = err instanceof Error ? err.message : String(err);
+      this.post();
     }
   }
 
@@ -376,7 +396,15 @@ export class McpViewProvider implements vscode.WebviewViewProvider {
     html += '</select>';
     if (selected.description) html += '<p class="muted">' + esc(selected.description) + '</p>';
     if (selected.connectionType === 'oauth') {
-      html += '<button data-act="oauth">Connect via web (OAuth)</button>';
+      html += '<button data-act="oauth">Connect with OAuth</button>';
+      if (selected.allowPatFallback || (selected.fields || []).length) {
+        html += '<p class="muted" style="margin-top:10px">Or use a personal access token:</p>';
+        for (const f of (selected.fields || [])) {
+          html += '<label>' + esc(f.label || f.key) + (f.required ? ' *' : '') + '</label>';
+          html += '<input data-field="' + esc(f.key) + '" type="' + (f.secret ? 'password' : 'text') + '" />';
+        }
+        html += '<div class="actions"><button data-act="testNew">Test</button><button data-act="connect">Connect with PAT</button></div>';
+      }
     } else {
       for (const f of (selected.fields || [])) {
         html += '<label>' + esc(f.label || f.key) + (f.required ? ' *' : '') + '</label>';
@@ -389,7 +417,7 @@ export class McpViewProvider implements vscode.WebviewViewProvider {
       vscode.postMessage({ type: 'selectServer', serverName: ev.target.value });
     });
     form.querySelector('[data-act="oauth"]')?.addEventListener('click', () => {
-      vscode.postMessage({ type: 'openOauth', path: selected.oauthStartPath || '/v1/mcp/oauth/start?server_name=' + selected.serverName });
+      vscode.postMessage({ type: 'openOauth', serverName: selected.serverName });
     });
     form.querySelector('[data-act="connect"]')?.addEventListener('click', () => {
       vscode.postMessage({ type: 'connect', serverName: selected.serverName, credentials: collectCreds() });

@@ -161,6 +161,40 @@ async function handleDeepLink(
     } catch {
       /* ignore */
     }
+    return;
+  }
+
+  // Phase 13 — z-editor://mcp/oauth/done?server=github&status=ok
+  if (
+    host === "mcp" ||
+    path.startsWith("mcp/oauth") ||
+    route.includes("mcp/oauth")
+  ) {
+    const server = params.get("server") || params.get("serverName") || "";
+    const status = (params.get("status") || "ok").toLowerCase();
+    try {
+      await ensureRpc(manager);
+      if (manager.rpc) {
+        await manager.rpc.request("mcp/sync", {});
+      }
+    } catch {
+      /* sync best-effort */
+    }
+    onAuthChanged();
+    if (status === "ok") {
+      vscode.window.showInformationMessage(
+        `MCP connected${server ? `: ${server}` : ""}. Open the MCP panel to trust & test.`
+      );
+      try {
+        await vscode.commands.executeCommand("z.focusMcp");
+      } catch {
+        /* ignore */
+      }
+    } else {
+      vscode.window.showWarningMessage(
+        `MCP OAuth ${status}${server ? ` (${server})` : ""}`
+      );
+    }
   }
 }
 

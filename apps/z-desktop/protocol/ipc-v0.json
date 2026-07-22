@@ -183,6 +183,16 @@
       "params": {},
       "result": { "ok": "boolean", "synced": "number", "skipped": "number" }
     },
+    "mcp/tools": {
+      "params": { "id": { "optional": true } },
+      "result": { "tools": "McpToolDesc[]" },
+      "notes": "Phase 11 — list tools (cached index or live session)."
+    },
+    "mcp/oauthStart": {
+      "params": { "serverName": "string", "scope": { "optional": true, "default": "personal" } },
+      "result": { "authorizeUrl": "string", "serverName": "string" },
+      "notes": "Phase 13 — desktop OAuth; callback redirects to z-editor://mcp/oauth/done."
+    },
     "usage/summary": {
       "params": { "range": { "enum": ["billing_period", "all"], "default": "billing_period" } },
       "result": {
@@ -192,7 +202,7 @@
         "authenticated": "boolean",
         "source": "string"
       },
-      "notes": "Phase 9 — proxies gateway GET /v1/gateway/usage when authenticated."
+      "notes": "Phase 9/14 — live gateway usage when authenticated; empty (not demo) when unsigned-in."
     },
     "auth/status": {
       "params": {},
@@ -263,11 +273,33 @@
     "turn/waiting_input": {
       "turnId": "string",
       "requestId": "string",
-      "kind": { "enum": ["confirm", "plan_confirm", "prompt"] },
+      "kind": { "enum": ["confirm", "plan_confirm", "prompt", "mcp_tool"] },
       "question": "string",
       "subject": { "optional": true },
       "options": { "optional": true },
       "default": { "optional": true }
+    },
+    "mcp/tool_started": {
+      "turnId": "string",
+      "serverName": "string",
+      "toolName": "string",
+      "callId": "string"
+    },
+    "mcp/tool_finished": {
+      "turnId": "string",
+      "callId": "string",
+      "serverName": "string",
+      "toolName": "string",
+      "ok": true,
+      "summary": { "optional": true },
+      "durationMs": "number"
+    },
+    "mcp/tool_error": {
+      "turnId": "string",
+      "callId": "string",
+      "serverName": "string",
+      "toolName": "string",
+      "error": "string"
     },
     "turn/completed": {
       "turnId": "string",
