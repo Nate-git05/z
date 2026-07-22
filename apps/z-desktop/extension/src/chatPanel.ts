@@ -636,12 +636,12 @@ export class MainChatPanel {
     display: flex; flex-direction: column; height: 100vh; box-sizing: border-box;
     max-width: 820px; margin: 0 auto; width: 100%;
     background:
-      radial-gradient(ellipse 80% 50% at 50% -10%, rgba(201,106,43,0.18), transparent 55%),
+      radial-gradient(ellipse 90% 55% at 50% -12%, rgba(212,137,74,0.12), transparent 58%),
       var(--z-bg);
   }
   #brand {
-    padding: 20px 20px 6px;
-    font-size: 28px; font-weight: 700; letter-spacing: -0.03em;
+    padding: 22px 22px 8px;
+    font-size: 30px; font-weight: 700; letter-spacing: -0.03em;
     color: var(--z-accent-bright);
   }
   #activity {
@@ -698,9 +698,10 @@ export class MainChatPanel {
   .msg.user .role { color: var(--z-muted); }
   .msg.system .bubble { color: var(--z-muted); font-size: 12px; }
   #waiting {
-    display: none; margin: 0 16px; padding: 12px 14px;
-    border: 1px solid var(--z-accent-dim);
+    display: none; margin: 0 18px; padding: 14px 16px;
+    border: 1px solid var(--z-border);
     background: var(--z-raised);
+    border-radius: var(--z-radius);
   }
   #waiting.show { display: block; }
   #waiting .q { font-weight: 600; margin-bottom: 6px; color: var(--z-accent-bright); }
@@ -708,12 +709,13 @@ export class MainChatPanel {
     max-height: 160px; overflow: auto; font-size: 12px; color: var(--z-muted);
     margin-bottom: 8px; white-space: pre-wrap;
   }
-  #waiting .actions { display: flex; flex-wrap: wrap; gap: 6px; }
+  #waiting .actions { display: flex; flex-wrap: wrap; gap: 8px; }
   #queue {
-    display: none; margin: 8px 16px 0; padding: 10px 12px;
-    border: 1px dashed var(--z-accent);
+    display: none; margin: 10px 18px 0; padding: 12px 14px;
+    border: 1px solid var(--z-border);
     background: var(--z-surface);
     font-size: 12px;
+    border-radius: var(--z-radius);
   }
   #queue.show { display: block; }
   #queue .label {
@@ -725,19 +727,28 @@ export class MainChatPanel {
   #composer {
     position: sticky; bottom: 0;
     border-top: 1px solid var(--z-border);
-    padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 8px;
-    background: var(--z-surface);
+    padding: 14px 18px 18px; display: flex; flex-direction: column; gap: 10px;
+    background: linear-gradient(180deg, transparent, var(--z-surface) 18%);
+  }
+  #composer .composer-shell {
+    border: 1px solid var(--z-border);
+    background: var(--z-raised);
+    border-radius: var(--z-radius);
+    padding: 10px 12px 12px;
   }
   #banner {
-    display: none; margin: 0 16px 8px; padding: 8px 10px;
-    border: 1px solid var(--z-accent); color: var(--z-accent-bright);
+    display: none; margin: 0 18px 8px; padding: 10px 12px;
+    border: 1px solid var(--z-border); color: var(--z-accent-bright);
     font-size: 12px; background: var(--z-raised);
+    border-radius: var(--z-radius-sm);
   }
   #banner.show { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
   textarea {
     width: 100%; min-height: 72px; resize: vertical; box-sizing: border-box;
-    padding: 10px; font-family: inherit; font-size: 14px;
+    padding: 10px 4px; font-family: inherit; font-size: 14px;
+    border: none; background: transparent; box-shadow: none;
   }
+  textarea:focus { outline: none; border: none; box-shadow: none; }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .hint { font-size: 11px; color: var(--z-muted); }
   .msg.tool .bubble { color: var(--z-accent); font-size: 12px; }
@@ -772,12 +783,14 @@ export class MainChatPanel {
       <div class="more" id="qmore"></div>
     </div>
     <div id="composer">
-      <textarea id="input" placeholder="Prompt the agent…"></textarea>
-      <div class="row">
-        <button id="send">Send</button>
-        <button class="secondary" id="cancel">Stop</button>
-        <button class="secondary" id="clear">Clear</button>
-        <span class="hint">Enter to send · Shift+Enter newline · busy → queues</span>
+      <div class="composer-shell">
+        <textarea id="input" placeholder="Prompt the agent…"></textarea>
+        <div class="row">
+          <button id="send">Send</button>
+          <button class="secondary" id="cancel">Stop</button>
+          <button class="secondary" id="clear">Clear</button>
+          <span class="hint">Enter to send · Shift+Enter newline · busy → queues</span>
+        </div>
       </div>
     </div>
   </div>
