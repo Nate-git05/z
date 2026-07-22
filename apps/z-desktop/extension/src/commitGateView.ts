@@ -182,48 +182,50 @@ export class CommitGateProvider implements vscode.WebviewViewProvider {
   ${zThemeCss()}
   html, body {
     height: 100%; margin: 0; padding: 0;
-    font-family: "IBM Plex Mono", "JetBrains Mono", ui-monospace, monospace;
-    font-size: 12px;
+    font-family: var(--z-font-ui);
+    font-size: 13px;
   }
   #hdr {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 10px 12px 6px;
+    padding: 14px 14px 8px;
   }
-  h3 { margin: 0; font-size: 13px; font-weight: 600; color: var(--z-accent-bright); }
+  h3 { margin: 0; font-size: 14px; font-weight: 600; color: var(--z-text); }
   #banner {
-    margin: 0 12px 10px; padding: 8px 10px; font-size: 12px; font-weight: 600;
-    border: 1px solid var(--z-border); background: var(--z-raised);
+    margin: 0 12px 10px; padding: 8px 12px; font-size: 12px; font-weight: 500;
+    border: 1px solid var(--z-border); background: var(--z-surface);
+    border-radius: var(--z-radius-sm);
+    display: flex; align-items: center; gap: 8px;
   }
-  #banner.ok { color: var(--z-muted); border-color: var(--z-border); }
-  #banner.blocked { color: var(--z-accent-bright); border-color: var(--z-accent); }
-  #msg { padding: 0 12px 8px; font-size: 11px; color: var(--z-accent); min-height: 14px; }
-  #msg.err { color: var(--z-accent-bright); }
-  section { padding: 0 12px 14px; }
+  #banner .dot {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--z-status-ok);
+  }
+  #banner.ok { color: var(--z-secondary); }
+  #banner.blocked { color: var(--z-text); border-color: rgba(217,119,87,0.45); }
+  #banner.blocked .dot { background: var(--z-status-blocked); }
+  #msg { padding: 0 14px 8px; font-size: 11px; color: var(--z-accent); min-height: 14px; }
+  #msg.err { color: var(--z-status-blocked); }
+  section { padding: 0 8px 14px; }
   .sec-title {
-    font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
-    color: var(--z-accent); margin-bottom: 6px;
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--z-muted); margin: 0 6px 6px;
   }
-  .item {
-    padding: 10px 0; border-bottom: 1px solid var(--z-border);
-  }
-  .item .reason { line-height: 1.35; }
-  .item .meta { color: var(--z-muted); margin-top: 3px; font-size: 11px; }
-  .item .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .item .actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 12px 10px 40px; }
   .item.armed {
-    border: 1px solid var(--z-accent);
-    padding: 10px; background: var(--z-raised);
+    border-radius: var(--z-radius-sm);
+    background: var(--z-accent-wash);
+    border-left: 2px solid var(--z-accent);
   }
   .warn {
-    font-size: 11px; color: var(--z-accent-bright); margin-top: 6px; line-height: 1.35;
+    font-size: 11px; color: var(--z-accent); margin: 0 12px 6px 40px; line-height: 1.35;
   }
-  .empty { color: var(--z-muted); line-height: 1.4; }
+  .empty { color: var(--z-muted); line-height: 1.4; padding: 8px 12px; }
   button { font-size: 11px; padding: 4px 10px; }
   button.secondary, #refresh {
     background: transparent; color: var(--z-text);
     border: 1px solid var(--z-border); font-weight: 500;
   }
   button.danger {
-    background: var(--z-accent-bright); color: var(--z-bg);
+    background: var(--z-status-blocked); color: var(--z-bg);
   }
 </style>
 </head>
@@ -276,12 +278,15 @@ export class CommitGateProvider implements vscode.WebviewViewProvider {
             + '</div>';
         }
         return '<div class="item' + (armed ? ' armed' : '') + '">'
-          + '<div class="reason">' + escapeHtml(b.reason || 'Blocked') + '</div>'
+          + '<div class="list-row">'
+          + '<div class="glyph">◉<span class="dot"></span></div>'
+          + '<div class="title">' + escapeHtml(b.reason || 'Blocked') + '</div>'
+          + '<div class="time">' + escapeHtml(fmtTime(b.created_at)) + '</div>'
           + '<div class="meta">' + escapeHtml(b.state || 'blocked')
           + (b.verify_state ? ' · ' + escapeHtml(b.verify_state) : '')
           + dirty
           + (b.thread_id ? ' · thread ' + escapeHtml(b.thread_id) : '')
-          + (b.created_at ? ' · ' + escapeHtml(fmtTime(b.created_at)) : '')
+          + '</div>'
           + '</div>'
           + actions
           + '</div>';
@@ -292,12 +297,14 @@ export class CommitGateProvider implements vscode.WebviewViewProvider {
       if (!items.length) return '<div class="empty">None yet.</div>';
       return items.map(b => {
         const meta = b.override_meta || {};
-        return '<div class="item"><div class="reason">' + escapeHtml(b.reason || '') + '</div>'
+        return '<div class="item"><div class="list-row">'
+          + '<div class="glyph">○<span class="dot ok"></span></div>'
+          + '<div class="title">' + escapeHtml(b.reason || '') + '</div>'
+          + '<div class="time">' + escapeHtml(fmtTime(b.updated_at)) + '</div>'
           + '<div class="meta">' + escapeHtml(b.state || '')
           + (meta.reason ? ' · ' + escapeHtml(meta.reason) : '')
           + (meta.note ? ' · ' + escapeHtml(meta.note) : '')
-          + (b.updated_at ? ' · ' + escapeHtml(fmtTime(b.updated_at)) : '')
-          + '</div></div>';
+          + '</div></div></div>';
       }).join('');
     }
 
@@ -319,10 +326,10 @@ export class CommitGateProvider implements vscode.WebviewViewProvider {
       const cleared = d.cleared || [];
       if (d.canCommit) {
         banner.className = 'ok';
-        banner.textContent = 'Ready — no active blockers';
+        banner.innerHTML = '<span class="dot"></span>Ready — no active blockers';
       } else {
         banner.className = 'blocked';
-        banner.textContent = blocked.length + ' blocking commit';
+        banner.innerHTML = '<span class="dot"></span>' + blocked.length + ' blocking commit';
       }
       body.innerHTML =
         '<section><div class="sec-title">Blocked</div>' + blockedList(blocked, d.armedOverrideId) + '</section>'

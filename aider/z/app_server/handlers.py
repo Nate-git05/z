@@ -100,6 +100,8 @@ class AppServerSession:
             return self._auth_logout(params)
         if method == "usage/summary":
             return self._usage_summary(params)
+        if method == "usage/activity":
+            return self._usage_activity(params)
         if method == "turn/start":
             return self._turn_start(params)
         if method == "turn/respond":
@@ -932,6 +934,23 @@ class AppServerSession:
             return normalize_for_profile(raw)
         except Exception as err:
             raise HandlerError(-32037, f"usage/summary failed: {err}") from err
+
+    def _usage_activity(self, params: dict) -> dict:
+        try:
+            from aider.z.usage_client import (
+                build_usage_activity,
+                fetch_usage_summary,
+                normalize_for_profile,
+            )
+
+            rng = (params.get("range") or "billing_period").strip()
+            raw = fetch_usage_summary(rng)
+            summary = normalize_for_profile(raw)
+            days = params.get("days")
+            n = int(days) if isinstance(days, (int, float, str)) and str(days).isdigit() else 371
+            return build_usage_activity(summary, days=n)
+        except Exception as err:
+            raise HandlerError(-32037, f"usage/activity failed: {err}") from err
 
     def _turn_start(self, params: dict) -> dict:
         text = (params.get("text") or "").strip()

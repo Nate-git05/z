@@ -204,6 +204,22 @@
       },
       "notes": "Phase 9/14 — live gateway usage when authenticated; empty (not demo) when unsigned-in."
     },
+    "usage/activity": {
+      "params": {
+        "range": { "enum": ["billing_period", "all"], "default": "billing_period" },
+        "days": { "optional": true, "default": 371 }
+      },
+      "result": {
+        "range": "string",
+        "granularity": "day",
+        "authenticated": "boolean",
+        "note": { "optional": true },
+        "days": "UsageActivityDay[]",
+        "totalTokens": "number",
+        "peakTokens": "number"
+      },
+      "notes": "UI redesign — year heatmap for Profile. Days include models[{ modelId, inputTokens, outputTokens, requests, costUsd }]. Unsigned → empty days + authenticated:false."
+    },
     "auth/status": {
       "params": {},
       "result": {

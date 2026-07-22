@@ -304,7 +304,7 @@ export class McpViewProvider implements vscode.WebviewViewProvider {
   select, input {
     width: 100%;
     box-sizing: border-box;
-    background: #121212;
+    background: var(--z-bg);
     color: var(--z-text);
     border: 1px solid rgba(201,106,43,0.35);
     padding: 6px 8px;

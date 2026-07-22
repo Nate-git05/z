@@ -27,30 +27,32 @@ from aider.z.uncertainty_ui import (
 
 class TestZTheme(unittest.TestCase):
     def test_palette_has_single_accent(self):
-        self.assertEqual(Z_COLORS["accent"], "#C96A2B")
-        self.assertEqual(ACCENT, "#C96A2B")
-        self.assertEqual(TEXT, "#F5F5F5")
+        self.assertEqual(Z_COLORS["accent"], "#F7A56B")
+        self.assertEqual(ACCENT, "#F7A56B")
+        self.assertEqual(TEXT, "#F2EDE7")
+        self.assertEqual(Z_COLORS["background"], "#0E0D0C")
+        self.assertEqual(Z_COLORS["text_muted"], "#9C948A")
 
     def test_apply_z_palette(self):
         args = MagicMock()
         apply_z_palette(args)
-        self.assertEqual(args.user_input_color, "#F5F5F5")
-        self.assertEqual(args.tool_warning_color, "#C96A2B")
-        self.assertEqual(args.tool_output_color, "#D8D8D8")
-        self.assertEqual(args.assistant_output_color, "#F5F5F5")
+        self.assertEqual(args.user_input_color, "#F2EDE7")
+        self.assertEqual(args.tool_warning_color, "#F7A56B")
+        self.assertEqual(args.tool_output_color, "#9C948A")
+        self.assertEqual(args.assistant_output_color, "#F2EDE7")
         self.assertEqual(args.code_theme, "z-terminal")
-        self.assertEqual(args.completion_menu_current_bg_color, "#C96A2B")
+        self.assertEqual(args.completion_menu_current_bg_color, "#F7A56B")
 
     def test_status_distinct_from_warning(self):
         from aider.z.theme import STATUS, TEXT_DIM, TEXT_MUTED, TOOL_OUTPUT, TOOL_WARNING
 
         self.assertEqual(TOOL_WARNING, ACCENT)
         self.assertEqual(TOOL_OUTPUT, STATUS)
-        self.assertEqual(TOOL_OUTPUT, "#D8D8D8")
+        self.assertEqual(TOOL_OUTPUT, "#9C948A")
         self.assertNotEqual(TOOL_OUTPUT, TOOL_WARNING)
-        # Spinner / brand progress stays orange; muted is status channel
+        # Spinner / brand progress stays sherbet; muted is status channel
         self.assertEqual(TEXT_DIM, ACCENT)
-        self.assertEqual(TEXT_MUTED, "#D8D8D8")
+        self.assertEqual(TEXT_MUTED, "#9C948A")
 
     def test_no_muddy_grey_in_palette(self):
         """Ban unreadable mid-greys; allow intentional status off-white."""
@@ -82,7 +84,7 @@ class TestZTheme(unittest.TestCase):
             self.assertNotIn("magenta", color.lower())
             # Should resolve to white or orange
             self.assertTrue(
-                "F5F5F5" in color.upper() or "C96A2B" in color.upper() or color == "",
+                "F2EDE7" in color.upper() or "F7A56B" in color.upper() or color == "",
                 f"{tok} color unexpected: {color!r}",
             )
 

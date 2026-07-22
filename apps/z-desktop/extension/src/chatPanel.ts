@@ -126,6 +126,9 @@ export class MainChatPanel {
   private disposed = false;
   private postTimer: ReturnType<typeof setTimeout> | null = null;
   private connectionBanner = "";
+  private gateBlockedCount = 0;
+  /** Auto-open Uncertainty overlay once per turn when first open node arrives. */
+  private uncertaintyAutoOpenedThisTurn = false;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -138,12 +141,32 @@ export class MainChatPanel {
       const conn = this.manager.connectionState;
       if (conn === "connected") {
         this.connectionBanner = "";
+        void this.refreshGate();
       } else if (conn === "error" || conn === "disconnected") {
         this.connectionBanner =
           this.manager.errorMessage || "App-server disconnected — Reconnect from the status bar.";
       }
       this.postStateThrottled();
     });
+  }
+
+  private async refreshGate(): Promise<void> {
+    if (!this.manager.rpc) {
+      this.gateBlockedCount = 0;
+      return;
+    }
+    try {
+      const res = (await this.manager.rpc.request("commit_blocks/list", {
+        includeCleared: false,
+      })) as { blocks?: unknown[] };
+      const blocks = Array.isArray(res.blocks) ? res.blocks : [];
+      this.gateBlockedCount = blocks.filter((b) => {
+        const st = String((b as { state?: string }).state || "").toLowerCase();
+        return st === "blocked" || st === "blocking" || !st;
+      }).length;
+    } catch {
+      /* keep last */
+    }
   }
 
   /** Open (or reveal) Chat as the center main interface. */
@@ -201,6 +224,26 @@ export class MainChatPanel {
     }
     if (msg.type === "send") {
       await this.sendPrompt(String(msg.text || ""));
+      return;
+    }
+    if (msg.type === "openProfile") {
+      await vscode.commands.executeCommand("z.openProfile");
+      return;
+    }
+    if (msg.type === "openGate") {
+      await vscode.commands.executeCommand("z.focusCommitGate");
+      return;
+    }
+    if (msg.type === "openUncertainty") {
+      await vscode.commands.executeCommand("z.focusUncertainty");
+      return;
+    }
+    if (msg.type === "openSkills") {
+      await vscode.commands.executeCommand("z.focusSkills");
+      return;
+    }
+    if (msg.type === "openMcp") {
+      await vscode.commands.executeCommand("z.focusMcp");
       return;
     }
     if (msg.type === "respond" && this.waiting) {
@@ -453,6 +496,7 @@ export class MainChatPanel {
       return;
     }
     if (method === "turn/started") {
+      this.uncertaintyAutoOpenedThisTurn = false;
       const text = String(params.text || "").trim();
       const fromQueue = Boolean(params.fromQueue);
       if (fromQueue && text) {
@@ -527,10 +571,33 @@ export class MainChatPanel {
       }
       return;
     }
+    if (method === "uncertainty/upsert") {
+      const node = params.node as { id?: string; state?: string; status?: string } | undefined;
+      const st = String(node?.state || node?.status || "open").toLowerCase();
+      const closed = st === "resolved" || st === "closed" || st === "cleared" || st === "done";
+      if (node?.id && !closed && !this.uncertaintyAutoOpenedThisTurn) {
+        this.uncertaintyAutoOpenedThisTurn = true;
+        void vscode.commands.executeCommand("z.focusUncertainty");
+      }
+      return;
+    }
+    if (
+      method === "gate/commit_blocked" ||
+      method === "gate/commit_updated" ||
+      method === "uncertainty/changed"
+    ) {
+      void this.refreshGate().then(() => this.postStateThrottled());
+      if (method === "gate/commit_blocked") {
+        // Auto-surface gate when something is blocked
+        void vscode.commands.executeCommand("z.focusCommitGate");
+      }
+      return;
+    }
     if (method === "turn/completed") {
       this.busyLabel = "";
       this.waiting = null;
       this.streamingAssistantId = null;
+      this.uncertaintyAutoOpenedThisTurn = false;
       if (params.ok === false && params.interrupted) {
         this.messages.push({
           id: `sys-${Date.now()}`,
@@ -539,7 +606,7 @@ export class MainChatPanel {
         });
       }
       this.settleActivitySoon();
-      this.postState();
+      void this.refreshGate().then(() => this.postState());
       return;
     }
     if (method === "turn/error") {
@@ -618,6 +685,7 @@ export class MainChatPanel {
       messages: this.messages,
       queue: this.queue,
       banner: this.connectionBanner,
+      gateBlockedCount: this.gateBlockedCount,
     });
   }
 
@@ -630,19 +698,32 @@ export class MainChatPanel {
   ${zThemeCss()}
   html, body {
     height: 100%; margin: 0; padding: 0;
-    font-family: "IBM Plex Mono", "JetBrains Mono", "SF Mono", ui-monospace, monospace;
+    font-family: var(--z-font-ui);
   }
   #app {
     display: flex; flex-direction: column; height: 100vh; box-sizing: border-box;
-    max-width: 820px; margin: 0 auto; width: 100%;
+    max-width: 860px; margin: 0 auto; width: 100%;
     background:
-      radial-gradient(ellipse 80% 50% at 50% -10%, rgba(201,106,43,0.18), transparent 55%),
+      radial-gradient(ellipse 90% 55% at 50% -12%, rgba(247,165,107,0.10), transparent 58%),
       var(--z-bg);
   }
+  #topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 20px 4px; gap: 12px;
+  }
   #brand {
-    padding: 20px 20px 6px;
     font-size: 28px; font-weight: 700; letter-spacing: -0.03em;
-    color: var(--z-accent-bright);
+    color: var(--z-accent); font-family: var(--z-font-ui);
+  }
+  #rail {
+    display: flex; gap: 6px; align-items: center;
+  }
+  #rail button {
+    background: transparent; color: var(--z-secondary); border: 1px solid transparent;
+    padding: 6px 10px; font-size: 12px; font-weight: 500; border-radius: 999px;
+  }
+  #rail button:hover {
+    color: var(--z-text); background: var(--z-accent-wash); border-color: var(--z-border);
   }
   #activity {
     padding: 0 20px 10px;
@@ -698,57 +779,90 @@ export class MainChatPanel {
   .msg.user .role { color: var(--z-muted); }
   .msg.system .bubble { color: var(--z-muted); font-size: 12px; }
   #waiting {
-    display: none; margin: 0 16px; padding: 12px 14px;
-    border: 1px solid var(--z-accent-dim);
+    display: none; margin: 0 18px; padding: 14px 16px;
+    border: 1px solid var(--z-border);
     background: var(--z-raised);
+    border-radius: var(--z-radius);
   }
   #waiting.show { display: block; }
-  #waiting .q { font-weight: 600; margin-bottom: 6px; color: var(--z-accent-bright); }
+  #waiting .q { font-weight: 600; margin-bottom: 6px; color: var(--z-accent); }
   #waiting .subject {
-    max-height: 160px; overflow: auto; font-size: 12px; color: var(--z-muted);
+    max-height: 160px; overflow: auto; font-size: 12px; color: var(--z-secondary);
     margin-bottom: 8px; white-space: pre-wrap;
   }
-  #waiting .actions { display: flex; flex-wrap: wrap; gap: 6px; }
+  #waiting .actions { display: flex; flex-wrap: wrap; gap: 8px; }
   #queue {
-    display: none; margin: 8px 16px 0; padding: 10px 12px;
-    border: 1px dashed var(--z-accent);
-    background: var(--z-surface);
+    display: none; margin: 10px 18px 0; padding: 12px 14px;
+    border: 1px solid var(--z-border);
+    border-left: 3px solid var(--z-accent);
+    background: var(--z-raised);
     font-size: 12px;
+    border-radius: var(--z-radius);
   }
   #queue.show { display: block; }
   #queue .label {
     font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
-    color: var(--z-accent); margin-bottom: 4px;
+    color: var(--z-secondary); margin-bottom: 4px;
   }
   #queue .preview { white-space: pre-wrap; word-break: break-word; color: var(--z-text); }
   #queue .more { color: var(--z-muted); margin-top: 4px; font-size: 11px; }
   #composer {
     position: sticky; bottom: 0;
-    border-top: 1px solid var(--z-border);
-    padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 8px;
-    background: var(--z-surface);
+    padding: 10px 18px 18px; display: flex; flex-direction: column; gap: 8px;
+    background: linear-gradient(180deg, transparent, var(--z-bg) 28%);
+  }
+  .composer-shell {
+    border: 1px solid var(--z-border);
+    background: var(--z-raised);
+    border-radius: var(--z-radius);
+    padding: 10px 12px 12px;
+    display: flex; flex-direction: column; gap: 8px;
   }
   #banner {
-    display: none; margin: 0 16px 8px; padding: 8px 10px;
-    border: 1px solid var(--z-accent); color: var(--z-accent-bright);
+    display: none; margin: 0 18px 8px; padding: 10px 12px;
+    border: 1px solid var(--z-border); color: var(--z-accent);
     font-size: 12px; background: var(--z-raised);
+    border-radius: var(--z-radius-sm);
   }
   #banner.show { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
   textarea {
     width: 100%; min-height: 72px; resize: vertical; box-sizing: border-box;
-    padding: 10px; font-family: inherit; font-size: 14px;
+    padding: 8px 4px; font-family: var(--z-font-ui); font-size: 14px;
+    border: none; background: transparent; box-shadow: none;
   }
+  textarea:focus { outline: none; border: none; box-shadow: none; }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .hint { font-size: 11px; color: var(--z-muted); }
+  .msg .bubble { font-family: var(--z-font-mono); }
   .msg.tool .bubble { color: var(--z-accent); font-size: 12px; }
-  .msg.error .bubble { color: var(--z-accent-bright); font-size: 12px; }
+  .msg.error .bubble { color: var(--z-status-blocked); font-size: 12px; }
   #waiting.kind-mcp_tool .q { color: var(--z-accent); }
-  #waiting.kind-plan_confirm .q { color: var(--z-accent-bright); }
+  #waiting.kind-plan_confirm .q { color: var(--z-accent); }
+  #gatePill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 500;
+    border: 1px solid var(--z-border); background: var(--z-surface);
+    color: var(--z-secondary); cursor: pointer;
+  }
+  #gatePill .dot {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--z-status-ok);
+  }
+  #gatePill.blocked { color: var(--z-text); border-color: rgba(217,119,87,0.45); }
+  #gatePill.blocked .dot { background: var(--z-status-blocked); }
 </style>
 </head>
 <body>
   <div id="app">
-    <div id="brand">Z</div>
+    <div id="topbar">
+      <div id="brand">Z</div>
+      <div id="rail">
+        <button type="button" id="btnUnc" title="Uncertainty">Uncertainty</button>
+        <button type="button" id="btnSkills" title="Skills">Skills</button>
+        <button type="button" id="btnMcp" title="MCP">MCP</button>
+        <button type="button" id="btnGate" title="Commit Gate">Gate</button>
+        <button type="button" id="btnProfile" title="Profile">Profile</button>
+      </div>
+    </div>
     <div id="activity" class="idle" aria-live="polite">
       <div class="line1"><span class="summary">Agent ready — you prompt, Z programs</span></div>
       <div class="line2"></div>
@@ -772,12 +886,17 @@ export class MainChatPanel {
       <div class="more" id="qmore"></div>
     </div>
     <div id="composer">
-      <textarea id="input" placeholder="Prompt the agent…"></textarea>
-      <div class="row">
-        <button id="send">Send</button>
-        <button class="secondary" id="cancel">Stop</button>
-        <button class="secondary" id="clear">Clear</button>
-        <span class="hint">Enter to send · Shift+Enter newline · busy → queues</span>
+      <div class="composer-shell">
+        <textarea id="input" placeholder="Prompt the agent…"></textarea>
+        <div class="row">
+          <button type="button" id="gatePill" title="Commit Gate">
+            <span class="dot"></span><span id="gatePillLabel">Ready</span>
+          </button>
+          <button id="send">Send</button>
+          <button class="secondary" id="cancel">Stop</button>
+          <button class="secondary" id="clear">Clear</button>
+          <span class="hint">Enter to send · Shift+Enter newline · busy → queues</span>
+        </div>
       </div>
     </div>
   </div>
@@ -937,6 +1056,20 @@ export class MainChatPanel {
         : (q.queueLen + ' in queue');
     }
 
+    function renderGate(n) {
+      const pill = document.getElementById('gatePill');
+      const label = document.getElementById('gatePillLabel');
+      if (!pill || !label) return;
+      const count = Number(n) || 0;
+      if (count > 0) {
+        pill.classList.add('blocked');
+        label.textContent = count + ' blocked';
+      } else {
+        pill.classList.remove('blocked');
+        label.textContent = 'Ready';
+      }
+    }
+
     function renderWaiting(w) {
       waiting = w;
       waitingEl.className = 'kind-' + ((w && w.kind) || 'confirm');
@@ -983,6 +1116,7 @@ export class MainChatPanel {
       renderMessages(data.messages || []);
       renderWaiting(data.waiting || null);
       renderQueue(data.queue || null);
+      renderGate(data.gateBlockedCount);
     });
 
     document.getElementById('send').onclick = () => {
@@ -993,6 +1127,12 @@ export class MainChatPanel {
     document.getElementById('cancel').onclick = () => vscode.postMessage({ type: 'cancel' });
     document.getElementById('clear').onclick = () => vscode.postMessage({ type: 'clear' });
     document.getElementById('reconnect').onclick = () => vscode.postMessage({ type: 'reconnect' });
+    document.getElementById('gatePill').onclick = () => vscode.postMessage({ type: 'openGate' });
+    document.getElementById('btnProfile').onclick = () => vscode.postMessage({ type: 'openProfile' });
+    document.getElementById('btnGate').onclick = () => vscode.postMessage({ type: 'openGate' });
+    document.getElementById('btnUnc').onclick = () => vscode.postMessage({ type: 'openUncertainty' });
+    document.getElementById('btnSkills').onclick = () => vscode.postMessage({ type: 'openSkills' });
+    document.getElementById('btnMcp').onclick = () => vscode.postMessage({ type: 'openMcp' });
     document.getElementById('wchangeSend').onclick = () => {
       const t = document.getElementById('wchangetext').value;
       vscode.postMessage({ type: 'respond', response: 'change', changeText: t });
