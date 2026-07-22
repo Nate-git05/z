@@ -13,6 +13,7 @@ interface ChatMessage {
   id: string;
   role: ChatRole;
   text: string;
+  kind?: "tool" | "error" | "info";
 }
 
 interface WaitingPrompt {
@@ -42,6 +43,8 @@ export class MainChatPanel {
   private threadId = "default";
   private queue: QueueState = { queueLen: 0, items: [], preview: null };
   private disposed = false;
+  private postTimer: ReturnType<typeof setTimeout> | null = null;
+  private connectionBanner = "";
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -50,7 +53,16 @@ export class MainChatPanel {
     manager.onNotification((method, params) => {
       void this.onNotification(method, params as Record<string, unknown>);
     });
-    manager.onDidChange(() => this.postState());
+    manager.onDidChange(() => {
+      const conn = this.manager.connectionState;
+      if (conn === "connected") {
+        this.connectionBanner = "";
+      } else if (conn === "error" || conn === "disconnected") {
+        this.connectionBanner =
+          this.manager.errorMessage || "App-server disconnected — Reconnect from the status bar.";
+      }
+      this.postStateThrottled();
+    });
   }
 
   /** Open (or reveal) Chat as the center main interface. */
@@ -127,6 +139,18 @@ export class MainChatPanel {
         vscode.window.showErrorMessage(
           `turn/respond failed: ${err instanceof Error ? err.message : err}`
         );
+      }
+      return;
+    }
+    if (msg.type === "reconnect") {
+      try {
+        await vscode.commands.executeCommand("z.reconnectAppServer");
+        this.connectionBanner = "";
+        this.postState();
+      } catch (err) {
+        this.connectionBanner =
+          err instanceof Error ? err.message : "Reconnect failed";
+        this.postState();
       }
       return;
     }
@@ -266,7 +290,7 @@ export class MainChatPanel {
         this.streamingAssistantId = null;
         this.busyLabel = "Working…";
       }
-      this.postState();
+      this.postStateThrottled();
       return;
     }
     if (method === "item/agentMessage/delta") {
@@ -287,7 +311,7 @@ export class MainChatPanel {
           msg.text += chunk;
         }
       }
-      this.postState();
+      this.postStateThrottled();
       return;
     }
     if (method === "turn/waiting_input") {
@@ -338,11 +362,61 @@ export class MainChatPanel {
       this.messages.push({
         id: `err-${Date.now()}`,
         role: "system",
-        text: `Error: ${String(params.message || "turn failed")}`,
+        kind: "error",
+        text: friendlyError(String(params.message || "turn failed")),
       });
       this.busyLabel = "";
       this.postState();
+      return;
     }
+    if (method === "mcp/tool_started") {
+      const server = String(params.serverName || "");
+      const tool = String(params.toolName || "");
+      this.messages.push({
+        id: `tool-${params.callId || Date.now()}`,
+        role: "system",
+        kind: "tool",
+        text: `▸ ${server}.${tool}…`,
+      });
+      this.postStateThrottled();
+      return;
+    }
+    if (method === "mcp/tool_finished") {
+      const server = String(params.serverName || "");
+      const tool = String(params.toolName || "");
+      const ms = params.durationMs != null ? ` · ${params.durationMs}ms` : "";
+      const id = `tool-${params.callId || Date.now()}`;
+      const existing = this.messages.find((m) => m.id === id);
+      const line = `✓ ${server}.${tool}${ms}`;
+      if (existing) {
+        existing.text = line;
+      } else {
+        this.messages.push({ id, role: "system", kind: "tool", text: line });
+      }
+      this.postStateThrottled();
+      return;
+    }
+    if (method === "mcp/tool_error") {
+      const server = String(params.serverName || "");
+      const tool = String(params.toolName || "");
+      this.messages.push({
+        id: `tool-err-${Date.now()}`,
+        role: "system",
+        kind: "error",
+        text: `✗ ${server}.${tool}: ${String(params.error || "failed")}`,
+      });
+      this.postState();
+    }
+  }
+
+  private postStateThrottled(): void {
+    if (this.postTimer) {
+      return;
+    }
+    this.postTimer = setTimeout(() => {
+      this.postTimer = null;
+      this.postState();
+    }, 50);
   }
 
   private postState(): void {
@@ -356,6 +430,7 @@ export class MainChatPanel {
       waiting: this.waiting,
       messages: this.messages,
       queue: this.queue,
+      banner: this.connectionBanner,
     });
   }
 
@@ -422,22 +497,34 @@ export class MainChatPanel {
   #queue .preview { white-space: pre-wrap; word-break: break-word; color: var(--z-text); }
   #queue .more { color: var(--z-muted); margin-top: 4px; font-size: 11px; }
   #composer {
+    position: sticky; bottom: 0;
     border-top: 1px solid var(--z-border);
     padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 8px;
     background: var(--z-surface);
   }
+  #banner {
+    display: none; margin: 0 16px 8px; padding: 8px 10px;
+    border: 1px solid var(--z-accent); color: var(--z-accent-bright);
+    font-size: 12px; background: var(--z-raised);
+  }
+  #banner.show { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
   textarea {
-    width: 100%; min-height: 88px; resize: vertical; box-sizing: border-box;
+    width: 100%; min-height: 72px; resize: vertical; box-sizing: border-box;
     padding: 10px; font-family: inherit; font-size: 14px;
   }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .hint { font-size: 11px; color: var(--z-muted); }
+  .msg.tool .bubble { color: var(--z-accent); font-size: 12px; }
+  .msg.error .bubble { color: var(--z-accent-bright); font-size: 12px; }
+  #waiting.kind-mcp_tool .q { color: var(--z-accent); }
+  #waiting.kind-plan_confirm .q { color: var(--z-accent-bright); }
 </style>
 </head>
 <body>
   <div id="app">
     <div id="brand">Z</div>
     <div id="status">Ready</div>
+    <div id="banner"><span id="bannerText"></span><button class="secondary" id="reconnect">Reconnect</button></div>
     <div id="msgs"></div>
     <div id="waiting">
       <div class="q" id="wq"></div>
@@ -484,8 +571,13 @@ export class MainChatPanel {
 
     function renderMessages(messages) {
       msgsEl.innerHTML = messages.map(m => {
-        const role = m.role === 'user' ? 'You' : m.role === 'assistant' ? 'Z' : 'System';
-        return '<div class="msg ' + m.role + '"><div class="role">' + role + '</div><div class="bubble">' + escapeHtml(m.text) + '</div></div>';
+        const kind = m.kind || '';
+        const role = kind === 'tool' ? 'Tool'
+          : m.role === 'user' ? 'You'
+          : m.role === 'assistant' ? 'Z'
+          : kind === 'error' ? 'Error' : 'System';
+        const cls = 'msg ' + m.role + (kind ? ' ' + kind : '');
+        return '<div class="' + cls + '"><div class="role">' + role + '</div><div class="bubble">' + escapeHtml(m.text) + '</div></div>';
       }).join('');
       msgsEl.scrollTop = msgsEl.scrollHeight;
     }
@@ -506,6 +598,7 @@ export class MainChatPanel {
 
     function renderWaiting(w) {
       waiting = w;
+      waitingEl.className = 'kind-' + ((w && w.kind) || 'confirm');
       if (!w) {
         waitingEl.classList.remove('show');
         return;
@@ -541,6 +634,14 @@ export class MainChatPanel {
         ? busy
         : (conn === 'connected' ? 'Agent ready — you prompt, Z programs' : 'Z · ' + conn);
       statusEl.className = busy ? 'busy' : '';
+      const banner = document.getElementById('banner');
+      const bannerText = document.getElementById('bannerText');
+      if (data.banner) {
+        banner.classList.add('show');
+        bannerText.textContent = data.banner;
+      } else {
+        banner.classList.remove('show');
+      }
       renderMessages(data.messages || []);
       renderWaiting(data.waiting || null);
       renderQueue(data.queue || null);
@@ -553,6 +654,7 @@ export class MainChatPanel {
     };
     document.getElementById('cancel').onclick = () => vscode.postMessage({ type: 'cancel' });
     document.getElementById('clear').onclick = () => vscode.postMessage({ type: 'clear' });
+    document.getElementById('reconnect').onclick = () => vscode.postMessage({ type: 'reconnect' });
     document.getElementById('wchangeSend').onclick = () => {
       const t = document.getElementById('wchangetext').value;
       vscode.postMessage({ type: 'respond', response: 'change', changeText: t });
@@ -568,4 +670,21 @@ export class MainChatPanel {
 </body>
 </html>`;
   }
+}
+
+function friendlyError(raw: string): string {
+  const s = (raw || "").toLowerCase();
+  if (s.includes("401") || s.includes("unauth") || s.includes("sign in")) {
+    return "Auth error — sign in from Profile, then retry.";
+  }
+  if (s.includes("429") || s.includes("rate")) {
+    return "Gateway rate limited — wait a moment and retry.";
+  }
+  if (s.includes("mcp")) {
+    return `MCP error: ${raw}`;
+  }
+  if (s.includes("econn") || s.includes("network") || s.includes("timed out")) {
+    return "Network error — check connection and Reconnect.";
+  }
+  return raw.length > 400 ? `${raw.slice(0, 399)}…` : raw;
 }

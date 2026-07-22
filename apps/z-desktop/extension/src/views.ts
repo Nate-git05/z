@@ -31,6 +31,7 @@ interface UsageSummary {
   range?: string;
   source?: string;
   note?: string;
+  error?: string | null;
   authenticated?: boolean;
   byModel?: UsageRow[];
   total_requests?: number;
@@ -182,10 +183,15 @@ class ProfileViewProvider implements vscode.WebviewViewProvider {
     const byModel = usage?.byModel || [];
     const totalRequests = usage?.totalRequests ?? usage?.total_requests ?? 0;
     const totalCost = usage?.totalCostUsd ?? usage?.total_cost_usd ?? 0;
+    const usageAuthed = usage?.authenticated !== false && Boolean(auth?.authenticated);
     const maxCost = Math.max(1e-9, ...byModel.map((r) => Number(r.costUsd ?? r.cost_usd ?? 0)));
     const maxReq = Math.max(1, ...byModel.map((r) => Number(r.requests ?? 0)));
 
-    const barsHtml = byModel.length
+    const barsHtml = !usageAuthed
+      ? `<p class="muted">Sign in to see live gateway usage.</p>`
+      : usage?.error
+        ? `<p class="bad">${escapeHtml(String(usage.error))}</p>`
+        : byModel.length
       ? byModel
           .map((row) => {
             const model = row.modelId || row.model_id || "unknown";
@@ -203,9 +209,9 @@ class ProfileViewProvider implements vscode.WebviewViewProvider {
 </div>`;
           })
           .join("")
-      : `<p class="muted">No usage in this range.</p>`;
+      : `<p class="muted">No gateway requests this period.</p>`;
 
-    const tableRows = byModel.length
+    const tableRows = usageAuthed && byModel.length
       ? byModel
           .map((row) => {
             const model = row.modelId || row.model_id || "unknown";
@@ -324,12 +330,15 @@ class ProfileViewProvider implements vscode.WebviewViewProvider {
     usageErr
       ? `<p class="bad">${escapeHtml(usageErr)}</p>`
       : usage
-        ? `<div class="totals">
+        ? `${
+            usageAuthed
+              ? `<div class="totals">
   <div class="total"><div class="label">Requests</div><div class="n">${totalRequests}</div></div>
   <div class="total"><div class="label">Cost (USD)</div><div class="n">$${Number(totalCost).toFixed(2)}</div></div>
-</div>
+</div>`
+              : ""
+          }
 ${usage.note ? `<p class="muted">${escapeHtml(String(usage.note))}</p>` : ""}
-${usage.source ? `<p class="muted">Source: ${escapeHtml(String(usage.source))}</p>` : ""}
 ${barsHtml}
 ${
   tableRows

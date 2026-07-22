@@ -1,8 +1,11 @@
 """
-Gateway usage aggregate client for Profile (Phase 9).
+Gateway usage aggregate client for Profile (Phase 9 + 14 honesty).
 
 Proxies authenticated ``GET /v1/gateway/usage?range=billing_period|all``
 and normalizes the response for the desktop Profile panel.
+
+Phase 14: unsigned-in and gateway errors return empty series — never fake spend
+unless ``Z_GATEWAY_USAGE_STUB`` is explicitly set (tests/dev).
 """
 
 from __future__ import annotations
@@ -21,6 +24,26 @@ from aider.z.credentials import load_credentials
 ALLOWED_RANGES = frozenset({"billing_period", "all"})
 
 
+def _empty_summary(
+    range_key: str,
+    *,
+    authenticated: bool,
+    note: str | None = None,
+    error: str | None = None,
+    source: str = "empty",
+) -> dict[str, Any]:
+    return {
+        "range": range_key,
+        "by_model": [],
+        "total_requests": 0,
+        "total_cost_usd": 0.0,
+        "source": source,
+        "authenticated": authenticated,
+        "note": note,
+        "error": error,
+    }
+
+
 def _stub_summary(range_key: str) -> dict[str, Any]:
     raw = os.environ.get("Z_GATEWAY_USAGE_STUB", "").strip()
     if raw:
@@ -28,6 +51,8 @@ def _stub_summary(range_key: str) -> dict[str, Any]:
             data = json.loads(raw)
             if isinstance(data, dict):
                 data.setdefault("range", range_key)
+                data["source"] = "stub"
+                data["authenticated"] = True
                 return data
         except json.JSONDecodeError:
             pass
@@ -52,6 +77,7 @@ def _stub_summary(range_key: str) -> dict[str, Any]:
         "total_requests": 16,
         "total_cost_usd": 2.10,
         "source": "stub",
+        "authenticated": True,
     }
 
 
@@ -60,30 +86,28 @@ def fetch_usage_summary(
     *,
     timeout: float = 20.0,
 ) -> dict[str, Any]:
-    """
-    Fetch usage aggregate for Profile.
-
-    Prefer live gateway when credentials exist; fall back to stub/demo data
-    so the panel always renders something useful offline.
-    """
+    """Fetch usage aggregate for Profile (honest empty when unsigned-in)."""
     key = (range_key or "billing_period").strip().lower()
     if key not in ALLOWED_RANGES:
-        # Accept legacy aliases from early Profile drafts
         if key in {"today", "7d", "30d", "month"}:
             key = "billing_period"
         else:
             key = "billing_period"
 
-    if os.environ.get("Z_GATEWAY_USAGE_STUB") or os.environ.get("Z_GATEWAY_STUB"):
-        return _stub_summary(key)
+    # Explicit stub only — do not treat Z_GATEWAY_STUB as usage demo (Phase 14).
+    if os.environ.get("Z_GATEWAY_USAGE_STUB"):
+        out = _stub_summary(key)
+        out["range"] = key
+        return out
 
     creds = load_credentials()
     if creds is None or not getattr(creds, "access_token", None):
-        out = _stub_summary(key)
-        out["source"] = "demo"
-        out["authenticated"] = False
-        out["note"] = "Sign in to load live gateway usage."
-        return out
+        return _empty_summary(
+            key,
+            authenticated=False,
+            note="Sign in to see live gateway usage.",
+            source="unsigned",
+        )
 
     url = f"{get_auth_base_url()}/v1/gateway/usage?{urllib.parse.urlencode({'range': key})}"
     req = urllib.request.Request(
@@ -111,11 +135,12 @@ def fetch_usage_summary(
         ValueError,
         json.JSONDecodeError,
     ) as exc:
-        out = _stub_summary(key)
-        out["source"] = "fallback"
-        out["authenticated"] = True
-        out["note"] = f"Could not reach gateway usage ({exc}). Showing demo totals."
-        return out
+        return _empty_summary(
+            key,
+            authenticated=True,
+            error=f"Could not reach gateway usage ({exc}).",
+            source="error",
+        )
 
 
 def normalize_for_profile(payload: dict[str, Any]) -> dict[str, Any]:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
@@ -256,8 +257,22 @@ class UsagePhase9Test(unittest.TestCase):
             os.environ,
             {
                 "Z_HOME": self.tmp,
-                "Z_GATEWAY_USAGE_STUB": "",
-                "Z_GATEWAY_STUB": "1",
+                "Z_GATEWAY_USAGE_STUB": json.dumps(
+                    {
+                        "range": "billing_period",
+                        "by_model": [
+                            {
+                                "model_id": "z-composer",
+                                "requests": 12,
+                                "input_tokens": 48000,
+                                "output_tokens": 12000,
+                                "cost_usd": 1.24,
+                            }
+                        ],
+                        "total_requests": 12,
+                        "total_cost_usd": 1.24,
+                    }
+                ),
             },
         )
         self.env.start()
@@ -383,7 +398,8 @@ class McpPhase10Test(unittest.TestCase):
             {"serverName": "github", "credentials": {}, "skipPersist": True},
         )
         self.assertFalse(out["ok"])
-        self.assertIn("token", str(out.get("error", "")).lower())
+        err = str(out.get("error", "")).lower()
+        self.assertTrue("token" in err or "pat" in err or "oauth" in err, err)
 
     def test_first_use_confirm_gate(self):
         from aider.z import mcp_local

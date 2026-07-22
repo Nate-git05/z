@@ -46,18 +46,21 @@ def first_use_path() -> Path:
 
 
 # Catalog aligned with z_server MCP catalog (subset for V1).
+# GitHub: OAuth primary (desktop deep-link) + PAT fallback via fields.
 DEFAULT_CATALOG: list[dict[str, Any]] = [
     {
         "serverName": "github",
         "displayName": "GitHub",
-        "connectionType": "manual",
-        "description": "GitHub issues, PRs, and repo tools.",
+        "connectionType": "oauth",
+        "description": "GitHub issues, PRs, and repo tools. OAuth preferred; PAT also works.",
+        "allowPatFallback": True,
+        "oauthStartPath": "/v1/mcp/oauth/start?server_name=github",
         "fields": [
             {
                 "key": "token",
-                "label": "Personal access token",
+                "label": "Personal access token (fallback)",
                 "secret": True,
-                "required": True,
+                "required": False,
             },
         ],
         "defaultConfig": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"]},
@@ -151,6 +154,7 @@ class McpConnectionLocal:
     public_fields: dict[str, str] = field(default_factory=dict)
     last_error: Optional[str] = None
     remote_id: Optional[str] = None
+    cached_tools: list[str] = field(default_factory=list)
 
     def to_public_dict(self) -> dict[str, Any]:
         return {
@@ -165,6 +169,7 @@ class McpConnectionLocal:
             "lastError": self.last_error,
             "remoteId": self.remote_id,
             "hasSecrets": _connection_has_secrets(self.id),
+            "cachedTools": list(self.cached_tools),
         }
 
 
@@ -219,6 +224,7 @@ def _load_connections() -> list[McpConnectionLocal]:
                 public_fields=dict(row.get("public_fields") or row.get("publicFields") or {}),
                 last_error=row.get("last_error") or row.get("lastError"),
                 remote_id=row.get("remote_id") or row.get("remoteId"),
+                cached_tools=list(row.get("cached_tools") or row.get("cachedTools") or []),
             )
         )
     return out
@@ -238,11 +244,50 @@ def _save_connections(rows: list[McpConnectionLocal]) -> None:
                 "public_fields": c.public_fields,
                 "last_error": c.last_error,
                 "remote_id": c.remote_id,
+                "cached_tools": list(c.cached_tools or []),
             }
             for c in rows
         ]
     }
     _write_json(connections_path(), payload)
+
+
+def set_cached_tools(connection_id: str, tools: list[str]) -> None:
+    rows = _load_connections()
+    for c in rows:
+        if c.id == connection_id:
+            c.cached_tools = [str(t) for t in tools]
+            _save_connections(rows)
+            return
+
+
+def tool_index_from_cache() -> list[dict[str, Any]]:
+    """Prompt catalog without spawning processes."""
+    out: list[dict[str, Any]] = []
+    for c in _load_connections():
+        if not c.enabled:
+            continue
+        tools = list(c.cached_tools or [])
+        if not tools:
+            out.append(
+                {
+                    "connectionId": c.id,
+                    "serverName": c.server_name,
+                    "toolName": "*",
+                    "description": "connected — run mcp/test or first call to discover tools",
+                }
+            )
+            continue
+        for name in tools:
+            out.append(
+                {
+                    "connectionId": c.id,
+                    "serverName": c.server_name,
+                    "toolName": name,
+                    "description": "",
+                }
+            )
+    return out
 
 
 def _load_secrets() -> dict[str, dict[str, str]]:
@@ -298,13 +343,22 @@ def connect(
     if entry is None:
         raise ValueError(f"Unknown MCP server '{server_name}'.")
 
-    if entry.get("connectionType") == "oauth":
+    creds_in = {str(k): str(v) for k, v in (credentials or {}).items() if v is not None}
+    if entry.get("connectionType") == "oauth" and not entry.get("allowPatFallback"):
         raise ValueError(
-            "OAuth MCP servers must be connected via the web app "
+            "OAuth MCP servers must be connected via OAuth "
             f"(open {entry.get('oauthStartPath') or '/v1/mcp/oauth/start'})."
         )
+    if (
+        entry.get("connectionType") == "oauth"
+        and entry.get("allowPatFallback")
+        and not creds_in.get("token")
+        and not creds_in.get("access_token")
+    ):
+        raise ValueError(
+            "GitHub OAuth: use mcp/oauthStart, or pass a PAT in credentials.token."
+        )
 
-    creds_in = {str(k): str(v) for k, v in (credentials or {}).items() if v is not None}
     cfg = {**(entry.get("defaultConfig") or {}), **(config or {})}
     secrets_payload: dict[str, str] = {}
     public_fields: dict[str, str] = {}
@@ -340,12 +394,20 @@ def connect(
         slug = "".join(ch if ch.isalnum() else "-" for ch in disp.lower())[:40]
         name = f"custom-{slug}-{uuid4().hex[:4]}"
 
+    # PAT fallback on an oauth catalog entry → store as manual locally
+    conn_type = str(entry.get("connectionType") or "manual")
+    if conn_type == "oauth" and (
+        secrets_payload.get("token") or secrets_payload.get("access_token")
+    ):
+        conn_type = "manual"
+
     rows = _load_connections()
     existing = next((c for c in rows if c.server_name == name), None)
     if existing:
         existing.display_name = str(disp)
         existing.config = cfg
         existing.public_fields = public_fields
+        existing.connection_type = conn_type
         existing.enabled = True
         existing.status = "connected"
         existing.last_error = None
@@ -356,7 +418,7 @@ def connect(
             id=str(uuid4()),
             server_name=name,
             display_name=str(disp),
-            connection_type=str(entry.get("connectionType") or "manual"),
+            connection_type=conn_type,
             enabled=True,
             status="connected",
             config=cfg,
@@ -371,7 +433,8 @@ def connect(
         all_secrets[conn.id] = secrets_payload
         _save_secrets(all_secrets)
 
-    test = test_connection(conn.id)
+    # Prefer real MCP handshake when runtime enabled
+    test = test_connection(conn.id, prefer_runtime=True)
     if not test.get("ok"):
         conn.status = "error"
         conn.last_error = str(test.get("error") or "Connection test failed")
@@ -395,28 +458,54 @@ def disconnect(connection_id: str) -> dict[str, Any]:
     if connection_id in secrets:
         del secrets[connection_id]
         _save_secrets(secrets)
-    # Clear first-use marks for this connection's server
+    try:
+        from aider.z.mcp_runtime import get_session_manager
+
+        get_session_manager().drop_session(connection_id)
+    except Exception:
+        pass
     return {"ok": True, "id": connection_id}
 
 
-def test_connection(connection_id: str) -> dict[str, Any]:
+def test_connection(
+    connection_id: str, *, prefer_runtime: bool = True
+) -> dict[str, Any]:
     rows = _load_connections()
     conn = next((c for c in rows if c.id == connection_id), None)
     if conn is None:
         return {"ok": False, "error": f"Connection not found: {connection_id}"}
+
+    soft_err = None
+    if prefer_runtime:
+        try:
+            from aider.z.mcp_runtime import get_session_manager, runtime_enabled
+
+            if runtime_enabled():
+                probed = get_session_manager().probe(connection_id)
+                if probed.get("ok"):
+                    return probed
+                soft_err = str(probed.get("error") or "runtime handshake failed")
+        except Exception as err:
+            soft_err = str(err)
 
     cfg = dict(conn.config)
     url = str(cfg.get("url") or conn.public_fields.get("url") or "").strip()
     command = str(cfg.get("command") or conn.public_fields.get("command") or "").strip()
 
     if url:
-        return _test_http(url)
+        result = _test_http(url)
+        if soft_err and not result.get("ok"):
+            result["runtimeError"] = soft_err
+        return result
 
     if command:
         # Resolve first token if space-separated
         exe = command.split()[0] if command else ""
         if shutil.which(exe) or Path(exe).exists():
-            return {"ok": True, "mode": "stdio", "command": command, "resolved": True}
+            out = {"ok": True, "mode": "stdio", "command": command, "resolved": True}
+            if soft_err:
+                out["note"] = f"Soft PATH ok; runtime handshake failed: {soft_err}"
+            return out
         # npx/node common for MCP — soft-ok if node exists
         if exe in {"npx", "npm", "node"} and shutil.which("node"):
             return {
@@ -424,12 +513,13 @@ def test_connection(connection_id: str) -> dict[str, Any]:
                 "mode": "stdio",
                 "command": command,
                 "resolved": True,
-                "note": "node available; package will resolve at runtime",
+                "note": "node available; package will resolve at runtime"
+                + (f"; handshake: {soft_err}" if soft_err else ""),
             }
         return {
             "ok": False,
             "mode": "stdio",
-            "error": f"Command not found on PATH: {exe}",
+            "error": soft_err or f"Command not found on PATH: {exe}",
         }
 
     # Credential-only servers (e.g. github token present)
@@ -438,10 +528,11 @@ def test_connection(connection_id: str) -> dict[str, Any]:
         return {
             "ok": True,
             "mode": "credentials",
-            "note": "Credentials stored; runtime probe deferred to tool use.",
+            "note": soft_err
+            or "Credentials stored; runtime probe deferred to tool use.",
         }
 
-    return {"ok": False, "error": "No command, URL, or credentials to test."}
+    return {"ok": False, "error": soft_err or "No command, URL, or credentials to test."}
 
 
 def _test_http(url: str, *, timeout: float = 8.0) -> dict[str, Any]:
