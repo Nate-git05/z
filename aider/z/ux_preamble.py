@@ -1,8 +1,11 @@
 """Quiet turn preamble — P0 / quiet-turn terminal UX.
 
-Collects control-plane facts during planning. By default the turn stays
-silent (one busy spinner only). Verbose / Z_UX_VERBOSE restores the old
-status trail; Z_UX_PREAMBLE restores the compact Planning line.
+Collects control-plane facts during planning. By default the busy spinner
+shows a short phase-kind label (Thinking…/Exploring…/Planning…/Waiting for
+model…) that changes live as the turn progresses, with retained "✓ …" lines
+left behind on each transition (see aider/z/phase_kinds.py). Verbose /
+Z_UX_VERBOSE restores the old, fully detailed status trail; Z_UX_PREAMBLE
+restores the compact Planning line.
 """
 
 from __future__ import annotations
@@ -63,13 +66,29 @@ def public_busy_label(
     io=None,
     waiting_model: bool = False,
 ) -> str:
-    """User-facing busy spinner text — one quiet line unless verbose."""
+    """User-facing busy spinner text.
+
+    Verbose (Z_UX_VERBOSE / coder.verbose) shows the full detailed phase
+    string unabridged. Non-verbose (the default) shows a short phase-kind
+    label inferred from ``detailed`` — visible by default, not silent — so
+    the live indicator still reads as Thinking/Exploring/Planning/etc.
+    rather than one generic "Working…" the whole turn.
+
+    ``waiting_model`` is now only load-bearing as a defensive fallback when
+    ``detailed`` is empty — kind inference already detects a "Waiting for "
+    prefix in the text itself.
+    """
     if ux_verbose(coder=coder, io=io):
         text = (detailed or "").strip()
         if text:
             return text
         return DEFAULT_WAITING_MODEL_LABEL if waiting_model else DEFAULT_BUSY_LABEL
-    return DEFAULT_WAITING_MODEL_LABEL if waiting_model else DEFAULT_BUSY_LABEL
+    from .phase_kinds import LIVE_LABELS, infer_phase_kind
+
+    text = (detailed or "").strip()
+    if not text:
+        return DEFAULT_WAITING_MODEL_LABEL if waiting_model else DEFAULT_BUSY_LABEL
+    return LIVE_LABELS.get(infer_phase_kind(text), DEFAULT_BUSY_LABEL)
 
 
 @dataclass

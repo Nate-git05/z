@@ -106,6 +106,87 @@ class TurnOrchestratorTests(unittest.TestCase):
             self.assertFalse(turn_queue_enabled(z_theme=False))
 
 
+class PhaseKindTrackingTests(unittest.TestCase):
+    """Live turn-phase indicator: kind transitions + retained step history."""
+
+    def test_enter_busy_sets_kind_and_resets_history(self):
+        from aider.z.phase_kinds import THINKING
+        from aider.z.turn_ux import TurnOrchestrator
+
+        orch = TurnOrchestrator()
+        orch.enter_busy("Planning — matching skills…", kind=THINKING)
+        self.assertEqual(orch.phase_kind, THINKING)
+        self.assertEqual(orch.step_history, [])
+
+    def test_set_phase_same_kind_returns_none_no_history(self):
+        from aider.z.phase_kinds import PLANNING
+        from aider.z.turn_ux import TurnOrchestrator
+
+        orch = TurnOrchestrator()
+        orch.enter_busy("Planning — drafting checklist…", kind=PLANNING)
+        retained = orch.set_phase("Planning — scoring blast radius…", kind=PLANNING)
+        self.assertIsNone(retained)
+        self.assertEqual(orch.phase_kind, PLANNING)
+        self.assertEqual(orch.step_history, [])
+
+    def test_set_phase_kind_change_returns_retained_label(self):
+        from aider.z.phase_kinds import EXPLORING, THINKING
+        from aider.z.turn_ux import TurnOrchestrator
+
+        orch = TurnOrchestrator()
+        orch.enter_busy("Planning — matching skills…", kind=THINKING)
+        retained = orch.set_phase("Planning — exploring related files…", kind=EXPLORING)
+        self.assertEqual(retained, "✓ Thought it through")
+        self.assertEqual(orch.phase_kind, EXPLORING)
+        self.assertEqual(orch.step_history, [THINKING])
+
+    def test_set_phase_without_kind_is_backward_compatible(self):
+        """Callers that don't pass kind (e.g. gate.py's own set_phase calls)
+        must see unchanged behavior — no kind tracking, no retained label."""
+        from aider.z.phase_kinds import THINKING
+        from aider.z.turn_ux import TurnOrchestrator
+
+        orch = TurnOrchestrator()
+        orch.enter_busy("start", kind=THINKING)
+        retained = orch.set_phase("applying edits")
+        self.assertIsNone(retained)
+        self.assertEqual(orch.phase_kind, THINKING)
+        self.assertEqual(orch.phase, "applying edits")
+
+    def test_finish_phase_is_idempotent(self):
+        from aider.z.phase_kinds import THINKING
+        from aider.z.turn_ux import TurnOrchestrator
+
+        orch = TurnOrchestrator()
+        orch.enter_busy("Planning — matching skills…", kind=THINKING)
+        self.assertEqual(orch.finish_phase(), "✓ Thought it through")
+        self.assertIsNone(orch.phase_kind)
+        self.assertIsNone(orch.finish_phase())
+
+    def test_interrupt_busy_clears_kind_without_retained_label(self):
+        """Ctrl+C mid-phase must never produce a misleading "✓ done" line —
+        the phase did not actually finish."""
+        from aider.z.phase_kinds import EXPLORING
+        from aider.z.turn_ux import TurnOrchestrator
+
+        orch = TurnOrchestrator()
+        orch.enter_busy("Planning — exploring related files…", kind=EXPLORING)
+        orch.interrupt_busy()
+        self.assertIsNone(orch.phase_kind)
+
+    def test_waiting_input_saves_and_restores_kind(self):
+        """A confirm prompt mid-phase must not look like a phase transition."""
+        from aider.z.phase_kinds import PLANNING
+        from aider.z.turn_ux import TurnOrchestrator
+
+        orch = TurnOrchestrator()
+        orch.enter_busy("Planning — drafting implementation plan…", kind=PLANNING)
+        orch.enter_waiting_input("plan_confirm")
+        self.assertIsNone(orch.phase_kind)
+        orch.leave_waiting_input()
+        self.assertEqual(orch.phase_kind, PLANNING)
+
+
 class QueueFifoDrainTests(unittest.TestCase):
     def test_coder_drains_queue_before_get_input(self):
         from aider.coders.base_coder import Coder

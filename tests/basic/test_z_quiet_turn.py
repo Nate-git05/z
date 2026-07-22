@@ -23,20 +23,19 @@ os.environ.pop("Z_CONFIRM_NEW_FILES", None)
 
 
 class PublicBusyLabelTests(unittest.TestCase):
-    def test_default_working_and_waiting(self):
-        from aider.z.ux_preamble import (
-            DEFAULT_BUSY_LABEL,
-            DEFAULT_WAITING_MODEL_LABEL,
-            public_busy_label,
-        )
+    def test_default_shows_short_phase_kind_label(self):
+        """Non-verbose default is a short live phase-kind label (not silent
+        "Working…" for everything) — visible by default is the whole point
+        of the live turn-phase indicator."""
+        from aider.z.ux_preamble import public_busy_label
 
         self.assertEqual(
             public_busy_label("Planning — building capability plan…"),
-            DEFAULT_BUSY_LABEL,
+            "Planning…",
         )
         self.assertEqual(
             public_busy_label("Waiting for gpt-4o", waiting_model=True),
-            DEFAULT_WAITING_MODEL_LABEL,
+            "Waiting for model…",
         )
 
     def test_verbose_keeps_detail(self):
@@ -119,7 +118,9 @@ class QuietSkillsExploreTests(unittest.TestCase):
         self.assertTrue(looks_like_casual_chat("hi"))
         self.assertFalse(looks_like_casual_chat("add a REST endpoint for users"))
 
-    def test_phase_spinner_uses_working_label(self):
+    def test_phase_spinner_uses_short_phase_kind_label(self):
+        """Non-verbose default shows the short "Planning…" kind label live
+        (not the full detailed string, and not a silent "Working…")."""
         from aider.coders.base_coder import Coder
         from aider.z.mascot import MascotSpinner
         from aider.z.turn_ux import TurnOrchestrator
@@ -137,14 +138,16 @@ class QuietSkillsExploreTests(unittest.TestCase):
         coder._stop_waiting_spinner = Coder._stop_waiting_spinner.__get__(coder)
         coder._phase_spinner_start = Coder._phase_spinner_start.__get__(coder)
         coder._phase_spinner_stop = Coder._phase_spinner_stop.__get__(coder)
+        coder._emit_retained_step = Coder._emit_retained_step.__get__(coder)
 
         fake = MagicMock(spec=MascotSpinner)
         with patch("aider.coders.base_coder.waiting_display", return_value=fake) as wd:
             with patch("sys.stdout.write"), patch("sys.stdout.flush"):
                 coder._phase_spinner_start("Planning — building capability plan…")
         args = wd.call_args[0][0]
-        self.assertIn("Working…", args)
+        self.assertIn("Planning…", args)
         self.assertNotIn("capability plan", args)
+        self.assertNotIn("Working…", args)
         self.assertIn("Ctrl+C", args)
         coder._phase_spinner_stop()
 

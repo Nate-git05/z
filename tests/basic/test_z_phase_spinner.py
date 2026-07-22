@@ -31,9 +31,13 @@ class PhaseSpinnerHelperTests(unittest.TestCase):
         coder._phase_spinner_start = Coder._phase_spinner_start.__get__(coder)
         coder._phase_spinner_update = Coder._phase_spinner_update.__get__(coder)
         coder._phase_spinner_stop = Coder._phase_spinner_stop.__get__(coder)
+        coder._emit_retained_step = Coder._emit_retained_step.__get__(coder)
         return coder
 
-    def test_start_update_stop_uses_mascot_spinner(self):
+    def test_kind_transition_restarts_and_retains_step(self):
+        """matching skills (THINKING) -> exploring (EXPLORING) is a real
+        phase-kind transition: the spinner restarts and a "✓ …" line is
+        retained in scrollback for the phase that just finished."""
         from aider.z.mascot import MascotSpinner
 
         coder = self._coder()
@@ -44,12 +48,32 @@ class PhaseSpinnerHelperTests(unittest.TestCase):
             self.assertIs(coder.waiting_spinner, fake)
 
             coder._phase_spinner_update("Planning — exploring `bus` (1/3)…")
-            fake.set_text.assert_called()
-            self.assertIn("Ctrl+C", fake.set_text.call_args[0][0])
+            self.assertEqual(fake.start.call_count, 2)
+            fake.stop.assert_called_once()
+            coder.io.tool_output.assert_any_call("✓ Thought it through")
 
             coder._phase_spinner_stop()
-            fake.stop.assert_called()
             self.assertIsNone(coder.waiting_spinner)
+            coder.io.tool_output.assert_any_call("✓ Explored the codebase")
+
+    def test_same_kind_update_does_not_restart(self):
+        """Two PLANNING sub-labels in a row update the spinner text in
+        place — no restart, no retained line."""
+        from aider.z.mascot import MascotSpinner
+
+        coder = self._coder()
+        fake = MagicMock(spec=MascotSpinner)
+        with patch("aider.coders.base_coder.waiting_display", return_value=fake):
+            coder._phase_spinner_start("Planning — drafting approach checklist…")
+            fake.start.assert_called_once()
+
+            coder._phase_spinner_update("Planning — scoring blast radius…")
+            fake.start.assert_called_once()
+            fake.stop.assert_not_called()
+            fake.set_text.assert_called()
+            self.assertIn("Ctrl+C", fake.set_text.call_args[0][0])
+            for call in coder.io.tool_output.call_args_list:
+                self.assertNotIn("✓", call.args[0])
 
     def test_update_restarts_when_idle(self):
         from aider.z.mascot import MascotSpinner

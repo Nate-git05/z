@@ -48,8 +48,11 @@ class TurnOrchestrator:
         self._lock = threading.RLock()
         self.state = TurnState.IDLE
         self.phase: Optional[str] = None
+        self.phase_kind: Optional[str] = None
+        self.step_history: List[str] = []
         self.waiting_kind: Optional[str] = None
         self._phase_before_wait: Optional[str] = None
+        self._phase_kind_before_wait: Optional[str] = None
         self._queue: Deque[str] = deque()
         self.queue_max = max(1, int(queue_max))
         self.on_state_change = on_state_change
@@ -131,37 +134,81 @@ class TurnOrchestrator:
         with self._lock:
             self.state = TurnState.IDLE
             self.phase = None
+            self.phase_kind = None
             self.waiting_kind = None
             self._phase_before_wait = None
+            self._phase_kind_before_wait = None
         self._emit_state(TurnState.IDLE, None)
 
-    def enter_busy(self, phase: str = "working") -> None:
+    def enter_busy(self, phase: str = "working", *, kind: Optional[str] = None) -> None:
         phase = (phase or "working").strip() or "working"
         with self._lock:
             self.state = TurnState.BUSY
             self.phase = phase
+            self.phase_kind = kind
+            self.step_history = []
             self.waiting_kind = None
             self._phase_before_wait = None
+            self._phase_kind_before_wait = None
         self._emit_state(TurnState.BUSY, phase)
 
-    def set_phase(self, phase: str) -> None:
+    def set_phase(self, phase: str, *, kind: Optional[str] = None) -> Optional[str]:
+        """Update the current phase text (and kind).
+
+        Returns the *outgoing* kind's retained "done" label when ``kind``
+        differs from the currently tracked one (a real phase transition),
+        or ``None`` when it's just a same-kind sub-label update (no line to
+        retain) or the orchestrator isn't Busy.
+        """
         phase = (phase or "").strip()
         if not phase:
-            return
+            return None
+        retained: Optional[str] = None
         with self._lock:
             if self.state != TurnState.BUSY:
-                return
+                return None
+            if kind is not None and kind != self.phase_kind:
+                retained = self._retained_label(self.phase_kind)
+                if self.phase_kind is not None:
+                    self.step_history.append(self.phase_kind)
+                self.phase_kind = kind
             self.phase = phase
         self._emit_state(TurnState.BUSY, phase)
+        return retained
+
+    def finish_phase(self) -> Optional[str]:
+        """Close out whatever phase kind was running (idempotent).
+
+        Called at turn end so the last phase also leaves a retained line —
+        safe to call more than once per turn (returns ``None`` after the
+        first call, or if nothing was running).
+        """
+        with self._lock:
+            if self.state != TurnState.BUSY or self.phase_kind is None:
+                return None
+            retained = self._retained_label(self.phase_kind)
+            self.step_history.append(self.phase_kind)
+            self.phase_kind = None
+        return retained
+
+    @staticmethod
+    def _retained_label(kind: Optional[str]) -> Optional[str]:
+        if kind is None:
+            return None
+        from .phase_kinds import RETAINED_LABELS
+
+        return RETAINED_LABELS.get(kind)
 
     def enter_waiting_input(self, kind: str = "confirm") -> None:
         """Stop Busy chrome for a blocking ask; queue frozen (not discarded)."""
         with self._lock:
             if self.state == TurnState.BUSY:
                 self._phase_before_wait = self.phase
+                self._phase_kind_before_wait = self.phase_kind
             self.state = TurnState.WAITING_INPUT
             self.waiting_kind = (kind or "confirm").strip() or "confirm"
             self.phase = None
+            self.phase_kind = None
             resume = self._phase_before_wait
         self._emit_state(TurnState.WAITING_INPUT, resume)
 
@@ -176,8 +223,10 @@ class TurnOrchestrator:
             phase = self._phase_before_wait or "Working…"
             self.state = TurnState.BUSY
             self.phase = phase
+            self.phase_kind = self._phase_kind_before_wait
             self.waiting_kind = None
             self._phase_before_wait = None
+            self._phase_kind_before_wait = None
         self._emit_state(TurnState.BUSY, phase)
         return phase
 
@@ -185,11 +234,14 @@ class TurnOrchestrator:
         """
         ^C during Busy: leave Busy chrome, keep queue (D8).
         Does not clear WaitingInput — confirm path handles that separately.
+        Deliberately does not emit a retained "done" line for the phase that
+        was interrupted — it did not actually finish.
         """
         with self._lock:
             if self.state == TurnState.BUSY:
                 self.state = TurnState.IDLE
                 self.phase = None
+                self.phase_kind = None
         # Keep queue; emit idle so spinner stops
         self._emit_state(TurnState.IDLE, None)
 
