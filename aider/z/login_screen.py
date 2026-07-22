@@ -52,26 +52,15 @@ WEB_LOGIN_OPTIONS = [
     ("z", "Continue with Z"),
 ]
 
-# V1: router-only. BYOK appears only when Z_ALLOW_BYOK=1.
-AUTH_MODE_OPTIONS_ROUTER_ONLY = [
-    ("router", "Use Z's model router"),
-]
-
-AUTH_MODE_OPTIONS_WITH_BYOK = [
+# Both are first-class and always offered — every user picks one after login.
+AUTH_MODE_OPTIONS = [
     ("byok", "Bring your own API key"),
     ("router", "Use Z's model router"),
 ]
 
-# Back-compat alias — prefer auth_mode_options().
-AUTH_MODE_OPTIONS = AUTH_MODE_OPTIONS_WITH_BYOK
-
 
 def auth_mode_options() -> list[tuple[str, str]]:
-    from aider.z.onboarding import byok_allowed
-
-    if byok_allowed():
-        return list(AUTH_MODE_OPTIONS_WITH_BYOK)
-    return list(AUTH_MODE_OPTIONS_ROUTER_ONLY)
+    return list(AUTH_MODE_OPTIONS)
 
 
 def router_model_options() -> list[tuple[str, str]]:

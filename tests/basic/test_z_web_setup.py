@@ -208,7 +208,7 @@ def test_byok_setup_trip_uses_skip_login_true():
     )
     captured = {}
 
-    with patch.dict("os.environ", {"Z_ALLOW_BYOK": "1"}), patch(
+    with patch(
         "aider.z.auth.current_session", return_value=creds
     ), patch(
         "aider.z.auth.open_web_login"
@@ -247,7 +247,7 @@ def test_login_happens_before_mode_choice_on_fresh_config():
         order.append("byok")
         return True
 
-    with patch.dict("os.environ", {"Z_ALLOW_BYOK": "1"}), patch(
+    with patch(
         "aider.z.auth.current_session", return_value=None
     ), patch(
         "aider.z.auth.open_web_login", side_effect=fake_login
@@ -482,14 +482,13 @@ def test_auth_switch_uses_web_login_and_byok_skip_login():
     from aider.z import cli as z_cli
 
     io = MagicMock()
-    io.confirm_ask.return_value = False  # decline "add another provider key?"
     creds = Credentials(
         access_token="tok",
         user=UserProfile(email="a@b.com", provider="email"),
         expires_at=9_999_999_999,
     )
 
-    with patch.dict("os.environ", {"Z_ALLOW_BYOK": "1"}), patch(
+    with patch(
         "aider.z.auth.current_session", return_value=None
     ), patch(
         "aider.z.auth.open_web_login", return_value=creds

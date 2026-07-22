@@ -115,8 +115,9 @@ class ConfigMergeTest(unittest.TestCase):
 
 
 class EnsureSessionOrderTest(unittest.TestCase):
-    def test_login_happens_before_router_setup_on_fresh_config(self):
-        """V1: login first, then router model (no BYOK mode menu)."""
+    def test_login_then_mode_choice_then_router_model_on_fresh_config(self):
+        """Every fresh install sees the BYOK-vs-router menu — login, then
+        mode choice, then (if router) a preferred-model pick."""
         io = FakeIO()
         order: list[str] = []
 
@@ -124,13 +125,16 @@ class EnsureSessionOrderTest(unittest.TestCase):
             order.append("login")
             return _creds()
 
+        def fake_mode(_io, **_k):
+            order.append("mode")
+            return "router"
+
         def fake_router_model(_io, **_k):
             order.append("router_model")
             return "claude-sonnet-5"
 
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("Z_SKIP_ACCOUNT", None)
-            os.environ.pop("Z_ALLOW_BYOK", None)
             with patch("aider.z.auth.current_session", return_value=None):
                 with patch("aider.z.auth.open_web_login", side_effect=fake_login):
                     with patch(
@@ -138,24 +142,28 @@ class EnsureSessionOrderTest(unittest.TestCase):
                         return_value=OnboardingConfig(),
                     ):
                         with patch(
-                            "aider.z.login_screen.prompt_router_model_choice",
-                            side_effect=fake_router_model,
+                            "aider.z.login_screen.prompt_auth_mode_choice",
+                            side_effect=fake_mode,
                         ):
                             with patch(
-                                "aider.z.cli._ensure_model_keys", return_value=True
+                                "aider.z.login_screen.prompt_router_model_choice",
+                                side_effect=fake_router_model,
                             ):
-                                with patch("aider.z.onboarding.save_auth_mode") as save_mode:
-                                    with patch(
-                                        "aider.z.onboarding.save_selected_model"
-                                    ) as save_model:
-                                        ok = ensure_agent_session(io)
+                                with patch(
+                                    "aider.z.cli._ensure_model_keys", return_value=True
+                                ):
+                                    with patch("aider.z.onboarding.save_auth_mode") as save_mode:
+                                        with patch(
+                                            "aider.z.onboarding.save_selected_model"
+                                        ) as save_model:
+                                            ok = ensure_agent_session(io)
         self.assertTrue(ok)
-        self.assertEqual(order, ["login", "router_model"])
+        self.assertEqual(order, ["login", "mode", "router_model"])
         save_mode.assert_called_with("router")
         save_model.assert_called_with("claude-sonnet-5")
 
-    def test_byok_escape_restores_mode_choice(self):
-        """Z_ALLOW_BYOK=1 keeps the old BYOK vs router menu."""
+    def test_login_then_mode_choice_then_byok_setup_on_fresh_config(self):
+        """BYOK is a first-class, always-offered choice — no escape flag needed."""
         io = FakeIO()
         order: list[str] = []
 
@@ -171,7 +179,7 @@ class EnsureSessionOrderTest(unittest.TestCase):
             order.append("byok")
             return True
 
-        with patch.dict(os.environ, {"Z_ALLOW_BYOK": "1"}, clear=False):
+        with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("Z_SKIP_ACCOUNT", None)
             with patch("aider.z.auth.current_session", return_value=None):
                 with patch("aider.z.auth.open_web_login", side_effect=fake_login):
@@ -194,16 +202,17 @@ class EnsureSessionOrderTest(unittest.TestCase):
 
 
 class ResetSetupTest(unittest.TestCase):
-    def test_cmd_reset_clears_and_reprompts_router(self):
+    def test_cmd_reset_clears_and_reprompts_mode(self):
         from aider.z.cli import cmd_reset
 
         io = FakeIO()
         with patch("aider.z.onboarding.clear_setup") as clear, patch(
             "aider.z.auth.current_session", return_value=_creds()
-        ), patch.dict(os.environ, {}, clear=False), patch(
+        ), patch(
+            "aider.z.login_screen.prompt_auth_mode_choice", return_value="router"
+        ), patch(
             "aider.z.cli._complete_mode_setup", return_value=True
         ) as complete:
-            os.environ.pop("Z_ALLOW_BYOK", None)
             code = cmd_reset(io)
         self.assertEqual(code, 0)
         clear.assert_called_once_with(clear_keys=True)
@@ -231,13 +240,11 @@ class ByokCommandTest(unittest.TestCase):
     def setUp(self):
         self._dir = Path(tempfile.mkdtemp(prefix="z_byok_cmd_"))
         os.environ["Z_HOME"] = str(self._dir)
-        self._prev_allow = os.environ.pop("Z_ALLOW_BYOK", None)
         self._prev_anthropic = os.environ.pop("ANTHROPIC_API_KEY", None)
         self._prev_openai = os.environ.pop("OPENAI_API_KEY", None)
 
     def tearDown(self):
         for var, val in (
-            ("Z_ALLOW_BYOK", self._prev_allow),
             ("ANTHROPIC_API_KEY", self._prev_anthropic),
             ("OPENAI_API_KEY", self._prev_openai),
         ):
@@ -268,22 +275,12 @@ class ByokCommandTest(unittest.TestCase):
         self.assertIn("openai", joined)
         self.assertIn("route", joined.lower())
 
-    def test_add_requires_byok_allowed(self):
-        from aider.z.cli import cmd_byok
-        from types import SimpleNamespace
-
-        io = FakeIO()
-        code = cmd_byok(io, SimpleNamespace(byok_command="add"))
-        self.assertEqual(code, 1)
-        self.assertTrue(any("Z_ALLOW_BYOK" in e for e in io.errors))
-
     def test_add_does_not_change_selected_model(self):
         """Adding a second provider key must not touch config.selected_model —
         only the very first BYOK pick does that."""
         from aider.z.cli import cmd_byok
         from types import SimpleNamespace
 
-        os.environ["Z_ALLOW_BYOK"] = "1"
         save_auth_mode("byok")
         save_selected_model("claude-sonnet-5")
 
@@ -431,33 +428,22 @@ class StartAgentInjectTest(unittest.TestCase):
 
 
 class AuthModeChoiceTest(unittest.TestCase):
-    def test_plain_auth_mode_choice_router_only_by_default(self):
+    def test_plain_auth_mode_choice_always_offers_byok_and_router(self):
         from aider.z.login_screen import prompt_auth_mode_choice_plain
 
-        with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("Z_ALLOW_BYOK", None)
-            # Single option — no menu, returns router immediately
-            self.assertEqual(prompt_auth_mode_choice_plain(FakeIO()), "router")
-
-    def test_plain_auth_mode_choice_with_byok_escape(self):
-        from aider.z.login_screen import prompt_auth_mode_choice_plain
-
-        with patch.dict(os.environ, {"Z_ALLOW_BYOK": "1"}, clear=False):
-            io = FakeIO(answers=["1"])
-            self.assertEqual(prompt_auth_mode_choice_plain(io), "byok")
-            io = FakeIO(answers=["2"])
-            self.assertEqual(prompt_auth_mode_choice_plain(io), "router")
-            io = FakeIO(answers=["q"])
-            self.assertIsNone(prompt_auth_mode_choice_plain(io))
+        io = FakeIO(answers=["1"])
+        self.assertEqual(prompt_auth_mode_choice_plain(io), "byok")
+        io = FakeIO(answers=["2"])
+        self.assertEqual(prompt_auth_mode_choice_plain(io), "router")
+        io = FakeIO(answers=["q"])
+        self.assertIsNone(prompt_auth_mode_choice_plain(io))
 
     def test_mode_labels_are_post_auth_not_login(self):
-        from aider.z.login_screen import AUTH_MODE_OPTIONS_WITH_BYOK, auth_mode_options
+        from aider.z.login_screen import AUTH_MODE_OPTIONS, auth_mode_options
 
-        with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("Z_ALLOW_BYOK", None)
-            opts = auth_mode_options()
-            self.assertEqual([k for k, _ in opts], ["router"])
-        labels = " ".join(label for _k, label in AUTH_MODE_OPTIONS_WITH_BYOK).lower()
+        opts = auth_mode_options()
+        self.assertEqual([k for k, _ in opts], ["byok", "router"])
+        labels = " ".join(label for _k, label in AUTH_MODE_OPTIONS).lower()
         self.assertIn("api key", labels)
         self.assertIn("router", labels)
         self.assertNotIn("sign up", labels)
@@ -473,9 +459,9 @@ class AuthModeChoiceTest(unittest.TestCase):
 
 
 class RememberedModeTest(unittest.TestCase):
-    def test_signed_in_with_saved_byok_skips_all_prompts_when_allowed(self):
+    def test_signed_in_with_saved_byok_skips_all_prompts(self):
         io = FakeIO()
-        with patch.dict(os.environ, {"Z_ALLOW_BYOK": "1"}, clear=False), patch(
+        with patch(
             "aider.z.auth.current_session", return_value=_creds()
         ), patch("aider.z.auth.open_web_login") as login, patch(
             "aider.z.onboarding.load_config",
@@ -498,25 +484,9 @@ class RememberedModeTest(unittest.TestCase):
         byok.assert_not_called()
         router_model.assert_not_called()
 
-    def test_legacy_byok_migrates_to_router_without_escape(self):
-        io = FakeIO()
-        with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("Z_ALLOW_BYOK", None)
-            with patch("aider.z.auth.current_session", return_value=_creds()), patch(
-                "aider.z.onboarding.load_config",
-                return_value=OnboardingConfig(
-                    auth_mode="byok", selected_model="claude-sonnet-5"
-                ),
-            ), patch(
-                "aider.z.cli._complete_mode_setup", return_value=True
-            ) as complete:
-                ok = ensure_agent_session(io)
-        self.assertTrue(ok)
-        complete.assert_called_once_with(io, "router")
-
     def test_byok_missing_keys_reprompts_setup(self):
         io = FakeIO(answers=["sk-ant-test"])
-        with patch.dict(os.environ, {"Z_ALLOW_BYOK": "1"}, clear=False), patch(
+        with patch(
             "aider.z.auth.current_session", return_value=_creds()
         ), patch(
             "aider.z.onboarding.load_config",
@@ -538,7 +508,7 @@ class RememberedModeTest(unittest.TestCase):
 
     def test_byok_missing_keys_without_saved_model_opens_catalog(self):
         io = FakeIO()
-        with patch.dict(os.environ, {"Z_ALLOW_BYOK": "1"}, clear=False), patch(
+        with patch(
             "aider.z.auth.current_session", return_value=_creds()
         ), patch(
             "aider.z.onboarding.load_config",
@@ -573,13 +543,16 @@ class RouterModeFlowTest(unittest.TestCase):
             order.append("login")
             return _creds()
 
+        def fake_mode(_io, **_k):
+            order.append("mode")
+            return "router"
+
         def fake_router_model(_io, **_k):
             order.append("router_model")
             return "claude-sonnet-5"
 
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("Z_SKIP_ACCOUNT", None)
-            os.environ.pop("Z_ALLOW_BYOK", None)
             with patch("aider.z.auth.current_session", return_value=None):
                 with patch("aider.z.auth.open_web_login", side_effect=fake_login):
                     with patch(
@@ -587,23 +560,27 @@ class RouterModeFlowTest(unittest.TestCase):
                         return_value=OnboardingConfig(),
                     ):
                         with patch(
-                            "aider.z.login_screen.prompt_router_model_choice",
-                            side_effect=fake_router_model,
+                            "aider.z.login_screen.prompt_auth_mode_choice",
+                            side_effect=fake_mode,
                         ):
                             with patch(
-                                "aider.z.cli._ensure_model_keys", return_value=True
+                                "aider.z.login_screen.prompt_router_model_choice",
+                                side_effect=fake_router_model,
                             ):
                                 with patch(
-                                    "aider.z.onboarding.save_auth_mode"
-                                ) as save_mode:
+                                    "aider.z.cli._ensure_model_keys", return_value=True
+                                ):
                                     with patch(
-                                        "aider.z.onboarding.save_selected_model"
-                                    ) as save_model:
-                                        ok = ensure_agent_session(io)
+                                        "aider.z.onboarding.save_auth_mode"
+                                    ) as save_mode:
+                                        with patch(
+                                            "aider.z.onboarding.save_selected_model"
+                                        ) as save_model:
+                                            ok = ensure_agent_session(io)
 
         self.assertTrue(ok)
-        # V1: no BYOK vs router menu — login then preferred router model
-        self.assertEqual(order, ["login", "router_model"])
+        # Mode choice always shows now — login, mode pick, then preferred model
+        self.assertEqual(order, ["login", "mode", "router_model"])
         save_mode.assert_called_with("router")
         save_model.assert_called_with("claude-sonnet-5")
 
