@@ -35,6 +35,8 @@ Users need a **dense, glanceable status strip** under the brand / above the tran
 - Green/red semantic diffs as primary chrome — `+N` and `−N` are both orange (see §4 / §5).
 - Blocking the composer with a modal “thinking” overlay.
 
+**Companion (planned):** inline **State indicator** (“Contemplating” sunburst) + collapsed **Turn trace** — see `docs/app/z-agent-state-trace-plan.md`. Those live in the transcript; this strip stays the macro brand-adjacent status.
+
 ---
 
 ## 3. Placement
