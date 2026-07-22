@@ -216,6 +216,51 @@ class ThreadTurnRunner:
         except Exception:
             pass
 
+        self._install_activity_hooks()
+        try:
+            mid = getattr(getattr(self._coder, "main_model", None), "name", None)
+            if mid:
+                self._io.activity.set_model(str(mid))
+        except Exception:
+            pass
+
+    def _install_activity_hooks(self) -> None:
+        """Wrap apply_updates so file + line deltas feed ``turn/activity``."""
+        assert self._coder is not None and self._io is not None
+        if getattr(self._coder, "_z_activity_hooks", False):
+            return
+        from aider.z.app_server.activity import line_delta_from_edit
+
+        coder = self._coder
+        io = self._io
+        orig = coder.apply_updates
+
+        def apply_with_activity():
+            lines_add = 0
+            lines_rem = 0
+            try:
+                edits = coder.get_edits()
+                for edit in edits or ():
+                    if isinstance(edit, (list, tuple)) and len(edit) >= 3:
+                        a, r = line_delta_from_edit(str(edit[1]), str(edit[2]))
+                        lines_add += a
+                        lines_rem += r
+            except Exception:
+                pass
+            edited = orig()
+            try:
+                if edited:
+                    io.activity.note_edits(
+                        edited, lines_added=lines_add, lines_removed=lines_rem
+                    )
+                    io.activity.flush(force=True)
+            except Exception:
+                pass
+            return edited
+
+        coder.apply_updates = apply_with_activity  # type: ignore[method-assign]
+        coder._z_activity_hooks = True
+
     def _run_turn_chain(self, turn_id: str, first_text: str) -> None:
         self._ensure_coder()
         assert self._io is not None and self._coder is not None
@@ -223,6 +268,15 @@ class ThreadTurnRunner:
         self._io.clear_cancelled()
         self._busy = True
         self._current_turn_id = turn_id
+        try:
+            self._io.activity.reset()
+            mid = getattr(getattr(self._coder, "main_model", None), "name", None)
+            if mid:
+                self._io.activity.set_model(str(mid))
+            self._io.activity.set_phase("thinking")
+            self._io.activity.flush(force=True)
+        except Exception:
+            pass
         self._notify(
             "turn/started",
             {

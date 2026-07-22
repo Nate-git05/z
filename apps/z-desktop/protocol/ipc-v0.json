@@ -254,6 +254,33 @@
       "label": "string",
       "queueLen": "number"
     },
+    "turn/activity": {
+      "turnId": "string",
+      "editingFiles": "number",
+      "exploredFiles": "number",
+      "searches": "number",
+      "commands": "number",
+      "mcpCalls": "number",
+      "linesAdded": "number",
+      "linesRemoved": "number",
+      "modelId": { "optional": true },
+      "phase": {
+        "optional": true,
+        "enum": [
+          "idle",
+          "thinking",
+          "planning",
+          "editing",
+          "searching",
+          "running",
+          "mcp",
+          "choosing_model",
+          "waiting",
+          "queued"
+        ]
+      },
+      "fileNames": { "optional": true }
+    },
     "item/agentMessage/delta": { "turnId": "string", "text": "string" },
     "turn/log": { "turnId": "string", "level": "info|warning|error", "text": "string" },
     "turn/queued": {

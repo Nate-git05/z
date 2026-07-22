@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-22  
 **Branch:** `cursor/z-activity-strip-design-313a`  
-**Status:** Design only — not implemented  
+**Status:** S0+S1 implemented (`cursor/z-activity-strip-impl-313a`)  
 **Surface:** Center Chat (Z Editor) + optional CLI parity later  
 **Look:** Z Terminal — near-black `#0A0A0A`, text `#F5F5F5`, accent `#C96A2B` / bright `#E07830`, muted `#D8D8D8`  
 **Inspiration:** Compact Cursor-style activity line (editing / exploring / searches / commands + +/- deltas + “Planning next moves”)

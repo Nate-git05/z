@@ -8,6 +8,7 @@ import uuid
 from typing import Any, Callable, Optional
 
 from aider.io import InputOutput
+from aider.z.app_server.activity import TurnActivityTracker, map_phase_id
 from aider.z.turn_ux import TurnOrchestrator, TurnState, attach_orchestrator_to_io
 
 NotifyFn = Callable[[str, dict], None]
@@ -30,6 +31,7 @@ class AppServerIO(InputOutput):
         self._pending_request_id: Optional[str] = None
         self._cancel = threading.Event()
         self.turn_orchestrator: Optional[TurnOrchestrator] = None
+        self.activity = TurnActivityTracker(notify, turn_id_provider)
         super().__init__(
             pretty=False,
             fancy_input=False,
@@ -89,6 +91,18 @@ class AppServerIO(InputOutput):
             "label": orch.status_label(phase) if orch else phase,
         }
         self._notify("turn/busy", params)
+        try:
+            st = state.value if isinstance(state, TurnState) else str(state)
+            if st == "idle":
+                self.activity.set_phase("idle")
+            elif st == "waiting_input":
+                self.activity.set_phase("waiting")
+            else:
+                label = params.get("label") or phase
+                self.activity.set_phase(map_phase_id(str(label or phase or "")) or "thinking")
+            self.activity.flush(force=True)
+        except Exception:
+            pass
 
     def _on_queue_change(self, n: int) -> None:
         turn_id = self._turn_id_provider()
@@ -126,6 +140,11 @@ class AppServerIO(InputOutput):
             orch.enter_busy("Waiting for model…")
         except Exception:
             pass
+        try:
+            self.activity.set_phase("thinking")
+            self.activity.flush(force=True)
+        except Exception:
+            pass
 
     def emit_llm_delta(self, text: str) -> None:
         if not text:
@@ -152,6 +171,14 @@ class AppServerIO(InputOutput):
                         "text": text,
                     },
                 )
+            except Exception:
+                pass
+        if text and not log_only:
+            try:
+                act = getattr(self, "activity", None)
+                if act is not None:
+                    act.observe_tool_output(text)
+                    act.maybe_flush()
             except Exception:
                 pass
         return super().tool_output(

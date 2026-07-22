@@ -32,6 +32,11 @@ export function zThemeCss(): string {
   --z-accent-dim: ${Z_COLORS.accentDim};
   --z-danger: ${Z_COLORS.danger};
   --z-ok: ${Z_COLORS.ok};
+  --z-strip-fg: ${Z_COLORS.textMuted};
+  --z-strip-verb: ${Z_COLORS.text};
+  --z-strip-phase: ${Z_COLORS.accent};
+  --z-delta-add: ${Z_COLORS.accentBright};
+  --z-delta-del: ${Z_COLORS.accent};
   color-scheme: dark;
 }
 html, body {

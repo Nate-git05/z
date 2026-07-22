@@ -32,12 +32,93 @@ interface QueueState {
   preview: string | null;
 }
 
+type ActivityPhase =
+  | "idle"
+  | "thinking"
+  | "planning"
+  | "editing"
+  | "searching"
+  | "running"
+  | "mcp"
+  | "choosing_model"
+  | "waiting"
+  | "queued";
+
+interface ActivityStripState {
+  phase: ActivityPhase;
+  modelId?: string | null;
+  editingFiles: number;
+  exploredFiles: number;
+  searches: number;
+  commands: number;
+  mcpCalls: number;
+  linesAdded: number;
+  linesRemoved: number;
+  fileNames?: string[];
+  /** True while a turn is active (or settling). */
+  live: boolean;
+}
+
+function emptyActivity(): ActivityStripState {
+  return {
+    phase: "idle",
+    modelId: null,
+    editingFiles: 0,
+    exploredFiles: 0,
+    searches: 0,
+    commands: 0,
+    mcpCalls: 0,
+    linesAdded: 0,
+    linesRemoved: 0,
+    fileNames: [],
+    live: false,
+  };
+}
+
+function mapBusyToPhase(label: string, state?: string): ActivityPhase {
+  const s = (state || "").toLowerCase();
+  if (s === "waiting_input") {
+    return "waiting";
+  }
+  const t = (label || "").toLowerCase();
+  if (!t) {
+    return "thinking";
+  }
+  if (t.includes("choosing model") || t.includes("escalat")) {
+    return "choosing_model";
+  }
+  if (t.includes("planning") || t.includes("skill") || t.includes("explore")) {
+    return "planning";
+  }
+  if (t.includes("appl") || t.includes("edit")) {
+    return "editing";
+  }
+  if (t.includes("search") || t.includes("grep")) {
+    return "searching";
+  }
+  if (t.includes("running") || t.includes("shell") || t.includes("command")) {
+    return "running";
+  }
+  if (t.includes("mcp") || t.includes("tool")) {
+    return "mcp";
+  }
+  if (t.includes("waiting")) {
+    return "waiting";
+  }
+  if (t.includes("queued")) {
+    return "queued";
+  }
+  return "thinking";
+}
+
 export class MainChatPanel {
   public static readonly viewType = "z.chatPanel";
 
   private panel: vscode.WebviewPanel | undefined;
   private messages: ChatMessage[] = [];
   private busyLabel = "";
+  private activity: ActivityStripState = emptyActivity();
+  private activityClearTimer: ReturnType<typeof setTimeout> | null = null;
   private waiting: WaitingPrompt | null = null;
   private streamingAssistantId: string | null = null;
   private threadId = "default";
@@ -162,6 +243,7 @@ export class MainChatPanel {
       }
       this.waiting = null;
       this.busyLabel = "";
+      this.resetActivityImmediate();
       this.postState();
       return;
     }
@@ -170,9 +252,42 @@ export class MainChatPanel {
       this.streamingAssistantId = null;
       this.waiting = null;
       this.busyLabel = "";
+      this.resetActivityImmediate();
       this.queue = { queueLen: 0, items: [], preview: null };
       this.postState();
     }
+  }
+
+  private resetActivityImmediate(): void {
+    if (this.activityClearTimer) {
+      clearTimeout(this.activityClearTimer);
+      this.activityClearTimer = null;
+    }
+    this.activity = emptyActivity();
+  }
+
+  private markActivityLive(phase?: ActivityPhase): void {
+    if (this.activityClearTimer) {
+      clearTimeout(this.activityClearTimer);
+      this.activityClearTimer = null;
+    }
+    this.activity.live = true;
+    if (phase) {
+      this.activity.phase = phase;
+    }
+  }
+
+  private settleActivitySoon(): void {
+    this.activity.live = false;
+    this.activity.phase = "idle";
+    if (this.activityClearTimer) {
+      clearTimeout(this.activityClearTimer);
+    }
+    this.activityClearTimer = setTimeout(() => {
+      this.activityClearTimer = null;
+      this.activity = emptyActivity();
+      this.postState();
+    }, 1500);
   }
 
   private async sendPrompt(text: string): Promise<void> {
@@ -220,11 +335,14 @@ export class MainChatPanel {
       });
       this.streamingAssistantId = null;
       this.busyLabel = "Working…";
+      this.activity = emptyActivity();
+      this.markActivityLive("thinking");
       this.queue = { queueLen: 0, items: [], preview: null };
       this.postState();
     } catch (err) {
       if (!agentBusy) {
         this.busyLabel = "";
+        this.resetActivityImmediate();
       }
       this.messages.push({
         id: `e-${Date.now()}`,
@@ -261,15 +379,72 @@ export class MainChatPanel {
       const state = String(params.state || "");
       if (state === "idle") {
         this.busyLabel = "";
+        if (this.activity.live) {
+          this.settleActivitySoon();
+        }
       } else if (state === "waiting_input") {
         this.busyLabel = label || "Waiting for your reply…";
+        this.markActivityLive("waiting");
       } else {
         this.busyLabel = label || "Working…";
+        this.markActivityLive(mapBusyToPhase(label, state));
+        if (this.queue.queueLen > 0) {
+          this.activity.phase = "queued";
+        }
       }
       if (typeof params.queueLen === "number" && params.queueLen === 0) {
         this.queue = { queueLen: 0, items: [], preview: null };
       }
       this.postState();
+      return;
+    }
+    if (method === "turn/activity") {
+      this.markActivityLive();
+      const n = (k: string) =>
+        typeof params[k] === "number" && Number.isFinite(params[k] as number)
+          ? Math.max(0, Math.floor(params[k] as number))
+          : undefined;
+      const editingFiles = n("editingFiles");
+      const exploredFiles = n("exploredFiles");
+      const searches = n("searches");
+      const commands = n("commands");
+      const mcpCalls = n("mcpCalls");
+      const linesAdded = n("linesAdded");
+      const linesRemoved = n("linesRemoved");
+      if (editingFiles != null) {
+        this.activity.editingFiles = editingFiles;
+      }
+      if (exploredFiles != null) {
+        this.activity.exploredFiles = exploredFiles;
+      }
+      if (searches != null) {
+        this.activity.searches = searches;
+      }
+      if (commands != null) {
+        this.activity.commands = commands;
+      }
+      if (mcpCalls != null) {
+        this.activity.mcpCalls = mcpCalls;
+      }
+      if (linesAdded != null) {
+        this.activity.linesAdded = linesAdded;
+      }
+      if (linesRemoved != null) {
+        this.activity.linesRemoved = linesRemoved;
+      }
+      if (params.modelId != null) {
+        this.activity.modelId = String(params.modelId || "") || null;
+      }
+      if (params.phase != null && String(params.phase)) {
+        const p = String(params.phase) as ActivityPhase;
+        if (p !== "idle") {
+          this.activity.phase = p;
+        }
+      }
+      if (Array.isArray(params.fileNames)) {
+        this.activity.fileNames = params.fileNames.map((x) => String(x));
+      }
+      this.postStateThrottled();
       return;
     }
     if (method === "turn/queued") {
@@ -289,6 +464,11 @@ export class MainChatPanel {
         });
         this.streamingAssistantId = null;
         this.busyLabel = "Working…";
+        this.activity = emptyActivity();
+        this.markActivityLive("thinking");
+      } else {
+        this.activity = emptyActivity();
+        this.markActivityLive("thinking");
       }
       this.postStateThrottled();
       return;
@@ -325,6 +505,9 @@ export class MainChatPanel {
         default: String(params.default || ""),
       };
       this.busyLabel = `Waiting — ${this.waiting.kind}`;
+      this.markActivityLive(
+        this.waiting.kind === "plan_confirm" ? "planning" : "waiting"
+      );
       this.postState();
       return;
     }
@@ -355,6 +538,7 @@ export class MainChatPanel {
           text: "Turn interrupted.",
         });
       }
+      this.settleActivitySoon();
       this.postState();
       return;
     }
@@ -366,6 +550,7 @@ export class MainChatPanel {
         text: friendlyError(String(params.message || "turn failed")),
       });
       this.busyLabel = "";
+      this.settleActivitySoon();
       this.postState();
       return;
     }
@@ -378,6 +563,7 @@ export class MainChatPanel {
         kind: "tool",
         text: `▸ ${server}.${tool}…`,
       });
+      this.markActivityLive("mcp");
       this.postStateThrottled();
       return;
     }
@@ -427,6 +613,7 @@ export class MainChatPanel {
       type: "state",
       connection: this.manager.connectionState,
       busyLabel: this.busyLabel,
+      activity: this.activity,
       waiting: this.waiting,
       messages: this.messages,
       queue: this.queue,
@@ -457,10 +644,49 @@ export class MainChatPanel {
     font-size: 28px; font-weight: 700; letter-spacing: -0.03em;
     color: var(--z-accent-bright);
   }
-  #status {
-    padding: 0 20px 12px; font-size: 12px; color: var(--z-muted); min-height: 16px;
+  #activity {
+    padding: 0 20px 10px;
+    min-height: 2.6em;
+    font-size: 12px;
+    color: var(--z-strip-fg);
   }
-  #status.busy { color: var(--z-accent); }
+  #activity .line1 {
+    color: var(--z-strip-fg);
+    line-height: 1.35;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0 10px;
+  }
+  #activity .line1 .summary { flex: 1 1 auto; min-width: 12em; }
+  #activity .line1 .verb { color: var(--z-strip-verb); font-weight: 600; }
+  #activity .deltas {
+    display: inline-flex;
+    gap: 8px;
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+  #activity .delta-add { color: var(--z-delta-add); }
+  #activity .delta-del { color: var(--z-delta-del); }
+  #activity .line2 {
+    color: var(--z-strip-phase);
+    font-weight: 500;
+    margin-top: 2px;
+    line-height: 1.35;
+  }
+  #activity.busy .line2 {
+    animation: z-phase-pulse 1.2s ease-in-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #activity.busy .line2 { animation: none; }
+  }
+  @keyframes z-phase-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.55; }
+  }
+  #activity.idle { color: var(--z-muted); }
+  #activity.idle .line2 { display: none; }
   #msgs {
     flex: 1; overflow-y: auto; padding: 8px 20px 16px;
   }
@@ -523,7 +749,10 @@ export class MainChatPanel {
 <body>
   <div id="app">
     <div id="brand">Z</div>
-    <div id="status">Ready</div>
+    <div id="activity" class="idle" aria-live="polite">
+      <div class="line1"><span class="summary">Agent ready — you prompt, Z programs</span></div>
+      <div class="line2"></div>
+    </div>
     <div id="banner"><span id="bannerText"></span><button class="secondary" id="reconnect">Reconnect</button></div>
     <div id="msgs"></div>
     <div id="waiting">
@@ -555,7 +784,7 @@ export class MainChatPanel {
   <script>
     const vscode = acquireVsCodeApi();
     const msgsEl = document.getElementById('msgs');
-    const statusEl = document.getElementById('status');
+    const activityEl = document.getElementById('activity');
     const waitingEl = document.getElementById('waiting');
     const queueEl = document.getElementById('queue');
     const input = document.getElementById('input');
@@ -567,6 +796,118 @@ export class MainChatPanel {
         .replace(/</g,'&lt;')
         .replace(/>/g,'&gt;')
         .replace(/"/g,'&quot;');
+    }
+
+    function plural(n, one, many) {
+      return n === 1 ? one : many;
+    }
+
+    function shortModel(id) {
+      if (!id) return '';
+      const s = String(id);
+      const slash = s.lastIndexOf('/');
+      return slash >= 0 ? s.slice(slash + 1) : s;
+    }
+
+    const PHASE_COPY = {
+      thinking: 'Thinking',
+      planning: 'Planning next moves',
+      editing: 'Applying edits',
+      searching: 'Searching',
+      running: 'Running commands',
+      mcp: 'Using tools',
+      choosing_model: 'Choosing model',
+      waiting: 'Waiting for you',
+      queued: 'Queued follow-up',
+      idle: ''
+    };
+
+    function buildSummary(act) {
+      const parts = [];
+      if (act.editingFiles > 0) {
+        parts.push('<span class="verb">Editing</span> ' + act.editingFiles + ' ' + plural(act.editingFiles, 'file', 'files'));
+      }
+      if (act.exploredFiles > 0) {
+        parts.push('explored ' + act.exploredFiles + ' ' + plural(act.exploredFiles, 'file', 'files'));
+      }
+      if (act.searches > 0) {
+        parts.push(act.searches + ' ' + plural(act.searches, 'search', 'searches'));
+      }
+      if (act.commands > 0) {
+        parts.push('ran ' + act.commands + ' ' + plural(act.commands, 'command', 'commands'));
+      }
+      if (act.mcpCalls > 0) {
+        parts.push(act.mcpCalls + ' MCP ' + plural(act.mcpCalls, 'tool', 'tools'));
+      }
+      if (act.phase === 'choosing_model') {
+        parts.push('<span class="verb">Choosing model</span>');
+      } else if (act.modelId) {
+        parts.push('Using ' + escapeHtml(shortModel(act.modelId)));
+      }
+      // Drop least-important tokens if too long (explored → searches → commands).
+      let joined = parts.join(', ');
+      const dropOrder = ['explored ', ' search', 'ran ', ' MCP '];
+      let guard = 0;
+      while (joined.replace(/<[^>]+>/g, '').length > 90 && parts.length > 1 && guard < 8) {
+        let dropped = false;
+        for (const key of dropOrder) {
+          const idx = parts.findIndex(p => p.replace(/<[^>]+>/g, '').includes(key.trim()) || p.includes(key));
+          if (idx >= 0 && !(parts[idx].includes('Editing'))) {
+            parts.splice(idx, 1);
+            dropped = true;
+            break;
+          }
+        }
+        if (!dropped) break;
+        joined = parts.join(', ');
+        guard++;
+      }
+      return joined;
+    }
+
+    function renderActivity(act, conn, busyLabel) {
+      const live = act && act.live;
+      const phase = (act && act.phase) || 'idle';
+      if (!live && phase === 'idle') {
+        activityEl.className = 'idle';
+        activityEl.innerHTML =
+          '<div class="line1"><span class="summary">' +
+          (conn === 'connected'
+            ? 'Agent ready — you prompt, Z programs'
+            : ('Z · ' + escapeHtml(conn || 'disconnected'))) +
+          '</span></div><div class="line2"></div>';
+        return;
+      }
+      activityEl.className = 'busy';
+      const summary = buildSummary(act || {});
+      let line1 = summary;
+      if (!line1 && busyLabel) {
+        line1 = escapeHtml(busyLabel);
+      }
+      if (!line1 && act && act.modelId) {
+        line1 = 'Using ' + escapeHtml(shortModel(act.modelId));
+      }
+      const add = (act && act.linesAdded) || 0;
+      const del = (act && act.linesRemoved) || 0;
+      let deltas = '';
+      if (add > 0 || del > 0) {
+        deltas = '<span class="deltas">';
+        if (add > 0) deltas += '<span class="delta-add">+' + add + '</span>';
+        if (del > 0) deltas += '<span class="delta-del">−' + del + '</span>';
+        deltas += '</span>';
+      }
+      const phaseCopy = PHASE_COPY[phase] || (busyLabel ? escapeHtml(busyLabel) : 'Thinking');
+      const a11yDeltas =
+        (add > 0 || del > 0)
+          ? (' plus ' + add + ', minus ' + del)
+          : '';
+      activityEl.innerHTML =
+        '<div class="line1">' +
+          '<span class="summary">' + (line1 || '') + '</span>' +
+          deltas +
+        '</div>' +
+        '<div class="line2">' + phaseCopy + '</div>';
+      activityEl.setAttribute('aria-label', (line1.replace(/<[^>]+>/g, '') || phaseCopy) + a11yDeltas);
     }
 
     function renderMessages(messages) {
@@ -630,10 +971,7 @@ export class MainChatPanel {
       if (data.type !== 'state') return;
       const conn = data.connection || 'disconnected';
       const busy = data.busyLabel || '';
-      statusEl.textContent = busy
-        ? busy
-        : (conn === 'connected' ? 'Agent ready — you prompt, Z programs' : 'Z · ' + conn);
-      statusEl.className = busy ? 'busy' : '';
+      renderActivity(data.activity || { live: false, phase: 'idle' }, conn, busy);
       const banner = document.getElementById('banner');
       const bannerText = document.getElementById('bannerText');
       if (data.banner) {
