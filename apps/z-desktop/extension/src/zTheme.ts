@@ -1,20 +1,21 @@
 /**
- * Z terminal palette — same tokens as aider/z/theme.py (orange + near-black).
- * Injected into every Z webview so Chat / Uncertainty / Skills / Commit Gate match the CLI.
+ * Z soft terminal palette — comfortable layered blacks + soft burnt orange.
+ * Shared by Chat / Uncertainty / Skills / MCP / Commit Gate / Profile webviews.
+ * Aligns with aider/z/theme.py.
  */
 
 export const Z_COLORS = {
-  background: "#0A0A0A",
-  surface: "#121212",
-  surfaceRaised: "#1A1A1A",
-  border: "#2A2A2A",
-  text: "#F5F5F5",
-  textMuted: "#D8D8D8",
-  accent: "#C96A2B",
-  accentBright: "#E07830",
-  accentDim: "#8A4A1E",
-  danger: "#E07830", // stay in-palette; bright orange for high risk
-  ok: "#D8D8D8",
+  background: "#141414",
+  surface: "#1C1C1C",
+  surfaceRaised: "#262626",
+  border: "#333333",
+  text: "#EDE8E3",
+  textMuted: "#A39E98",
+  accent: "#D4894A",
+  accentBright: "#E0A06A",
+  accentDim: "#8F5A32",
+  danger: "#E0A06A", // stay in soft-orange family
+  ok: "#A39E98",
 } as const;
 
 /** Shared CSS custom properties + base resets for Z webviews. */
@@ -37,6 +38,8 @@ export function zThemeCss(): string {
   --z-strip-phase: ${Z_COLORS.accent};
   --z-delta-add: ${Z_COLORS.accentBright};
   --z-delta-del: ${Z_COLORS.accent};
+  --z-radius: 14px;
+  --z-radius-sm: 10px;
   color-scheme: dark;
 }
 html, body {
@@ -47,9 +50,11 @@ button {
   background: var(--z-accent);
   color: var(--z-bg);
   border: none;
-  padding: 6px 12px;
+  padding: 8px 14px;
   cursor: pointer;
   font-weight: 600;
+  border-radius: var(--z-radius-sm);
+  transition: background 0.15s ease, opacity 0.15s ease;
 }
 button:hover { background: var(--z-accent-bright); }
 button.secondary {
@@ -61,16 +66,19 @@ button.secondary {
 button.secondary:hover {
   border-color: var(--z-accent);
   color: var(--z-accent-bright);
+  background: rgba(212, 137, 74, 0.08);
 }
 button:disabled { opacity: 0.45; cursor: default; }
 textarea, input, select {
   background: var(--z-raised);
   color: var(--z-text);
   border: 1px solid var(--z-border);
+  border-radius: var(--z-radius-sm);
 }
 textarea:focus, input:focus, select:focus {
-  outline: 1px solid var(--z-accent);
+  outline: none;
   border-color: var(--z-accent);
+  box-shadow: 0 0 0 1px rgba(212, 137, 74, 0.35);
 }
 a { color: var(--z-accent-bright); }
 `.trim();

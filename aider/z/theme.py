@@ -1,33 +1,33 @@
-"""Z color palette — black / white + burnt-orange accent (high contrast).
+"""Z color palette — soft layered black + soft burnt-orange accent.
 
 Semantic tiers (P0 terminal UX):
-  - Status / routine tool output → off-white (readable, not a warning)
-  - Warnings + escalation borders → burnt orange
+  - Status / routine tool output → warm muted (readable, not a warning)
+  - Warnings + escalation borders → soft burnt orange
   - Spinner / brand progress labels → orange (TEXT_DIM)
-  - No muddy mid-greys, no purple in code highlighting
+  - Comfortable blacks (not harsh pure black); no purple in code highlighting
 """
 
 from __future__ import annotations
 
 import os
 
-# Near-black background (hint for terminals that support it; most CLIs inherit bg)
-BACKGROUND = "#0A0A0A"
+# Comfortable deep black (layered UI uses surface tones in the editor)
+BACKGROUND = "#141414"
 
-# Primary readable text — pure light
-TEXT = "#F5F5F5"
-# Branded progress (mascot spinner labels) — orange
-TEXT_DIM = "#C96A2B"
-# Secondary / panel subtitle — off-white status channel
-TEXT_MUTED = "#D8D8D8"
+# Primary readable text — warm off-white
+TEXT = "#EDE8E3"
+# Branded progress (mascot spinner labels) — soft orange
+TEXT_DIM = "#D4894A"
+# Secondary / panel subtitle — muted warm status channel
+TEXT_MUTED = "#A39E98"
 
 # Single accent — brand, warnings, escalation borders, uncertainty flags
-ACCENT = "#C96A2B"
-ACCENT_BRIGHT = "#E07830"  # slightly brighter for high-risk / active states
-ACCENT_DIM = "#C96A2B"
+ACCENT = "#D4894A"
+ACCENT_BRIGHT = "#E0A06A"  # slightly brighter for high-risk / active states
+ACCENT_DIM = "#8F5A32"
 
 # Status channel — routine tool_output (not a warning)
-STATUS = "#D8D8D8"
+STATUS = "#A39E98"
 
 
 def _status_color() -> str:
@@ -92,7 +92,7 @@ try:
 
         name = "z-terminal"
         background_color = BACKGROUND
-        highlight_color = "#1A1A1A"
+        highlight_color = "#262626"
         styles = {
             Token: TEXT,
             TokText: TEXT,

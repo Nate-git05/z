@@ -4,7 +4,7 @@
 **Branch:** `cursor/z-activity-strip-design-313a`  
 **Status:** S0+S1 implemented (`cursor/z-activity-strip-impl-313a`)  
 **Surface:** Center Chat (Z Editor) + optional CLI parity later  
-**Look:** Z Terminal — near-black `#0A0A0A`, text `#F5F5F5`, accent `#C96A2B` / bright `#E07830`, muted `#D8D8D8`  
+**Look:** Z Soft Terminal — comfortable black `#141414`, text `#EDE8E3`, soft accent `#D4894A` / bright `#E0A06A`, muted `#A39E98` (see `z-soft-ui-design.md`)  
 **Inspiration:** Compact Cursor-style activity line (editing / exploring / searches / commands + +/- deltas + “Planning next moves”)
 
 ---
@@ -83,8 +83,8 @@ Pattern (reference → Z):
 
 | Badge | Meaning | Z color |
 |-------|---------|---------|
-| `+N` | Lines added this turn | `#E07830` (bright orange) |
-| `−N` | Lines removed this turn | `#C96A2B` (burnt orange) |
+| `+N` | Lines added this turn | `#E0A06A` (soft bright orange) |
+| `−N` | Lines removed this turn | `#D4894A` (soft burnt orange) |
 
 **Hard rule:** additions **and** deletions are both orange — never green for `+`, never red/coral for `−`. Hierarchy is shade only (brighter orange = add, deeper orange = delete), not traffic-light semantics.
 
