@@ -32,7 +32,7 @@ Users need a **dense, glanceable status strip** under the brand / above the tran
 ### Non-goals
 
 - Full timeline / tool call tree (Commit Gate / Uncertainty stay separate).
-- Green/red semantic diffs as primary chrome (Z uses orange + muted; see §5).
+- Green/red semantic diffs as primary chrome — `+N` and `−N` are both orange (see §4 / §5).
 - Blocking the composer with a modal “thinking” overlay.
 
 ---
@@ -83,10 +83,10 @@ Pattern (reference → Z):
 
 | Badge | Meaning | Z color |
 |-------|---------|---------|
-| `+N` | Lines added this turn | `#E07830` (accent bright) |
-| `−N` | Lines removed this turn | `#C96A2B` at ~70% opacity (same family, not traffic-light red) |
+| `+N` | Lines added this turn | `#E07830` (bright orange) |
+| `−N` | Lines removed this turn | `#C96A2B` (burnt orange) |
 
-No green. No system red. Hierarchy = bright orange (add) vs dimmer orange (delete).
+**Hard rule:** additions **and** deletions are both orange — never green for `+`, never red/coral for `−`. Hierarchy is shade only (brighter orange = add, deeper orange = delete), not traffic-light semantics.
 
 ### Line 2 — Phase (cognitive state)
 
@@ -127,8 +127,8 @@ Optional micro-motion (2–3 max, intentional):
 --z-strip-fg: #D8D8D8;          /* Line 1 body */
 --z-strip-verb: #F5F5F5;        /* first verb “Editing” */
 --z-strip-phase: #C96A2B;       /* Line 2 */
---z-delta-add: #E07830;
---z-delta-del: rgba(201, 106, 43, 0.72);
+--z-delta-add: #E07830;           /* bright orange — additions */
+--z-delta-del: #C96A2B;           /* burnt orange — deletions (still orange, not red) */
 ```
 
 ### Typography
@@ -308,7 +308,7 @@ Using tools
 - [ ] Busy turn shows two-line orange strip (not a single “Working…”).
 - [ ] Editing + searches + commands + deltas update live.
 - [ ] Phase copy includes Thinking / Planning next moves / Choosing model / Applying edits.
-- [ ] No green/red badges; orange family only.
+- [ ] `+N` and `−N` both render orange (`#E07830` / `#C96A2B`); no green or red.
 - [ ] Idle restores ready copy; no leftover deltas after turn settles.
 - [ ] Desktop + narrow Chat width: Line 1 wraps without overlapping composer.
 
@@ -324,4 +324,4 @@ Using tools
 
 ## 14. Success statement
 
-When the agent works, Chat looks like the reference: a quiet charcoal strip, **orange** verbs and phase line, compact `+N −N` — so “editing / choosing model / thinking / planning / deletions” are readable at a glance without turning Chat into a dashboard.
+When the agent works, Chat looks like the reference: a quiet charcoal strip, orange verbs and phase line, compact orange `+N` / orange `−N` — so “editing / choosing model / thinking / planning / deletions” are readable at a glance without turning Chat into a dashboard.
