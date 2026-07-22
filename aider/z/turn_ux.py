@@ -173,7 +173,7 @@ class TurnOrchestrator:
         with self._lock:
             if self.state != TurnState.WAITING_INPUT:
                 return None
-            phase = self._phase_before_wait or "working"
+            phase = self._phase_before_wait or "Working…"
             self.state = TurnState.BUSY
             self.phase = phase
             self.waiting_kind = None
@@ -210,7 +210,7 @@ class TurnOrchestrator:
             )
         if state != TurnState.BUSY:
             return base or ""
-        label = (base or phase or "Working").strip()
+        label = (base or phase or "Working…").strip()
         if n:
             label = f"{label}  · Queued {n}"
         if "Ctrl+C" not in label:

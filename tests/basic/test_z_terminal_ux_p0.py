@@ -6,12 +6,13 @@ import os
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 _HOME = tempfile.mkdtemp(prefix="z_ux_p0_")
 os.environ["Z_HOME"] = _HOME
 os.environ.pop("Z_UX_VERBOSE", None)
 os.environ.pop("Z_UX_FULL_PLAN_FIRST", None)
+os.environ.pop("Z_UX_PREAMBLE", None)
 
 
 class ThemeTierTests(unittest.TestCase):
@@ -25,7 +26,7 @@ class ThemeTierTests(unittest.TestCase):
 
 
 class PreambleTests(unittest.TestCase):
-    def test_flush_one_line_when_quiet(self):
+    def test_flush_silent_by_default(self):
         from aider.z.ux_preamble import TurnPreamble
 
         outputs = []
@@ -35,13 +36,26 @@ class PreambleTests(unittest.TestCase):
         pre.note_explore(2)
         pre.note_plan(gated=True, approved=True)
         pre.flush(io)
+        self.assertEqual(outputs, [])
+        # second flush is still a no-op
+        pre.flush(io)
+        self.assertEqual(outputs, [])
+
+    def test_flush_one_line_when_preamble_escape(self):
+        from aider.z.ux_preamble import TurnPreamble
+
+        outputs = []
+        io = SimpleNamespace(tool_output=lambda *a, **k: outputs.append(" ".join(map(str, a))))
+        pre = TurnPreamble(verbose=False)
+        pre.note_skills([], capability_only=True)
+        pre.note_explore(2)
+        pre.note_plan(gated=True, approved=True)
+        with patch.dict(os.environ, {"Z_UX_PREAMBLE": "1"}):
+            pre.flush(io)
         self.assertEqual(len(outputs), 1)
         self.assertIn("Planning", outputs[0])
         self.assertIn("explore 2", outputs[0])
         self.assertIn("plan approved", outputs[0])
-        # second flush is a no-op
-        pre.flush(io)
-        self.assertEqual(len(outputs), 1)
 
     def test_verbose_skips_flush(self):
         from aider.z.ux_preamble import TurnPreamble
