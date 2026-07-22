@@ -228,6 +228,11 @@ Document this next to NI gate UX (`fault-plan-ni-verify-skills-gate.md`).
 7. Unify `/uncertainties` presentation  
 8. Golden “one implement turn” transcript fixtures for noise budget  
 
+<<<<<<< HEAD
+**Extensive implementation plan (no code yet):** [terminal-ux-p2-plan.md](./terminal-ux-p2-plan.md)
+
+**Out of scope for these tranches:** removing plan gates, auto-skipping verify, web UI.
+=======
 **Extensive plan:** [terminal-ux-p2-plan.md](./terminal-ux-p2-plan.md) · **Implemented:** this PR
 
 ### P3 — Turn flow (busy · queue · interrupt)
@@ -240,6 +245,7 @@ Document this next to NI gate UX (`fault-plan-ni-verify-skills-gate.md`).
 
 **Out of scope for these tranches:** removing plan gates, auto-skipping verify, web UI,
 mid-stream steer (P4).
+>>>>>>> origin/main
 
 ---
 
