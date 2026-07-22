@@ -22,13 +22,23 @@ export function registerAuthCommands(
       await rpc.request("auth/loginCancel");
       vscode.window.showInformationMessage("Z sign-in cancelled.");
       onAuthChanged();
-    }),
-    vscode.window.registerUriHandler({
-      handleUri(uri: vscode.Uri): void {
-        void handleDeepLink(uri, manager, onAuthChanged);
-      },
     })
   );
+
+  // Older / portable VS Code builds may not expose registerUriHandler.
+  try {
+    if (typeof vscode.window.registerUriHandler === "function") {
+      context.subscriptions.push(
+        vscode.window.registerUriHandler({
+          handleUri(uri: vscode.Uri): void {
+            void handleDeepLink(uri, manager, onAuthChanged);
+          },
+        })
+      );
+    }
+  } catch {
+    /* ignore — sign-in still works from Profile / command palette */
+  }
 }
 
 async function ensureRpc(manager: AppServerManager) {

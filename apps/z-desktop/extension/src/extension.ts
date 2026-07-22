@@ -6,10 +6,24 @@ import { registerViews } from "./views";
 import { ensureEngineOrWizard } from "./firstRun";
 
 let manager: AppServerManager | null = null;
-let status: vscode.StatusBarItem;
+let status: vscode.StatusBarItem | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  // Register commands first so palette never hits "command not found" if later setup fails.
+  // Absolute first: register Open Chat so palette never says "not found"
+  // even if the rest of activate throws on old/portable VS Code builds.
+  let openChatImpl: (() => void) | null = null;
+  context.subscriptions.push(
+    vscode.commands.registerCommand("z.openChat", () => {
+      if (openChatImpl) {
+        openChatImpl();
+        return;
+      }
+      void vscode.window.showErrorMessage(
+        "Z Chat is still starting — reload the window (Developer: Reload Window) and try again."
+      );
+    })
+  );
+
   try {
     manager = new AppServerManager(context);
     context.subscriptions.push(manager);
@@ -20,14 +34,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     context.subscriptions.push(status);
 
     const { refreshProfile, openChat } = registerViews(context, manager);
+    openChatImpl = () => openChat();
+
     const refreshUi = () => {
-      updateStatusBar(manager!);
+      if (manager) {
+        updateStatusBar(manager);
+      }
       refreshProfile();
     };
     context.subscriptions.push(manager.onDidChange(refreshUi));
 
-    registerAuthCommands(context, manager, refreshUi);
-    registerWorkspaceSync(context, manager);
+    try {
+      registerAuthCommands(context, manager, refreshUi);
+    } catch (err) {
+      console.error("Z auth commands failed", err);
+    }
+    try {
+      registerWorkspaceSync(context, manager);
+    } catch (err) {
+      console.error("Z workspace sync failed", err);
+    }
 
     context.subscriptions.push(
       vscode.commands.registerCommand("z.applyTerminalTheme", () => applyZTerminalTheme(true)),
@@ -71,7 +97,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     updateStatusBar(manager);
 
-    // Soft setup — never fail activation
     const cfg = vscode.workspace.getConfiguration("z");
     try {
       if (cfg.get<boolean>("applyTerminalThemeOnActivate", true)) {
@@ -84,7 +109,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (cfg.get<boolean>("openChatOnActivate", true)) {
         openChat();
         void vscode.commands.executeCommand("workbench.view.extension.z-left");
-        void vscode.commands.executeCommand("workbench.view.extension.z-right");
       }
     } catch {
       /* ignore */
@@ -103,17 +127,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     }
   } catch (err) {
-    // Last resort: still expose Open Chat so the user isn't stuck on "not found".
     console.error("Z extension activate failed", err);
-    context.subscriptions.push(
-      vscode.commands.registerCommand("z.openChat", () => {
-        vscode.window.showErrorMessage(
-          `Z failed to activate: ${err instanceof Error ? err.message : err}`
-        );
-      })
-    );
     void vscode.window.showErrorMessage(
-      `Z extension failed to activate: ${err instanceof Error ? err.message : err}`
+      `Z extension failed to activate: ${err instanceof Error ? err.message : err}. Check Output → Extension Host.`
     );
   }
 }
@@ -125,7 +141,6 @@ export function deactivate(): void {
 
 /** Apply burnt-orange / near-black theme matching aider/z/theme.py (CLI). */
 async function applyZTerminalTheme(showToast = false): Promise<void> {
-  // Contributed theme id: ${publisher}.${name}-${label}
   const themeId = "z.z-editor-Z Terminal";
   try {
     await vscode.workspace
@@ -144,6 +159,9 @@ async function applyZTerminalTheme(showToast = false): Promise<void> {
 }
 
 function updateStatusBar(m: AppServerManager): void {
+  if (!status) {
+    return;
+  }
   const state = m.connectionState;
   if (state === "connected") {
     status.text = "$(check) Z";

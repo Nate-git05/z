@@ -72,8 +72,8 @@ export function registerViews(
     vscode.window.registerWebviewViewProvider("z.profile", profile)
   );
 
+  // z.openChat is registered in extension.ts first (portable VS Code harden).
   context.subscriptions.push(
-    vscode.commands.registerCommand("z.openChat", () => chat.show()),
     vscode.commands.registerCommand("z.focusUncertainty", async () => {
       await vscode.commands.executeCommand("workbench.view.extension.z-left");
       await vscode.commands.executeCommand("z.uncertainty.focus");
@@ -95,12 +95,7 @@ export function registerViews(
       }
     }),
     vscode.commands.registerCommand("z.focusCommitGate", async () => {
-      try {
-        await vscode.commands.executeCommand("workbench.action.focusAuxiliaryBar");
-      } catch {
-        /* older shells */
-      }
-      await vscode.commands.executeCommand("workbench.view.extension.z-right");
+      await vscode.commands.executeCommand("workbench.view.extension.z-left");
       try {
         await vscode.commands.executeCommand("z.commitGate.focus");
       } catch {

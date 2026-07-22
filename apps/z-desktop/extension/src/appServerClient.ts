@@ -3,9 +3,20 @@
  * Transport: WebSocket. Mirrors Codex app-server handshake shape.
  */
 
-import WebSocket from "ws";
-
 export type JsonRpcId = string | number;
+
+/** Lazy-load `ws` so extension activate never fails on module import. */
+function loadWs(): {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  WebSocket: new (url: string) => any;
+  OPEN: number;
+} {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const mod = require("ws");
+  const WS = mod?.default ?? mod;
+  const OPEN = (WS as { OPEN?: number }).OPEN ?? 1;
+  return { WebSocket: WS as new (url: string) => unknown, OPEN };
+}
 
 export interface InitializeResult {
   serverInfo: { name: string; version: string };
@@ -42,18 +53,20 @@ type Pending = {
 type NotifyHandler = (method: string, params: unknown) => void;
 
 export class AppServerClient {
-  private ws: WebSocket | null = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private ws: any = null;
   private nextId = 1;
   private pending = new Map<JsonRpcId, Pending>();
   private url: string;
   private onNotify: NotifyHandler | null = null;
+  private openState = 1;
 
   constructor(url: string) {
     this.url = url;
   }
 
   get connected(): boolean {
-    return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+    return this.ws !== null && this.ws.readyState === this.openState;
   }
 
   get serverUrl(): string {
@@ -68,8 +81,10 @@ export class AppServerClient {
     if (this.connected) {
       return;
     }
+    const { WebSocket: WS, OPEN } = loadWs();
+    this.openState = OPEN;
     await new Promise<void>((resolve, reject) => {
-      const ws = new WebSocket(this.url);
+      const ws = new WS(this.url);
       const timer = setTimeout(() => {
         try {
           ws.close();
@@ -81,7 +96,7 @@ export class AppServerClient {
       ws.on("open", () => {
         clearTimeout(timer);
         this.ws = ws;
-        ws.on("message", (data) => this.onMessage(String(data)));
+        ws.on("message", (data: unknown) => this.onMessage(String(data)));
         ws.on("close", () => {
           this.ws = null;
           for (const [, p] of this.pending) {
@@ -110,7 +125,7 @@ export class AppServerClient {
   }
 
   async request(method: string, params?: Record<string, unknown>): Promise<unknown> {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+    if (!this.ws || this.ws.readyState !== this.openState) {
       throw new Error("Not connected to z-app-server");
     }
     const id = this.nextId++;
@@ -122,7 +137,7 @@ export class AppServerClient {
   }
 
   notify(method: string, params?: Record<string, unknown>): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+    if (!this.ws || this.ws.readyState !== this.openState) {
       return;
     }
     this.ws.send(JSON.stringify({ method, params: params ?? {} }));
@@ -181,7 +196,14 @@ export class AppServerClient {
 export async function probeAppServer(url: string, timeoutMs = 800): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false;
-    const ws = new WebSocket(url);
+    let ws: { close: () => void; on: (ev: string, cb: () => void) => void };
+    try {
+      const { WebSocket: WS } = loadWs();
+      ws = new WS(url);
+    } catch {
+      resolve(false);
+      return;
+    }
     const timer = setTimeout(() => {
       if (settled) {
         return;
