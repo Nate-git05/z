@@ -9,7 +9,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, Optional, Tuple
+from typing import Dict, Mapping, Optional, Tuple
 
 
 class CapabilityTier(str, Enum):
@@ -138,6 +138,17 @@ MODEL_REGISTRY: Tuple[ModelProfile, ...] = (
 )
 
 
+# Registry model_ids are Z's own naming, not litellm's — this maps the few
+# that don't match litellm.model_cost's bare key directly. Update whenever a
+# MODEL_REGISTRY row is added/renamed. Intentionally no entry for
+# "gemini-1.5-pro" — no live litellm.model_cost entry exists for it; it falls
+# back to the static registry row below.
+_LITELLM_COST_KEY_ALIASES: Dict[str, str] = {
+    "deepseek-v3": "deepseek-chat",
+    "groq-llama-70b": "groq/llama-3.3-70b-versatile",
+}
+
+
 def normalize_model_id(model_id: str) -> str:
     """Strip litellm-style ``provider/`` prefix for registry lookup."""
     mid = (model_id or "").strip()
@@ -167,11 +178,19 @@ def model_by_id(model_id: str) -> Optional[ModelProfile]:
 
 
 class PricingCache:
-    """Tiered TTL: static rate cards 24h, spot prices 5 minutes."""
+    """Tiered TTL: static rate cards 24h, spot prices 5 minutes.
 
-    def __init__(self) -> None:
+    Prices come from litellm's bundled ``model_cost`` table (already a
+    dependency, refreshed with the package — no network call at read time)
+    with the static MODEL_REGISTRY row as a fallback when litellm has no
+    matching entry. Tests should inject ``model_cost_table`` explicitly to
+    stay hermetic against litellm version upgrades changing real numbers.
+    """
+
+    def __init__(self, *, model_cost_table: Optional[Mapping[str, dict]] = None) -> None:
         # model_id -> (cost_in_per_1m, cost_out_per_1m, fetched_at)
         self._cache: Dict[str, Tuple[float, float, float]] = {}
+        self._model_cost_table = model_cost_table
 
     def current_cost(self, model: ModelProfile) -> float:
         """Return a comparable unit cost (input rate) for minimization."""
@@ -196,5 +215,37 @@ class PricingCache:
         return self._cache[model.model_id]
 
     def _fetch_price(self, model: ModelProfile) -> Tuple[float, float]:
-        """Provider-specific fetcher — defaults to the static registry row."""
-        return (model.cost_per_1m_in, model.cost_per_1m_out)
+        """Look up litellm's bundled pricing table; fall back to the static row."""
+        static = (model.cost_per_1m_in, model.cost_per_1m_out)
+        table = self._model_cost_table
+        if table is None:
+            try:
+                import litellm
+
+                table = litellm.model_cost
+            except Exception:
+                return static
+
+        key = _LITELLM_COST_KEY_ALIASES.get(model.model_id, model.model_id)
+        row = table.get(key)
+        if row is None:
+            # Defensive fuzzy fallback, scoped to this model's own provider so
+            # a bare needle never matches an unrelated vendor's model.
+            needle = key.lower()
+            for k, v in table.items():
+                if not isinstance(v, dict):
+                    continue
+                if (v.get("litellm_provider") or "").lower() != model.provider:
+                    continue
+                kl = k.lower()
+                if kl == needle or kl.endswith("/" + needle) or kl.endswith("." + needle):
+                    row = v
+                    break
+        if row is None:
+            return static
+
+        in_tok = row.get("input_cost_per_token")
+        out_tok = row.get("output_cost_per_token")
+        if in_tok is None or out_tok is None:
+            return static
+        return (float(in_tok) * 1_000_000.0, float(out_tok) * 1_000_000.0)

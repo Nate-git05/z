@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Tuple
 
 from .registry import CapabilityTier
 
@@ -34,6 +34,75 @@ _CODE_SUFFIXES = frozenset(
 _HARD_TOPIC_RE = re.compile(
     r"(?i)\b(race|concurren|deadlock|migrat|security|auth)\b"
 )
+
+# Closed-list domain tag, used as a soft selection preference (select.py) —
+# never a hard filter. Order matters: checked top-to-bottom, first match
+# wins. concurrency/api are checked before ui/web to reduce overlap on
+# generic frontend words; this is a tiebreak judgment call, not a guarantee
+# of correctness.
+DOMAIN_TAGS: Tuple[str, ...] = ("concurrency", "api", "ui", "web", "math")
+
+_DOMAIN_PATTERNS: Tuple[Tuple[str, "re.Pattern[str]"], ...] = (
+    (
+        "concurrency",
+        re.compile(
+            r"(?i)\b(race|concurren|deadlock|mutex|thread[- ]?safe|atomic|"
+            r"async|await|\block(?:ing)?\b)\b"
+        ),
+    ),
+    (
+        "api",
+        re.compile(
+            r"(?i)\b(rest\s?api|graphql|openapi|swagger|endpoint|webhook|"
+            r"grpc|http\s+(?:get|post|put|delete|patch))\b"
+        ),
+    ),
+    (
+        "ui",
+        re.compile(
+            r"(?i)\b(ui\b|component|button|layout|responsive|accessibility|"
+            r"a11y|css|frontend|render(?:ing)?)\b"
+        ),
+    ),
+    (
+        "web",
+        re.compile(
+            r"(?i)\b(browser|dom\b|fetch\(|cors|websocket|url\s+routing|"
+            r"http\s+server)\b"
+        ),
+    ),
+    (
+        "math",
+        re.compile(
+            r"(?i)\b(algorithm|complexity|big-o|matrix|equation|numerical|"
+            r"floating[- ]point|statistic)\b"
+        ),
+    ),
+)
+
+# Domain -> specialty_tags on ModelProfile that are a *justified* correlate
+# today. Only "math" has real correlate data in MODEL_REGISTRY (the existing
+# "reasoning" tag on o3-mini/claude-sonnet-5/claude-opus-4-8). Deliberately no
+# entries for concurrency/api/ui/web — no registry row is honestly tagged for
+# them yet; fabricating one would be fake differentiation, not routing logic.
+DOMAIN_TAG_ALIASES: dict = {
+    "math": ("reasoning",),
+}
+
+
+def domain_from_text(text: Optional[str]) -> Optional[str]:
+    """Closed-list domain tag from cheap keyword heuristics.
+
+    Same "Stage 1 is heuristics, not ML" posture as classify_task() — a soft
+    selection preference (see select.py), never a hard filter.
+    """
+    blob = (text or "").strip()
+    if not blob:
+        return None
+    for domain, pattern in _DOMAIN_PATTERNS:
+        if pattern.search(blob):
+            return domain
+    return None
 
 
 def estimate_context_tokens(files: Sequence[str], *, root: Optional[Path] = None) -> int:

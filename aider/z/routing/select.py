@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, TYPE_CHECKING
+from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from .registry import MODEL_REGISTRY, TIER_ORDER, CapabilityTier, ModelProfile
 
@@ -54,6 +54,22 @@ class CircuitBreaker:
 
 circuit_breaker = CircuitBreaker()
 
+# Soft tiebreak discount when a candidate's specialty_tags match the task's
+# domain (see classify.domain_from_text / DOMAIN_TAG_ALIASES). Small enough
+# to never override a real reliability penalty or a hard filter — a nudge,
+# not a rule.
+DOMAIN_MATCH_DISCOUNT = 0.9
+
+
+def _domain_matches(domain: Optional[str], tags: Tuple[str, ...]) -> bool:
+    if not domain:
+        return False
+    from .classify import DOMAIN_TAG_ALIASES
+
+    if domain in tags:
+        return True
+    return any(alias in tags for alias in DOMAIN_TAG_ALIASES.get(domain, ()))
+
 
 def select_model(
     tier: CapabilityTier,
@@ -64,8 +80,9 @@ def select_model(
     pricing: "PricingCache",
     calibration: "CalibrationStore",
     registry: Optional[tuple] = None,
+    domain: Optional[str] = None,
 ) -> ModelProfile:
-    """Filter → tier-match → minimize reliability-adjusted cost."""
+    """Filter → tier-match → minimize reliability-adjusted (+ domain-nudged) cost."""
     models = registry if registry is not None else MODEL_REGISTRY
     allowed = policy.allowed_providers()
 
@@ -88,13 +105,16 @@ def select_model(
     ]
     matched = matched or list(candidates)
 
-    # Step 3 — reliability-adjusted cost minimization
+    # Step 3 — reliability-adjusted, domain-nudged cost minimization
     def effective_cost(m: ModelProfile) -> float:
         base = pricing.current_cost(m)
         penalty = calibration.reliability_penalty(
             m.model_id, task_category=tier.value
         )
-        return base * (1.0 + penalty)
+        cost = base * (1.0 + penalty)
+        if _domain_matches(domain, m.specialty_tags):
+            cost *= DOMAIN_MATCH_DISCOUNT
+        return cost
 
     return min(matched, key=effective_cost)
 
@@ -124,8 +144,13 @@ def select_or_prefer(
     pricing: "PricingCache",
     calibration: "CalibrationStore",
     registry: Optional[tuple] = None,
+    domain: Optional[str] = None,
 ) -> ModelProfile:
-    """Use the user's preferred model when it meets the tier floor; else select."""
+    """Use the user's preferred model when it meets the tier floor; else select.
+
+    ``domain`` only affects the fallback select_model() call — an explicit
+    user preference that already clears the tier floor wins outright.
+    """
     from .registry import model_by_id
 
     pref = model_by_id(preferred_model_id or "")
@@ -149,4 +174,5 @@ def select_or_prefer(
         pricing=pricing,
         calibration=calibration,
         registry=registry,
+        domain=domain,
     )
