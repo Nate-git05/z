@@ -70,6 +70,20 @@ class AppServerSession:
             return self._commit_blocks_resolve(params)
         if method == "mcp/list":
             return self._mcp_list(params)
+        if method == "mcp/catalog":
+            return self._mcp_catalog(params)
+        if method == "mcp/connect":
+            return self._mcp_connect(params)
+        if method == "mcp/disconnect":
+            return self._mcp_disconnect(params)
+        if method == "mcp/test":
+            return self._mcp_test(params)
+        if method == "mcp/confirmFirstUse":
+            return self._mcp_confirm_first_use(params)
+        if method == "mcp/firstUseStatus":
+            return self._mcp_first_use_status(params)
+        if method == "mcp/sync":
+            return self._mcp_sync(params)
         if method == "auth/status":
             return self._auth_status(params)
         if method == "auth/loginStart":
@@ -110,6 +124,8 @@ class AppServerSession:
                 "skills",
                 "commit_blocks",
                 "mcp",
+                "mcp_manage",
+                "usage",
                 "turns",
                 "auth",
                 "workspace",
@@ -511,14 +527,229 @@ class AppServerSession:
             raise HandlerError(-32013, f"commit_blocks/resolve failed: {err}") from err
 
     def _mcp_list(self, params: dict) -> dict:
+        """Merge local MCP store with cloud runtime (dedupe by server_name)."""
         del params
         try:
+            from aider.z import mcp_local
             from aider.z.mcp_client import fetch_mcp_runtime
 
-            tools = fetch_mcp_runtime()
-            return {"connections": [t.public_dict() for t in tools]}
+            local_rows = mcp_local.list_connections()
+            cloud_rows: list[dict] = []
+            try:
+                cloud_rows = [t.public_dict() for t in fetch_mcp_runtime()]
+            except Exception:
+                cloud_rows = []
+
+            by_name: dict[str, dict] = {}
+            for row in cloud_rows:
+                name = str(row.get("server_name") or row.get("serverName") or "")
+                if not name:
+                    continue
+                merged = {
+                    "id": row.get("id"),
+                    "serverName": name,
+                    "server_name": name,
+                    "displayName": row.get("display_name") or row.get("displayName") or name,
+                    "display_name": row.get("display_name") or row.get("displayName") or name,
+                    "connectionType": row.get("connection_type")
+                    or row.get("connectionType")
+                    or "manual",
+                    "enabled": bool(row.get("enabled", True)),
+                    "status": row.get("status") or "connected",
+                    "source": "cloud",
+                    "config": row.get("config") or {},
+                }
+                by_name[name] = merged
+
+            for row in local_rows:
+                name = str(row.get("serverName") or "")
+                if not name:
+                    continue
+                existing = by_name.get(name)
+                local_view = {
+                    **row,
+                    "server_name": name,
+                    "display_name": row.get("displayName"),
+                    "source": "local" if not existing else "local+cloud",
+                }
+                if existing:
+                    local_view["remoteId"] = existing.get("id")
+                    local_view["cloudStatus"] = existing.get("status")
+                by_name[name] = local_view
+
+            connections = sorted(
+                by_name.values(),
+                key=lambda r: str(r.get("displayName") or r.get("serverName") or "").lower(),
+            )
+            return {"connections": connections}
         except Exception as err:
             raise HandlerError(-32014, f"mcp/list failed: {err}") from err
+
+    def _mcp_catalog(self, params: dict) -> dict:
+        del params
+        try:
+            from aider.z import mcp_local
+
+            return {"catalog": mcp_local.catalog()}
+        except Exception as err:
+            raise HandlerError(-32030, f"mcp/catalog failed: {err}") from err
+
+    def _mcp_connect(self, params: dict) -> dict:
+        server_name = (params.get("serverName") or params.get("server_name") or "").strip()
+        if not server_name:
+            raise HandlerError(-32602, "mcp/connect requires serverName")
+        try:
+            from aider.z import mcp_local
+
+            credentials = params.get("credentials") or {}
+            if not isinstance(credentials, dict):
+                raise HandlerError(-32602, "credentials must be an object")
+            config = params.get("config") or {}
+            if not isinstance(config, dict):
+                raise HandlerError(-32602, "config must be an object")
+            result = mcp_local.connect(
+                server_name,
+                credentials={str(k): str(v) for k, v in credentials.items()},
+                config=config,
+                display_name=params.get("displayName") or params.get("display_name"),
+                scope=str(params.get("scope") or "personal"),
+            )
+            sync_cloud = params.get("syncCloud")
+            if sync_cloud is None:
+                sync_cloud = True
+            if sync_cloud:
+                try:
+                    sync_result = mcp_local.sync_to_cloud()
+                    result["sync"] = sync_result
+                except Exception as sync_err:
+                    result["sync"] = {"ok": False, "error": str(sync_err)}
+            return result
+        except ValueError as err:
+            raise HandlerError(-32602, str(err)) from err
+        except HandlerError:
+            raise
+        except Exception as err:
+            raise HandlerError(-32031, f"mcp/connect failed: {err}") from err
+
+    def _mcp_disconnect(self, params: dict) -> dict:
+        connection_id = (params.get("id") or params.get("connectionId") or "").strip()
+        if not connection_id:
+            raise HandlerError(-32602, "mcp/disconnect requires id")
+        try:
+            from aider.z import mcp_local
+
+            return mcp_local.disconnect(connection_id)
+        except ValueError as err:
+            raise HandlerError(-32602, str(err)) from err
+        except Exception as err:
+            raise HandlerError(-32032, f"mcp/disconnect failed: {err}") from err
+
+    def _mcp_test(self, params: dict) -> dict:
+        connection_id = (params.get("id") or params.get("connectionId") or "").strip()
+        if connection_id:
+            try:
+                from aider.z import mcp_local
+
+                return mcp_local.test_connection(connection_id)
+            except Exception as err:
+                raise HandlerError(-32033, f"mcp/test failed: {err}") from err
+
+        # Ad-hoc test before save: { serverName, credentials, config }
+        server_name = (params.get("serverName") or params.get("server_name") or "").strip()
+        if not server_name:
+            raise HandlerError(-32602, "mcp/test requires id or serverName")
+        try:
+            from aider.z import mcp_local
+
+            # Temporary connect-like validation without permanent write when skipPersist
+            skip_persist = bool(params.get("skipPersist", True))
+            if skip_persist:
+                entry = mcp_local.get_catalog_entry(server_name)
+                if entry is None:
+                    raise HandlerError(-32602, f"Unknown MCP server '{server_name}'")
+                cfg = {**(entry.get("defaultConfig") or {}), **(params.get("config") or {})}
+                url = str(cfg.get("url") or (params.get("credentials") or {}).get("url") or "")
+                command = str(
+                    cfg.get("command") or (params.get("credentials") or {}).get("command") or ""
+                )
+                # Soft field validation
+                credentials = params.get("credentials") or {}
+                for field_def in entry.get("fields") or []:
+                    if not isinstance(field_def, dict) or not field_def.get("required"):
+                        continue
+                    key = str(field_def.get("key") or "")
+                    if key and not credentials.get(key) and key not in cfg:
+                        return {"ok": False, "error": f"Missing required field: {key}"}
+                if url:
+                    return mcp_local._test_http(url)
+                if command:
+                    import shutil
+                    from pathlib import Path
+
+                    exe = command.split()[0]
+                    if shutil.which(exe) or Path(exe).exists():
+                        return {"ok": True, "mode": "stdio", "command": command}
+                    if exe in {"npx", "npm", "node"} and shutil.which("node"):
+                        return {
+                            "ok": True,
+                            "mode": "stdio",
+                            "command": command,
+                            "note": "node available",
+                        }
+                    return {"ok": False, "error": f"Command not found: {exe}"}
+                if credentials:
+                    return {"ok": True, "mode": "credentials"}
+                return {"ok": False, "error": "Nothing to test"}
+            result = mcp_local.connect(
+                server_name,
+                credentials={
+                    str(k): str(v) for k, v in (params.get("credentials") or {}).items()
+                },
+                config=params.get("config") or {},
+            )
+            return result.get("test") or {"ok": True}
+        except HandlerError:
+            raise
+        except Exception as err:
+            raise HandlerError(-32033, f"mcp/test failed: {err}") from err
+
+    def _mcp_confirm_first_use(self, params: dict) -> dict:
+        server_name = (params.get("serverName") or params.get("server_name") or "").strip()
+        tool_name = (params.get("toolName") or params.get("tool_name") or "*").strip() or "*"
+        if not server_name:
+            raise HandlerError(-32602, "mcp/confirmFirstUse requires serverName")
+        try:
+            from aider.z import mcp_local
+
+            forever = params.get("forever")
+            if forever is None:
+                forever = True
+            return mcp_local.mark_first_use_confirmed(
+                server_name, tool_name, forever=bool(forever)
+            )
+        except Exception as err:
+            raise HandlerError(-32034, f"mcp/confirmFirstUse failed: {err}") from err
+
+    def _mcp_first_use_status(self, params: dict) -> dict:
+        server_name = (params.get("serverName") or params.get("server_name") or "").strip()
+        tool_name = (params.get("toolName") or params.get("tool_name") or "*").strip() or "*"
+        if not server_name:
+            raise HandlerError(-32602, "mcp/firstUseStatus requires serverName")
+        try:
+            from aider.z import mcp_local
+
+            return mcp_local.first_use_status(server_name, tool_name)
+        except Exception as err:
+            raise HandlerError(-32035, f"mcp/firstUseStatus failed: {err}") from err
+
+    def _mcp_sync(self, params: dict) -> dict:
+        del params
+        try:
+            from aider.z import mcp_local
+
+            return mcp_local.sync_to_cloud()
+        except Exception as err:
+            raise HandlerError(-32036, f"mcp/sync failed: {err}") from err
 
     def _auth_status(self, params: dict) -> dict:
         del params
@@ -591,9 +822,14 @@ class AppServerSession:
             raise HandlerError(-32017, f"auth/logout failed: {err}") from err
 
     def _usage_summary(self, params: dict) -> dict:
-        # V0 stub — Phase 9 fills from gateway /v1/gateway/usage
         rng = (params.get("range") or "billing_period").strip()
-        return {"range": rng, "byModel": [], "note": "gateway usage not wired yet"}
+        try:
+            from aider.z.usage_client import fetch_usage_summary, normalize_for_profile
+
+            raw = fetch_usage_summary(rng)
+            return normalize_for_profile(raw)
+        except Exception as err:
+            raise HandlerError(-32037, f"usage/summary failed: {err}") from err
 
     def _turn_start(self, params: dict) -> dict:
         text = (params.get("text") or "").strip()

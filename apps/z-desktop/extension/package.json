@@ -2,7 +2,7 @@
   "name": "z-editor",
   "displayName": "Z",
   "description": "Z coding agent — agent-first chat, uncertainty chain, skills, commit gate (Z Terminal orange/black)",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "publisher": "z",
   "engines": {
     "vscode": "^1.85.0"
@@ -50,6 +50,11 @@
           "type": "webview"
         },
         {
+          "id": "z.mcp",
+          "name": "MCP",
+          "type": "webview"
+        },
+        {
           "id": "z.profile",
           "name": "Profile",
           "type": "webview"
@@ -79,6 +84,10 @@
       {
         "command": "z.focusSkills",
         "title": "Z: Focus Skills"
+      },
+      {
+        "command": "z.focusMcp",
+        "title": "Z: Focus MCP"
       },
       {
         "command": "z.applyTerminalTheme",

@@ -1,7 +1,8 @@
 # Z Editor V1 — Implementation Plan (post–Codex audit)
 
-**Status:** Phase 0–8 landing — agent-first UI + gateway routing + Uncertainty + Skills + **Commit Gate override**; Phases 9–10 next.  
-**Date:** 2026-07-21 (revised: Phase 8 commit-gate override)  
+**Status:** Phase 0–10 landing — agent-first UI + gateway routing + Uncertainty + Skills + Commit Gate + **Profile usage** + **MCP in-app**.  
+**Date:** 2026-07-22 (revised: Phases 9–10)  
+**Phase 9–10 detail:** [`z-editor-phase-9-10-plan.md`](./z-editor-phase-9-10-plan.md)  
 **Inputs:** user revised V1 scope; local clones `vendor/codex` + `vendor/vscode`; Z monorepo surfaces.  
 **Related:** [`z-desktop-north-star.md`](./z-desktop-north-star.md), router-only CLI (#147).
 

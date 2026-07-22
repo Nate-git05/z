@@ -1,6 +1,6 @@
 # Z Desktop (app shell)
 
-**Status:** Phase 0–8 — agent-first Chat, gateway routing, Uncertainty, Skills, Commit Gate override.  
+**Status:** Phase 0–10 — agent-first Chat, gateway routing, Uncertainty, Skills, Commit Gate, Profile usage, MCP in-app.  
 **Look:** Z Terminal palette (burnt orange `#C96A2B` on near-black `#0A0A0A`) — same as the CLI.
 
 **Read first:** [`docs/app/z-editor-v1-implementation-plan.md`](../../docs/app/z-editor-v1-implementation-plan.md)
@@ -67,7 +67,7 @@ Matches `aider/z/theme.py`:
 | Muted / status | `#D8D8D8` |
 
 - Workbench: contributed theme **Z Terminal** (applied on activate by default; `Z: Apply Terminal Theme`)
-- All Z webviews (Chat, Uncertainty, Skills, Commit Gate, Profile) share the same CSS tokens
+- All Z webviews (Chat, Uncertainty, Skills, MCP, Commit Gate, Profile) share the same CSS tokens
 - Escape: `z.applyTerminalThemeOnActivate: false`
 
 ## Agent-first layout (Phase 4)
@@ -77,7 +77,7 @@ The user does **not** program in an editor pane. They prompt the agent; the agen
 | Region | Surface |
 |--------|---------|
 | **Center** | Chat (`Z: Open Chat`) — main interface; message queue with visible preview while busy |
-| **Left** | Uncertainty Tree — live risk-ranked hierarchy as the agent works |
+| **Left** | Uncertainty Tree · Skills · MCP · Profile |
 | **Right** | Commit Gate — blocked vs ready / cleared |
 
 Flow:
@@ -107,8 +107,21 @@ Flow:
 - **Mark resolved** when the underlying issue is fixed
 - Notifications: `gate/commit_blocked`, `gate/commit_updated`
 
-## Next (Phase 9+)
+## Phase 9 — Profile / usage
 
-1. Profile usage charts from `gateway_requests`
-2. In-app MCP connect/test
-3. Apply `product.z.json` when building from `vendor/vscode`
+- `usage/summary` proxies `GET /v1/gateway/usage?range=billing_period|all`
+- Profile: range toggle, totals (requests · cost USD), CSS bars + table by model
+- Offline/demo stub via `Z_GATEWAY_STUB` / `Z_GATEWAY_USAGE_STUB`
+
+## Phase 10 — MCP in-app
+
+- Local store `~/.z/mcp/` (`connections.json`, `secrets.json` mode 0600, `first_use.json`)
+- IPC: `mcp/catalog|list|connect|disconnect|test|confirmFirstUse|firstUseStatus|sync`
+- Left **MCP** panel: catalog form, test/connect/disconnect, trust first-use, optional cloud sync
+- First-use (D9): `turn/waiting_input` kind `mcp_tool` via `AppServerIO.confirm_mcp_first_use`
+- OAuth MCP: deep-link to web; full stdio tool runtime still out of scope
+
+## Next
+
+1. Apply `product.z.json` when building from `vendor/vscode`
+2. Full MCP stdio session / tool invocation inside app-server

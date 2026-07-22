@@ -133,12 +133,66 @@
     },
     "mcp/list": {
       "params": {},
-      "result": { "connections": "McpConnectionSummary[]" }
+      "result": { "connections": "McpConnectionSummary[]" },
+      "notes": "Phase 10 — merge local ~/.z/mcp store with cloud runtime."
+    },
+    "mcp/catalog": {
+      "params": {},
+      "result": { "catalog": "McpCatalogEntry[]" }
+    },
+    "mcp/connect": {
+      "params": {
+        "serverName": "string",
+        "credentials": { "optional": true },
+        "config": { "optional": true },
+        "displayName": { "optional": true },
+        "syncCloud": { "optional": true, "default": true }
+      },
+      "result": { "connection": "McpConnectionSummary", "updated": "boolean", "test": "object" }
+    },
+    "mcp/disconnect": {
+      "params": { "id": "string" },
+      "result": { "ok": true }
+    },
+    "mcp/test": {
+      "params": {
+        "id": { "optional": true },
+        "serverName": { "optional": true },
+        "credentials": { "optional": true },
+        "skipPersist": { "optional": true, "default": true }
+      },
+      "result": { "ok": "boolean", "error": { "optional": true } }
+    },
+    "mcp/confirmFirstUse": {
+      "params": {
+        "serverName": "string",
+        "toolName": { "optional": true, "default": "*" },
+        "forever": { "optional": true, "default": true }
+      },
+      "result": { "ok": true },
+      "notes": "D9 — persist first-use trust for MCP tools."
+    },
+    "mcp/firstUseStatus": {
+      "params": {
+        "serverName": "string",
+        "toolName": { "optional": true, "default": "*" }
+      },
+      "result": { "needsConfirm": "boolean", "confirmed": "boolean" }
+    },
+    "mcp/sync": {
+      "params": {},
+      "result": { "ok": "boolean", "synced": "number", "skipped": "number" }
     },
     "usage/summary": {
       "params": { "range": { "enum": ["billing_period", "all"], "default": "billing_period" } },
-      "result": { "byModel": "UsageRow[]" },
-      "notes": "Proxies gateway /v1/gateway/usage when authenticated."
+      "result": {
+        "byModel": "UsageRow[]",
+        "totalRequests": "number",
+        "totalCostUsd": "number",
+        "authenticated": "boolean",
+        "source": "string"
+      },
+      "notes": "Phase 9 — proxies gateway GET /v1/gateway/usage when authenticated."
     },
     "auth/status": {
       "params": {},

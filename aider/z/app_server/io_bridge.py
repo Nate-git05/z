@@ -283,6 +283,49 @@ class AppServerIO(InputOutput):
                 return default or ""
             return str(resp)
 
+    def confirm_mcp_first_use(
+        self,
+        server_name: str,
+        tool_name: str = "*",
+        *,
+        forever: bool = True,
+    ) -> bool:
+        """
+        D9 first-use gate for MCP tools.
+
+        If already confirmed in ``~/.z/mcp/first_use.json``, return True.
+        Otherwise emit ``turn/waiting_input`` kind ``mcp_tool`` and persist
+        approval on yes.
+        """
+        from aider.z import mcp_local
+
+        if not mcp_local.needs_first_use_confirm(server_name, tool_name):
+            return True
+        with self._waiting_input_scope("mcp_tool"):
+            question = (
+                f"Allow MCP tool `{tool_name}` from server `{server_name}`?"
+                if tool_name and tool_name != "*"
+                else f"Allow MCP tools from server `{server_name}`?"
+            )
+            raw = self._await_user_input(
+                kind="mcp_tool",
+                question=question,
+                subject=f"{server_name}::{tool_name}",
+                default="n",
+                options=["yes", "no"],
+                explicit_yes_required=True,
+                allow_never=False,
+            )
+            if raw is None or raw.get("__cancelled__"):
+                return False
+            answer = str(raw.get("response", "")).strip().lower()
+            if not answer.startswith("y"):
+                return False
+            mcp_local.mark_first_use_confirmed(
+                server_name, tool_name, forever=forever
+            )
+            return True
+
     def _await_user_input(
         self,
         *,
