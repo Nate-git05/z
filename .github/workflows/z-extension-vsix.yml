@@ -1,0 +1,36 @@
+name: Z Extension VSIX
+
+on:
+  push:
+    paths:
+      - "apps/z-desktop/extension/**"
+      - ".github/workflows/z-extension-vsix.yml"
+  pull_request:
+    paths:
+      - "apps/z-desktop/extension/**"
+      - ".github/workflows/z-extension-vsix.yml"
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/z-desktop/extension
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/z-desktop/extension/package-lock.json
+      - name: Install & package
+        run: |
+          npm ci || npm install
+          npm run package
+          ls -la *.vsix
+      - name: Upload VSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: z-editor-vsix
+          path: apps/z-desktop/extension/*.vsix

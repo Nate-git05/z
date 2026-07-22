@@ -1,8 +1,13 @@
 # Z Editor — Completion Plan (post Phases 0–10)
 
 **Date:** 2026-07-22  
+<<<<<<< HEAD
 **Branch:** `cursor/z-editor-completion-plan-313a`  
 **Status:** Plan only — not yet implemented  
+=======
+**Branch:** `cursor/z-editor-completion-impl-313a` (plan: `cursor/z-editor-completion-plan-313a`)  
+**Status:** Implementing on impl branch — Phases 11–15 landing  
+>>>>>>> origin/main
 **Depends on:** Phases 0–10 on `cursor/z-editor-v1-impl-313a` (agent-first UI, gateway, uncertainty, skills, commit gate, Profile usage proxy, MCP connect/list/first-use store)  
 **Look:** Z Terminal palette — near-black `#0A0A0A`, burnt orange `#C96A2B` / `#E07830`, text `#F5F5F5`  
 **Related:** [`z-editor-v1-implementation-plan.md`](./z-editor-v1-implementation-plan.md), [`z-editor-phase-9-10-plan.md`](./z-editor-phase-9-10-plan.md), [`z-desktop-north-star.md`](./z-desktop-north-star.md)

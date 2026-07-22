@@ -157,4 +157,6 @@ def coding_quality_reminder() -> str:
         "- Keep replies concise; do not paste uncertainty trees or full skill bodies into edits.\n"
         "- For read-only lookups mid-turn, you may emit a ```z-tool fence with read/grep/glob/ls "
         "(bounded); prefer `/add` before editing.\n"
+        "- For connected MCP tools, emit a ```z-mcp fence with "
+        '{"server","tool","arguments"} JSON (first use requires user trust).\n'
     )

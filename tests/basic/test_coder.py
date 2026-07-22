@@ -36,15 +36,16 @@ class TestCoder(unittest.TestCase):
 
             repo.git.commit("-m", "init")
 
-            # YES!
+            # YES! (legacy confirm path for unread existing files)
             # Use a completely mocked IO object instead of a real one
             io = MagicMock()
             io.confirm_ask = MagicMock(return_value=True)
             coder = Coder.create(self.GPT35, None, io, fnames=["added.txt"])
 
-            self.assertTrue(coder.allowed_to_edit("added.txt"))
-            self.assertTrue(coder.allowed_to_edit("repo.txt"))
-            self.assertTrue(coder.allowed_to_edit("new.txt"))
+            with patch.dict(os.environ, {"Z_STRICT_CHAT_EDITS": "0"}):
+                self.assertTrue(coder.allowed_to_edit("added.txt"))
+                self.assertTrue(coder.allowed_to_edit("repo.txt"))
+                self.assertTrue(coder.allowed_to_edit("new.txt"))
 
             self.assertIn("repo.txt", str(coder.abs_fnames))
             self.assertIn("new.txt", str(coder.abs_fnames))
@@ -65,19 +66,34 @@ class TestCoder(unittest.TestCase):
 
             repo.git.commit("-m", "init")
 
-            # say NO
+            # say NO — still blocks unread existing files; new files auto-create
             io = InputOutput(yes=False)
 
             coder = Coder.create(self.GPT35, None, io, fnames=["added.txt"])
 
             self.assertTrue(coder.allowed_to_edit("added.txt"))
             self.assertFalse(coder.allowed_to_edit("repo.txt"))
-            self.assertFalse(coder.allowed_to_edit("new.txt"))
+            self.assertTrue(coder.allowed_to_edit("new.txt"))
 
             self.assertNotIn("repo.txt", str(coder.abs_fnames))
-            self.assertNotIn("new.txt", str(coder.abs_fnames))
+            self.assertIn("new.txt", str(coder.abs_fnames))
+            self.assertTrue(Path("new.txt").exists())
 
             self.assertFalse(coder.need_commit_before_edits)
+
+    def test_allowed_to_edit_confirm_new_files_escape(self):
+        with GitTemporaryDirectory():
+            repo = git.Repo()
+            Path("added.txt").touch()
+            repo.git.add("added.txt")
+            repo.git.commit("-m", "init")
+
+            io = InputOutput(yes=False)
+            coder = Coder.create(self.GPT35, None, io, fnames=["added.txt"])
+            with patch.dict(os.environ, {"Z_CONFIRM_NEW_FILES": "1"}):
+                self.assertFalse(coder.allowed_to_edit("new.txt"))
+            self.assertNotIn("new.txt", str(coder.abs_fnames))
+            self.assertFalse(Path("new.txt").exists())
 
     def test_allowed_to_edit_dirty(self):
         with GitTemporaryDirectory():

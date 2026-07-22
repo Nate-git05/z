@@ -613,21 +613,69 @@ def _find_available_port(start: int, end: int) -> int | None:
     return None
 
 
-def _open_web_page_for_post_callback(
-    io,
+class WebAuthPageSession:
+    """Localhost callback + CLI-bridge poll session for browser auth.
+
+    Used by the terminal CLI (auto-open browser) and Z Editor (extension opens
+    the URL via ``vscode.env.openExternal``).
+    """
+
+    def __init__(
+        self,
+        *,
+        page_url: str,
+        state: str,
+        redirect_uri: str,
+        result_box: dict,
+        server: socketserver.TCPServer,
+    ):
+        self.page_url = page_url
+        self.state = state
+        self.redirect_uri = redirect_uri
+        self._result_box = result_box
+        self._server = server
+        self._closed = False
+
+    @property
+    def done(self) -> bool:
+        return self._result_box["done"].is_set()
+
+    @property
+    def error(self) -> str | None:
+        return self._result_box.get("error")
+
+    @property
+    def data(self) -> dict | None:
+        return self._result_box.get("data")
+
+    def wait(self, timeout: float | None = None) -> bool:
+        """Block until callback/poll completes. Returns True if finished in time."""
+        return self._result_box["done"].wait(
+            timeout=AUTH_TIMEOUT_SECONDS if timeout is None else timeout
+        )
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._server.shutdown()
+        except Exception:
+            pass
+        try:
+            self._server.server_close()
+        except Exception:
+            pass
+
+
+def prepare_web_auth_page(
     *,
     path: str,
     extra_params: dict | None = None,
-    opening_message: str,
-    success_html: str,
-    timeout_message: str,
-    failure_label: str = "Setup",
-) -> dict | None:
-    """Open ``{auth_base}{path}`` and wait for auth to finish.
-
-    Prefer a localhost POST callback. Also poll ``/v1/auth/cli/poll`` because
-    many browsers block HTTPS pages from reaching ``http://127.0.0.1``.
-    """
+    success_html: str = "You're signed in to Z. You can close this tab.",
+    failure_label: str = "Sign in",
+) -> WebAuthPageSession:
+    """Start callback server + poller; return session with ``page_url`` (no browser open)."""
     port = _find_available_port(8765, 8865)
     if port is None:
         raise AuthError("Could not find a free local port for the browser callback.")
@@ -732,24 +780,53 @@ def _open_web_page_for_post_callback(
     if extra_params:
         params.update(extra_params)
     page_url = f"{base}{path}?{urllib.parse.urlencode(params)}"
+    return WebAuthPageSession(
+        page_url=page_url,
+        state=state,
+        redirect_uri=redirect_uri,
+        result_box=result_box,
+        server=server,
+    )
+
+
+def _open_web_page_for_post_callback(
+    io,
+    *,
+    path: str,
+    extra_params: dict | None = None,
+    opening_message: str,
+    success_html: str,
+    timeout_message: str,
+    failure_label: str = "Setup",
+) -> dict | None:
+    """Open ``{auth_base}{path}`` and wait for auth to finish.
+
+    Prefer a localhost POST callback. Also poll ``/v1/auth/cli/poll`` because
+    many browsers block HTTPS pages from reaching ``http://127.0.0.1``.
+    """
+    session = prepare_web_auth_page(
+        path=path,
+        extra_params=extra_params,
+        success_html=success_html,
+        failure_label=failure_label,
+    )
     io.tool_output(opening_message)
-    io.tool_output(f"If it doesn't open, visit:\n  {page_url}")
+    io.tool_output(f"If it doesn't open, visit:\n  {session.page_url}")
     try:
-        webbrowser.open(page_url)
+        webbrowser.open(session.page_url)
     except Exception:
         pass
 
-    finished = result_box["done"].wait(timeout=AUTH_TIMEOUT_SECONDS)
-    server.shutdown()
-    server.server_close()
+    finished = session.wait()
+    session.close()
 
     if not finished:
         io.tool_error(timeout_message)
         return None
-    if result_box["error"]:
-        io.tool_error(f"{failure_label} failed: {result_box['error']}")
+    if session.error:
+        io.tool_error(f"{failure_label} failed: {session.error}")
         return None
-    return result_box["data"]
+    return session.data
 
 
 def _persist_session_credentials(io, creds: Credentials, *, analytics=None) -> Credentials:

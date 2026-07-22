@@ -52,10 +52,26 @@ WEB_LOGIN_OPTIONS = [
     ("z", "Continue with Z"),
 ]
 
-AUTH_MODE_OPTIONS = [
+# V1: router-only. BYOK appears only when Z_ALLOW_BYOK=1.
+AUTH_MODE_OPTIONS_ROUTER_ONLY = [
+    ("router", "Use Z's model router"),
+]
+
+AUTH_MODE_OPTIONS_WITH_BYOK = [
     ("byok", "Bring your own API key"),
     ("router", "Use Z's model router"),
 ]
+
+# Back-compat alias — prefer auth_mode_options().
+AUTH_MODE_OPTIONS = AUTH_MODE_OPTIONS_WITH_BYOK
+
+
+def auth_mode_options() -> list[tuple[str, str]]:
+    from aider.z.onboarding import byok_allowed
+
+    if byok_allowed():
+        return list(AUTH_MODE_OPTIONS_WITH_BYOK)
+    return list(AUTH_MODE_OPTIONS_ROUTER_ONLY)
 
 
 def router_model_options() -> list[tuple[str, str]]:
@@ -394,17 +410,24 @@ def prompt_login_choice(io, *, version: str = "", status_message: str = "") -> s
 
 
 def prompt_auth_mode_choice_plain(io) -> str | None:
+    opts = auth_mode_options()
+    if len(opts) == 1:
+        return opts[0][0]
     return _plain_choice_menu(
         io,
         title="You're signed in. How do you want to use models?",
-        options=AUTH_MODE_OPTIONS,
+        options=opts,
     )
 
 
 def prompt_auth_mode_choice(
     io, *, version: str = "", status_message: str = ""
 ) -> str | None:
-    """After account auth: BYOK vs Z router — same UI primitives as login."""
+    """After account auth: pick model access mode (V1 = router only)."""
+    opts = auth_mode_options()
+    if len(opts) == 1:
+        return opts[0][0]
+
     pretty = bool(getattr(io, "pretty", False))
     is_tty = sys.stdin.isatty() and sys.stdout.isatty()
     prompt = "You're signed in. How do you want to use models?"
@@ -416,7 +439,7 @@ def prompt_auth_mode_choice(
                 console,
                 version=version,
                 status_message=status_message,
-                options=AUTH_MODE_OPTIONS,
+                options=opts,
                 prompt_text=prompt,
             )
         except Exception:
