@@ -298,6 +298,21 @@
       "fileNames": { "optional": true }
     },
     "item/agentMessage/delta": { "turnId": "string", "text": "string" },
+    "turn/step": {
+      "turnId": "string",
+      "stepId": "string",
+      "kind": {
+        "enum": ["thinking", "read", "search", "search_web", "edit", "shell", "mcp", "other"]
+      },
+      "title": "string",
+      "excerpt": { "optional": true },
+      "status": {
+        "enum": ["running", "done", "blocked", "needs_input", "cancelled"]
+      },
+      "resolutionLabel": { "optional": true },
+      "durationMs": { "optional": true },
+      "notes": "Phase 2 — resolved turn-trace rows for Chat (collapsed titles; expand for excerpt)."
+    },
     "turn/log": { "turnId": "string", "level": "info|warning|error", "text": "string" },
     "turn/queued": {
       "turnId": "string",

@@ -10,11 +10,24 @@ import { zThemeCss } from "./zTheme";
 
 type ChatRole = "user" | "assistant" | "system";
 
+interface TraceStep {
+  stepId: string;
+  turnId?: string;
+  kind?: string;
+  title: string;
+  excerpt?: string | null;
+  status: "running" | "done" | "blocked" | "needs_input" | "cancelled" | string;
+  resolutionLabel?: string;
+  durationMs?: number;
+  expanded?: boolean;
+}
+
 interface ChatMessage {
   id: string;
   role: ChatRole;
   text: string;
-  kind?: "tool" | "error" | "info";
+  kind?: "tool" | "error" | "info" | "trace";
+  step?: TraceStep;
 }
 
 interface WaitingPrompt {
@@ -221,8 +234,20 @@ export class MainChatPanel {
     text?: string;
     response?: string;
     changeText?: string;
+    stepId?: string;
   }) {
     if (!msg?.type) {
+      return;
+    }
+    if (msg.type === "toggleTrace") {
+      const stepId = String(msg.stepId || "");
+      const row = this.messages.find(
+        (m) => m.kind === "trace" && m.step?.stepId === stepId
+      );
+      if (row?.step) {
+        row.step.expanded = !row.step.expanded;
+        this.postState();
+      }
       return;
     }
     if (msg.type === "send") {
@@ -539,6 +564,44 @@ export class MainChatPanel {
       this.postStateThrottled();
       return;
     }
+    if (method === "turn/step") {
+      const stepId = String(params.stepId || "");
+      if (!stepId) {
+        return;
+      }
+      const step: TraceStep = {
+        stepId,
+        turnId: params.turnId != null ? String(params.turnId) : undefined,
+        kind: params.kind != null ? String(params.kind) : "other",
+        title: String(params.title || "Step"),
+        excerpt:
+          params.excerpt != null && String(params.excerpt).trim()
+            ? String(params.excerpt)
+            : null,
+        status: String(params.status || "done"),
+        resolutionLabel:
+          params.resolutionLabel != null ? String(params.resolutionLabel) : undefined,
+        durationMs:
+          typeof params.durationMs === "number" ? params.durationMs : undefined,
+      };
+      const existing = this.messages.find(
+        (m) => m.kind === "trace" && m.step?.stepId === stepId
+      );
+      if (existing && existing.step) {
+        existing.step = { ...existing.step, ...step, expanded: existing.step.expanded };
+        existing.text = step.title;
+      } else {
+        this.messages.push({
+          id: `trace-${stepId}`,
+          role: "system",
+          kind: "trace",
+          text: step.title,
+          step,
+        });
+      }
+      this.postStateThrottled();
+      return;
+    }
     if (method === "item/agentMessage/delta") {
       const chunk = String(params.text || "");
       if (!chunk) {
@@ -647,42 +710,17 @@ export class MainChatPanel {
       return;
     }
     if (method === "mcp/tool_started") {
-      const server = String(params.serverName || "");
-      const tool = String(params.toolName || "");
-      this.messages.push({
-        id: `tool-${params.callId || Date.now()}`,
-        role: "system",
-        kind: "tool",
-        text: `▸ ${server}.${tool}…`,
-      });
+      // Traces own MCP UI (turn/step); keep phase for Contemplating indicator.
       this.markActivityLive("mcp");
       this.postStateThrottled();
       return;
     }
     if (method === "mcp/tool_finished") {
-      const server = String(params.serverName || "");
-      const tool = String(params.toolName || "");
-      const ms = params.durationMs != null ? ` · ${params.durationMs}ms` : "";
-      const id = `tool-${params.callId || Date.now()}`;
-      const existing = this.messages.find((m) => m.id === id);
-      const line = `✓ ${server}.${tool}${ms}`;
-      if (existing) {
-        existing.text = line;
-      } else {
-        this.messages.push({ id, role: "system", kind: "tool", text: line });
-      }
       this.postStateThrottled();
       return;
     }
     if (method === "mcp/tool_error") {
-      const server = String(params.serverName || "");
-      const tool = String(params.toolName || "");
-      this.messages.push({
-        id: `tool-err-${Date.now()}`,
-        role: "system",
-        kind: "error",
-        text: `✗ ${server}.${tool}: ${String(params.error || "failed")}`,
-      });
+      this.markActivityLive("mcp");
       this.postState();
     }
   }
@@ -924,6 +962,42 @@ export class MainChatPanel {
   @media (prefers-reduced-motion: reduce) {
     #stateIndicator .si-icon.sunburst { animation: none; }
   }
+  .msg.trace {
+    margin: 0 0 10px;
+    font-family: var(--z-font-ui);
+  }
+  .msg.trace .trace-title {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    background: transparent; border: none; padding: 4px 0;
+    color: var(--z-secondary); font-size: 13px; font-weight: 500;
+    font-family: var(--z-font-ui); text-align: left; cursor: pointer;
+  }
+  .msg.trace .trace-title:hover { color: var(--z-text); }
+  .msg.trace .chev {
+    color: var(--z-muted); font-size: 11px; width: 12px; flex: 0 0 12px;
+  }
+  .msg.trace .trace-body {
+    display: none;
+    margin: 2px 0 6px 20px;
+    padding: 0 0 4px 14px;
+    border-left: 1px solid var(--z-border);
+    color: var(--z-secondary);
+    font-size: 12.5px;
+    line-height: 1.45;
+    font-family: var(--z-font-ui);
+  }
+  .msg.trace.expanded .trace-body { display: block; }
+  .msg.trace .trace-row {
+    display: flex; gap: 8px; align-items: flex-start; margin: 0 0 6px;
+  }
+  .msg.trace .trace-glyph {
+    flex: 0 0 14px; width: 14px; text-align: center;
+    color: var(--z-secondary); font-size: 12px; line-height: 1.4;
+  }
+  .msg.trace .trace-excerpt { flex: 1; white-space: pre-wrap; word-break: break-word; }
+  .msg.trace .res-ok { color: var(--z-status-ok); }
+  .msg.trace .res-bad { color: var(--z-status-blocked); }
+  .msg.trace .res-label { font-weight: 500; }
 </style>
 </head>
 <body>
@@ -1123,6 +1197,33 @@ export class MainChatPanel {
 
     function renderMessages(messages) {
       msgsEl.innerHTML = messages.map(m => {
+        if (m.kind === 'trace' && m.step) {
+          const s = m.step;
+          const expanded = !!s.expanded;
+          const status = String(s.status || 'done');
+          const resLabel = s.resolutionLabel
+            || (status === 'needs_input' ? 'Needs input'
+              : status === 'blocked' ? 'Blocked'
+              : status === 'cancelled' ? 'Cancelled'
+              : 'Done');
+          const bad = status === 'blocked' || status === 'needs_input' || status === 'cancelled';
+          const resCls = bad ? 'res-bad' : 'res-ok';
+          const check = bad ? '!' : '✓';
+          const excerpt = s.excerpt
+            ? ('<div class="trace-row"><span class="trace-glyph" aria-hidden="true">⏱</span>'
+              + '<div class="trace-excerpt">' + escapeHtml(s.excerpt) + '</div></div>')
+            : '';
+          return '<div class="msg system trace' + (expanded ? ' expanded' : '') + '" data-step="' + escapeHtml(s.stepId) + '">'
+            + '<button type="button" class="trace-title" aria-expanded="' + (expanded ? 'true' : 'false') + '">'
+            + '<span class="chev">' + (expanded ? '▾' : '▸') + '</span>'
+            + '<span class="t">' + escapeHtml(s.title || m.text || 'Step') + '</span>'
+            + '</button>'
+            + '<div class="trace-body" ' + (expanded ? '' : 'aria-hidden="true"') + '>'
+            + excerpt
+            + '<div class="trace-row"><span class="trace-glyph ' + resCls + '" aria-hidden="true">' + check + '</span>'
+            + '<span class="res-label ' + resCls + '">' + escapeHtml(resLabel) + '</span></div>'
+            + '</div></div>';
+        }
         const kind = m.kind || '';
         const role = kind === 'tool' ? 'Tool'
           : m.role === 'user' ? 'You'
@@ -1131,6 +1232,13 @@ export class MainChatPanel {
         const cls = 'msg ' + m.role + (kind ? ' ' + kind : '');
         return '<div class="' + cls + '"><div class="role">' + role + '</div><div class="bubble">' + escapeHtml(m.text) + '</div></div>';
       }).join('');
+      for (const btn of msgsEl.querySelectorAll('.trace-title')) {
+        btn.addEventListener('click', () => {
+          const row = btn.closest('[data-step]');
+          const stepId = row && row.getAttribute('data-step');
+          if (stepId) vscode.postMessage({ type: 'toggleTrace', stepId });
+        });
+      }
       msgsEl.scrollTop = msgsEl.scrollHeight;
     }
 
