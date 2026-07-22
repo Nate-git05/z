@@ -108,7 +108,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     try {
       if (cfg.get<boolean>("openChatOnActivate", true)) {
         openChat();
-        void vscode.commands.executeCommand("workbench.view.extension.z-left");
+        // chatFirst (default): do not force the stacked left sidebar open
+        if (cfg.get<string>("uiShell") === "legacyStack") {
+          void vscode.commands.executeCommand("workbench.view.extension.z-left");
+        }
       }
     } catch {
       /* ignore */
@@ -147,7 +150,7 @@ async function applyZTerminalTheme(showToast = false): Promise<void> {
       .getConfiguration("workbench")
       .update("colorTheme", themeId, vscode.ConfigurationTarget.Global);
     if (showToast) {
-      vscode.window.showInformationMessage("Z Terminal theme applied (orange / black).");
+      vscode.window.showInformationMessage("Z Terminal theme applied (sherbet / soft black).");
     }
   } catch (err) {
     if (showToast) {

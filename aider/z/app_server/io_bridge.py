@@ -3,15 +3,38 @@
 from __future__ import annotations
 
 import queue
+import re
 import threading
 import uuid
 from typing import Any, Callable, Optional
 
 from aider.io import InputOutput
 from aider.z.app_server.activity import TurnActivityTracker, map_phase_id
+from aider.z.app_server.turn_trace import TurnTraceTracker
 from aider.z.turn_ux import TurnOrchestrator, TurnState, attach_orchestrator_to_io
 
 NotifyFn = Callable[[str, dict], None]
+
+
+def _strip_reasoning_markers(text: str) -> str:
+    """Remove THINKING/ANSWER chrome and raw reasoning tags from answer deltas."""
+    if not text:
+        return ""
+    try:
+        from aider.reasoning_tags import REASONING_END, REASONING_START, REASONING_TAG
+
+        out = str(text)
+        out = out.replace(REASONING_START, "").replace(REASONING_END, "")
+        out = re.sub(
+            rf"<{re.escape(REASONING_TAG)}>.*?</{re.escape(REASONING_TAG)}>",
+            "",
+            out,
+            flags=re.DOTALL,
+        )
+        out = re.sub(rf"</?{re.escape(REASONING_TAG)}>", "", out)
+        return out
+    except Exception:
+        return str(text)
 
 
 class AppServerIO(InputOutput):
@@ -32,6 +55,7 @@ class AppServerIO(InputOutput):
         self._cancel = threading.Event()
         self.turn_orchestrator: Optional[TurnOrchestrator] = None
         self.activity = TurnActivityTracker(notify, turn_id_provider)
+        self.trace = TurnTraceTracker(notify, turn_id_provider)
         super().__init__(
             pretty=False,
             fancy_input=False,
@@ -145,13 +169,39 @@ class AppServerIO(InputOutput):
             self.activity.flush(force=True)
         except Exception:
             pass
+        try:
+            self.trace.open_thinking()
+        except Exception:
+            pass
+
+    def emit_llm_reasoning_delta(self, text: str) -> None:
+        """Buffer model reasoning for turn traces — never into the answer bubble."""
+        if not text:
+            return
+        try:
+            self.trace.append_reasoning(text)
+        except Exception:
+            pass
 
     def emit_llm_delta(self, text: str) -> None:
         if not text:
             return
+        cleaned = _strip_reasoning_markers(text)
+        if not cleaned.strip():
+            # Pure reasoning chrome — keep buffering if tagged leftovers arrived here.
+            try:
+                if text and ("THINKING" in text or "thinking-content-" in text):
+                    self.trace.append_reasoning(text)
+            except Exception:
+                pass
+            return
+        try:
+            self.trace.close_thinking_if_open()
+        except Exception:
+            pass
         self._notify(
             "item/agentMessage/delta",
-            {"turnId": self._turn_id_provider(), "text": text},
+            {"turnId": self._turn_id_provider(), "text": cleaned},
         )
 
     # --- output ------------------------------------------------------------
@@ -179,6 +229,12 @@ class AppServerIO(InputOutput):
                 if act is not None:
                     act.observe_tool_output(text)
                     act.maybe_flush()
+            except Exception:
+                pass
+            try:
+                tr = getattr(self, "trace", None)
+                if tr is not None:
+                    tr.observe_tool_line(text)
             except Exception:
                 pass
         return super().tool_output(
@@ -388,6 +444,10 @@ class AppServerIO(InputOutput):
                 "allowNever": allow_never,
             },
         )
+        try:
+            self.trace.mark_waiting(kind=str(kind or ""), question=str(question or ""))
+        except Exception:
+            pass
         while True:
             if self._cancel.is_set():
                 self._pending_request_id = None

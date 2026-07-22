@@ -254,6 +254,11 @@ class ThreadTurnRunner:
                         edited, lines_added=lines_add, lines_removed=lines_rem
                     )
                     io.activity.flush(force=True)
+                    tr = getattr(io, "trace", None)
+                    if tr is not None:
+                        tr.note_edit(
+                            edited, lines_added=lines_add, lines_removed=lines_rem
+                        )
             except Exception:
                 pass
             return edited
@@ -275,6 +280,10 @@ class ThreadTurnRunner:
                 self._io.activity.set_model(str(mid))
             self._io.activity.set_phase("thinking")
             self._io.activity.flush(force=True)
+            tr = getattr(self._io, "trace", None)
+            if tr is not None:
+                tr.reset()
+                tr.open_thinking()
         except Exception:
             pass
         self._notify(
@@ -341,6 +350,12 @@ class ThreadTurnRunner:
                 if message:
                     turn_id = self._current_turn_id or turn_id
         finally:
+            try:
+                tr = getattr(self._io, "trace", None)
+                if tr is not None:
+                    tr.finalize(ok=ok, interrupted=interrupted)
+            except Exception:
+                pass
             self._notify(
                 "turn/completed",
                 {

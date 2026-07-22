@@ -4255,15 +4255,36 @@ class Coder:
 
         show_resp = self.render_incremental_response(True)
 
-        if reasoning_content:
-            formatted_reasoning = format_reasoning_content(
-                reasoning_content, self.reasoning_tag_name
-            )
-            show_resp = formatted_reasoning + show_resp
+        emit_r = getattr(self.io, "emit_llm_reasoning_delta", None)
+        if callable(emit_r):
+            # App-server: keep reasoning out of the answer channel.
+            if reasoning_content:
+                try:
+                    emit_r(reasoning_content)
+                except Exception:
+                    pass
+            answer = self.partial_response_content or ""
+            if answer:
+                emit = getattr(self.io, "emit_llm_delta", None)
+                if callable(emit):
+                    try:
+                        emit(answer)
+                    except Exception:
+                        self.io.assistant_output(answer, pretty=False)
+                else:
+                    self.io.assistant_output(answer, pretty=False)
+            elif self.show_pretty():
+                self.io.assistant_output("", pretty=True)
+        else:
+            if reasoning_content:
+                formatted_reasoning = format_reasoning_content(
+                    reasoning_content, self.reasoning_tag_name
+                )
+                show_resp = formatted_reasoning + show_resp
 
-        show_resp = replace_reasoning_tags(show_resp, self.reasoning_tag_name)
+            show_resp = replace_reasoning_tags(show_resp, self.reasoning_tag_name)
 
-        self.io.assistant_output(show_resp, pretty=self.show_pretty())
+            self.io.assistant_output(show_resp, pretty=self.show_pretty())
 
         if (
             hasattr(completion.choices[0], "finish_reason")
@@ -4297,6 +4318,8 @@ class Coder:
                 pass
 
             text = ""
+            reasoning_chunk = None
+            answer_chunk = None
 
             try:
                 reasoning_content = chunk.choices[0].delta.reasoning_content
@@ -4310,6 +4333,7 @@ class Coder:
                 if not self.got_reasoning_content:
                     text += f"<{REASONING_TAG}>\n\n"
                 text += reasoning_content
+                reasoning_chunk = reasoning_content
                 self.got_reasoning_content = True
                 received_content = True
 
@@ -4321,6 +4345,7 @@ class Coder:
                         self.ended_reasoning_content = True
 
                     text += content
+                    answer_chunk = content
                     received_content = True
             except AttributeError:
                 pass
@@ -4330,13 +4355,25 @@ class Coder:
             self.partial_response_content += text
 
             # Z Editor / app-server: stream deltas over IPC even when pretty.
-            if text:
-                emit = getattr(self.io, "emit_llm_delta", None)
-                if callable(emit):
+            # Prefer split reasoning vs answer when the bridge supports it.
+            emit = getattr(self.io, "emit_llm_delta", None)
+            emit_r = getattr(self.io, "emit_llm_reasoning_delta", None)
+            if callable(emit_r):
+                if reasoning_chunk:
                     try:
-                        emit(replace_reasoning_tags(text, self.reasoning_tag_name))
+                        emit_r(reasoning_chunk)
                     except Exception:
                         pass
+                if answer_chunk and callable(emit):
+                    try:
+                        emit(answer_chunk)
+                    except Exception:
+                        pass
+            elif text and callable(emit):
+                try:
+                    emit(replace_reasoning_tags(text, self.reasoning_tag_name))
+                except Exception:
+                    pass
 
             if self.show_pretty():
                 self.live_incremental_response(False)

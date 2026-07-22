@@ -204,6 +204,22 @@
       },
       "notes": "Phase 9/14 — live gateway usage when authenticated; empty (not demo) when unsigned-in."
     },
+    "usage/activity": {
+      "params": {
+        "range": { "enum": ["billing_period", "all"], "default": "billing_period" },
+        "days": { "optional": true, "default": 371 }
+      },
+      "result": {
+        "range": "string",
+        "granularity": "day",
+        "authenticated": "boolean",
+        "note": { "optional": true },
+        "days": "UsageActivityDay[]",
+        "totalTokens": "number",
+        "peakTokens": "number"
+      },
+      "notes": "UI redesign — year heatmap for Profile. Days include models[{ modelId, inputTokens, outputTokens, requests, costUsd }]. Unsigned → empty days + authenticated:false."
+    },
     "auth/status": {
       "params": {},
       "result": {
@@ -282,6 +298,21 @@
       "fileNames": { "optional": true }
     },
     "item/agentMessage/delta": { "turnId": "string", "text": "string" },
+    "turn/step": {
+      "turnId": "string",
+      "stepId": "string",
+      "kind": {
+        "enum": ["thinking", "read", "search", "search_web", "edit", "shell", "mcp", "other"]
+      },
+      "title": "string",
+      "excerpt": { "optional": true },
+      "status": {
+        "enum": ["running", "done", "blocked", "needs_input", "cancelled"]
+      },
+      "resolutionLabel": { "optional": true },
+      "durationMs": { "optional": true },
+      "notes": "Phase 2 — resolved turn-trace rows for Chat (collapsed titles; expand for excerpt)."
+    },
     "turn/log": { "turnId": "string", "level": "info|warning|error", "text": "string" },
     "turn/queued": {
       "turnId": "string",

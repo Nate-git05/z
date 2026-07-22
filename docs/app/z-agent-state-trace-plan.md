@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-22  
 **Branch:** `cursor/z-agent-state-trace-plan-313a`  
-**Status:** Plan only — extensively specify before implementation  
+**Status:** Phase 1+2 implemented on `cursor/z-agent-state-p1-313a` (indicator + turn traces); Phase 3 polish still optional  
 **Product:** Z Editor (agent-first Chat)  
 **Companion specs:**
 - User state/trace visual spec (this plan implements)
@@ -360,6 +360,8 @@ If redesign PR #161 is not yet on `main`, implement tokens against whatever is m
 
 ### Phase 1 — State indicator only (UI + client mapping)
 
+**Status:** Done (`cursor/z-agent-state-p1-313a`, extension 0.9.1)
+
 **Scope:** Chat webview indicator; map from existing `turn/busy` + `turn/activity` + streaming flag.
 
 **Deliverable:** Sunburst + Contemplating/Editing/Reading/Running/Working/Searching; magnifier for web if detectable else codebase “Searching”; hide on answer delta / wait / idle.
@@ -368,21 +370,23 @@ If redesign PR #161 is not yet on `main`, implement tokens against whatever is m
 
 **Acceptance:**
 
-- [ ] Busy thinking → Contemplating + rotating sunburst
-- [ ] Answer streams → indicator gone
-- [ ] Reduced motion → no spin
-- [ ] Opacity ~70%; sans font
+- [x] Busy thinking → Contemplating + rotating sunburst
+- [x] Answer streams → indicator gone
+- [x] Reduced motion → no spin
+- [x] Opacity ~70%; sans font
 
 ### Phase 2 — `turn/step` pipeline (heuristic titles)
+
+**Status:** Done (`cursor/z-agent-state-p1-313a`, extension 0.9.2)
 
 **Scope:** `TurnTraceTracker`, emit on tool/MCP/thinking close; Chat renders collapsed traces; expand excerpt + Done.
 
 **Acceptance:**
 
-- [ ] Multi-step turn shows stacked titles
-- [ ] Expand shows connector + excerpt (when present) + ✓ Done
-- [ ] Waiting input can mark Needs input / Blocked
-- [ ] No raw CoT in assistant bubble (reasoning diverted)
+- [x] Multi-step turn shows stacked titles
+- [x] Expand shows connector + excerpt (when present) + ✓ Done
+- [x] Waiting input can mark Needs input / Blocked
+- [x] No raw CoT in assistant bubble (reasoning diverted)
 
 ### Phase 3 — Polish & replace noisy system tool lines
 

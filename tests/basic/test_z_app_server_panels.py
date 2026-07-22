@@ -329,6 +329,58 @@ class UsagePhase9Test(unittest.TestCase):
         self.assertEqual(norm["totalCostUsd"], 0.12)
         self.assertEqual(norm["byModel"][0]["modelId"], "z-composer")
 
+    def test_build_usage_activity_empty_unsigned(self):
+        from aider.z.usage_client import build_usage_activity
+
+        out = build_usage_activity(
+            {
+                "authenticated": False,
+                "byModel": [],
+                "note": "Sign in to see live gateway usage.",
+            },
+            days=7,
+        )
+        self.assertEqual(len(out["days"]), 7)
+        self.assertFalse(out["authenticated"])
+        self.assertEqual(out["totalTokens"], 0)
+        self.assertTrue(all(d["totalTokens"] == 0 for d in out["days"]))
+        self.assertIn("Sign in", out["note"] or "")
+
+    def test_build_usage_activity_attaches_today_models(self):
+        from datetime import date
+
+        from aider.z.usage_client import build_usage_activity
+
+        out = build_usage_activity(
+            {
+                "authenticated": True,
+                "byModel": [
+                    {
+                        "modelId": "z-composer",
+                        "inputTokens": 8000,
+                        "outputTokens": 4000,
+                        "requests": 3,
+                        "costUsd": 0.12,
+                    }
+                ],
+            },
+            days=3,
+        )
+        self.assertEqual(len(out["days"]), 3)
+        today = out["days"][-1]
+        self.assertEqual(today["date"], date.today().isoformat())
+        self.assertEqual(today["totalTokens"], 12000)
+        self.assertEqual(today["models"][0]["modelId"], "z-composer")
+        self.assertEqual(out["peakTokens"], 12000)
+        self.assertEqual(out["days"][0]["totalTokens"], 0)
+
+    def test_usage_activity_rpc(self):
+        out = self.session.handle("usage/activity", {"range": "billing_period", "days": 5})
+        self.assertIn("days", out)
+        self.assertEqual(len(out["days"]), 5)
+        self.assertIn("totalTokens", out)
+        self.assertIn("authenticated", out)
+
 
 class McpPhase10Test(unittest.TestCase):
     def setUp(self):

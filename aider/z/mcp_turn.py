@@ -237,6 +237,14 @@ def run_mcp_turn(
                     "callId": call_id,
                 },
             )
+        try:
+            tr = getattr(io, "trace", None) if io is not None else None
+            if tr is not None:
+                tr.note_mcp_started(
+                    server=server_name, tool=call.tool, call_id=str(call_id or "")
+                )
+        except Exception:
+            pass
 
         if t0_result.ok:
             budgeted = format_mcp_result_for_chat(call.tool, t0_result.text)
@@ -258,6 +266,19 @@ def run_mcp_turn(
                         "durationMs": t0_result.duration_ms,
                     },
                 )
+            try:
+                tr = getattr(io, "trace", None) if io is not None else None
+                if tr is not None:
+                    tr.note_mcp_finished(
+                        server=server_name,
+                        tool=call.tool,
+                        call_id=str(call_id or ""),
+                        ok=True,
+                        summary=(t0_result.text or "")[:160],
+                        duration_ms=t0_result.duration_ms,
+                    )
+            except Exception:
+                pass
             if io is not None:
                 try:
                     io.tool_output(
@@ -279,6 +300,19 @@ def run_mcp_turn(
                         "error": err,
                     },
                 )
+            try:
+                tr = getattr(io, "trace", None) if io is not None else None
+                if tr is not None:
+                    tr.note_mcp_finished(
+                        server=server_name,
+                        tool=call.tool,
+                        call_id=str(call_id or ""),
+                        ok=False,
+                        error=err,
+                        duration_ms=getattr(t0_result, "duration_ms", None),
+                    )
+            except Exception:
+                pass
             if io is not None:
                 try:
                     io.tool_warning(f"MCP: {server_name}.{call.tool} failed: {err}")

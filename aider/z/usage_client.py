@@ -213,3 +213,83 @@ def normalize_for_profile(payload: dict[str, Any]) -> dict[str, Any]:
         "total_cost_usd": float(total_cost or 0.0),
         "totalCostUsd": float(total_cost or 0.0),
     }
+
+
+def build_usage_activity(
+    summary: dict[str, Any] | None = None,
+    *,
+    days: int = 371,
+) -> dict[str, Any]:
+    """
+    Build a year-ish daily heatmap series for Profile.
+
+    Gateway currently exposes aggregates, not a daily series — so we emit an
+    empty grid and, when summary has by-model totals, attach them to *today*
+    so hover can show model names + tokens honestly.
+    """
+    from datetime import date, timedelta
+
+    today = date.today()
+    start = today - timedelta(days=max(1, days) - 1)
+    by_model = []
+    if isinstance(summary, dict):
+        raw = summary.get("byModel") or summary.get("by_model") or []
+        if isinstance(raw, list):
+            by_model = [r for r in raw if isinstance(r, dict)]
+
+    day_list: list[dict[str, Any]] = []
+    cursor = start
+    while cursor <= today:
+        models: list[dict[str, Any]] = []
+        total_tokens = 0
+        if cursor == today and by_model:
+            for row in by_model:
+                mid = str(row.get("modelId") or row.get("model_id") or "unknown")
+                inn = int(row.get("inputTokens") or row.get("input_tokens") or 0)
+                out = int(row.get("outputTokens") or row.get("output_tokens") or 0)
+                req = int(row.get("requests") or 0)
+                cost = float(row.get("costUsd") or row.get("cost_usd") or 0.0)
+                models.append(
+                    {
+                        "modelId": mid,
+                        "model_id": mid,
+                        "inputTokens": inn,
+                        "input_tokens": inn,
+                        "outputTokens": out,
+                        "output_tokens": out,
+                        "requests": req,
+                        "costUsd": cost,
+                        "cost_usd": cost,
+                    }
+                )
+                total_tokens += inn + out
+        day_list.append(
+            {
+                "date": cursor.isoformat(),
+                "totalTokens": total_tokens,
+                "total_tokens": total_tokens,
+                "models": models,
+            }
+        )
+        cursor += timedelta(days=1)
+
+    authenticated = True
+    note = None
+    if isinstance(summary, dict):
+        authenticated = bool(summary.get("authenticated", True))
+        note = summary.get("note")
+        if not by_model and not authenticated:
+            note = note or "Sign in to see live gateway usage."
+
+    total_tokens = sum(int(d.get("totalTokens") or 0) for d in day_list)
+    return {
+        "range": "year",
+        "granularity": "day",
+        "authenticated": authenticated,
+        "note": note,
+        "days": day_list,
+        "totalTokens": total_tokens,
+        "total_tokens": total_tokens,
+        "peakTokens": total_tokens,
+        "peak_tokens": total_tokens,
+    }

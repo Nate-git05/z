@@ -20,7 +20,7 @@ class ThemeTierTests(unittest.TestCase):
         from aider.z.theme import ACCENT, STATUS, TOOL_OUTPUT, TOOL_WARNING
 
         self.assertEqual(TOOL_OUTPUT, STATUS)
-        self.assertEqual(TOOL_OUTPUT, "#D8D8D8")
+        self.assertEqual(TOOL_OUTPUT, "#9C948A")
         self.assertEqual(TOOL_WARNING, ACCENT)
         self.assertNotEqual(TOOL_OUTPUT, TOOL_WARNING)
 

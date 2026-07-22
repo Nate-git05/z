@@ -5,15 +5,29 @@
 
 import * as vscode from "vscode";
 import { AppServerManager } from "./appServerManager";
+import { deriveStateIndicator, StateIndicator } from "./stateIndicator";
 import { zThemeCss } from "./zTheme";
 
 type ChatRole = "user" | "assistant" | "system";
+
+interface TraceStep {
+  stepId: string;
+  turnId?: string;
+  kind?: string;
+  title: string;
+  excerpt?: string | null;
+  status: "running" | "done" | "blocked" | "needs_input" | "cancelled" | string;
+  resolutionLabel?: string;
+  durationMs?: number;
+  expanded?: boolean;
+}
 
 interface ChatMessage {
   id: string;
   role: ChatRole;
   text: string;
-  kind?: "tool" | "error" | "info";
+  kind?: "tool" | "error" | "info" | "trace";
+  step?: TraceStep;
 }
 
 interface WaitingPrompt {
@@ -126,6 +140,11 @@ export class MainChatPanel {
   private disposed = false;
   private postTimer: ReturnType<typeof setTimeout> | null = null;
   private connectionBanner = "";
+  private gateBlockedCount = 0;
+  /** Auto-open Uncertainty overlay once per turn when first open node arrives. */
+  private uncertaintyAutoOpenedThisTurn = false;
+  /** True while assistant answer tokens are arriving — hides Contemplating row. */
+  private answerStreaming = false;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -138,12 +157,32 @@ export class MainChatPanel {
       const conn = this.manager.connectionState;
       if (conn === "connected") {
         this.connectionBanner = "";
+        void this.refreshGate();
       } else if (conn === "error" || conn === "disconnected") {
         this.connectionBanner =
           this.manager.errorMessage || "App-server disconnected — Reconnect from the status bar.";
       }
       this.postStateThrottled();
     });
+  }
+
+  private async refreshGate(): Promise<void> {
+    if (!this.manager.rpc) {
+      this.gateBlockedCount = 0;
+      return;
+    }
+    try {
+      const res = (await this.manager.rpc.request("commit_blocks/list", {
+        includeCleared: false,
+      })) as { blocks?: unknown[] };
+      const blocks = Array.isArray(res.blocks) ? res.blocks : [];
+      this.gateBlockedCount = blocks.filter((b) => {
+        const st = String((b as { state?: string }).state || "").toLowerCase();
+        return st === "blocked" || st === "blocking" || !st;
+      }).length;
+    } catch {
+      /* keep last */
+    }
   }
 
   /** Open (or reveal) Chat as the center main interface. */
@@ -195,12 +234,44 @@ export class MainChatPanel {
     text?: string;
     response?: string;
     changeText?: string;
+    stepId?: string;
   }) {
     if (!msg?.type) {
       return;
     }
+    if (msg.type === "toggleTrace") {
+      const stepId = String(msg.stepId || "");
+      const row = this.messages.find(
+        (m) => m.kind === "trace" && m.step?.stepId === stepId
+      );
+      if (row?.step) {
+        row.step.expanded = !row.step.expanded;
+        this.postState();
+      }
+      return;
+    }
     if (msg.type === "send") {
       await this.sendPrompt(String(msg.text || ""));
+      return;
+    }
+    if (msg.type === "openProfile") {
+      await vscode.commands.executeCommand("z.openProfile");
+      return;
+    }
+    if (msg.type === "openGate") {
+      await vscode.commands.executeCommand("z.focusCommitGate");
+      return;
+    }
+    if (msg.type === "openUncertainty") {
+      await vscode.commands.executeCommand("z.focusUncertainty");
+      return;
+    }
+    if (msg.type === "openSkills") {
+      await vscode.commands.executeCommand("z.focusSkills");
+      return;
+    }
+    if (msg.type === "openMcp") {
+      await vscode.commands.executeCommand("z.focusMcp");
       return;
     }
     if (msg.type === "respond" && this.waiting) {
@@ -243,6 +314,7 @@ export class MainChatPanel {
       }
       this.waiting = null;
       this.busyLabel = "";
+      this.answerStreaming = false;
       this.resetActivityImmediate();
       this.postState();
       return;
@@ -252,6 +324,7 @@ export class MainChatPanel {
       this.streamingAssistantId = null;
       this.waiting = null;
       this.busyLabel = "";
+      this.answerStreaming = false;
       this.resetActivityImmediate();
       this.queue = { queueLen: 0, items: [], preview: null };
       this.postState();
@@ -274,12 +347,26 @@ export class MainChatPanel {
     this.activity.live = true;
     if (phase) {
       this.activity.phase = phase;
+      this.clearAnswerStreamingForToolPhase(phase);
+    }
+  }
+
+  /** After answer tokens pause and tools run, Contemplating/Editing may show again. */
+  private clearAnswerStreamingForToolPhase(phase: ActivityPhase): void {
+    if (
+      phase === "editing" ||
+      phase === "searching" ||
+      phase === "running" ||
+      phase === "mcp"
+    ) {
+      this.answerStreaming = false;
     }
   }
 
   private settleActivitySoon(): void {
     this.activity.live = false;
     this.activity.phase = "idle";
+    this.answerStreaming = false;
     if (this.activityClearTimer) {
       clearTimeout(this.activityClearTimer);
     }
@@ -335,6 +422,7 @@ export class MainChatPanel {
       });
       this.streamingAssistantId = null;
       this.busyLabel = "Working…";
+      this.answerStreaming = false;
       this.activity = emptyActivity();
       this.markActivityLive("thinking");
       this.queue = { queueLen: 0, items: [], preview: null };
@@ -439,6 +527,7 @@ export class MainChatPanel {
         const p = String(params.phase) as ActivityPhase;
         if (p !== "idle") {
           this.activity.phase = p;
+          this.clearAnswerStreamingForToolPhase(p);
         }
       }
       if (Array.isArray(params.fileNames)) {
@@ -453,6 +542,8 @@ export class MainChatPanel {
       return;
     }
     if (method === "turn/started") {
+      this.uncertaintyAutoOpenedThisTurn = false;
+      this.answerStreaming = false;
       const text = String(params.text || "").trim();
       const fromQueue = Boolean(params.fromQueue);
       if (fromQueue && text) {
@@ -473,11 +564,50 @@ export class MainChatPanel {
       this.postStateThrottled();
       return;
     }
+    if (method === "turn/step") {
+      const stepId = String(params.stepId || "");
+      if (!stepId) {
+        return;
+      }
+      const step: TraceStep = {
+        stepId,
+        turnId: params.turnId != null ? String(params.turnId) : undefined,
+        kind: params.kind != null ? String(params.kind) : "other",
+        title: String(params.title || "Step"),
+        excerpt:
+          params.excerpt != null && String(params.excerpt).trim()
+            ? String(params.excerpt)
+            : null,
+        status: String(params.status || "done"),
+        resolutionLabel:
+          params.resolutionLabel != null ? String(params.resolutionLabel) : undefined,
+        durationMs:
+          typeof params.durationMs === "number" ? params.durationMs : undefined,
+      };
+      const existing = this.messages.find(
+        (m) => m.kind === "trace" && m.step?.stepId === stepId
+      );
+      if (existing && existing.step) {
+        existing.step = { ...existing.step, ...step, expanded: existing.step.expanded };
+        existing.text = step.title;
+      } else {
+        this.messages.push({
+          id: `trace-${stepId}`,
+          role: "system",
+          kind: "trace",
+          text: step.title,
+          step,
+        });
+      }
+      this.postStateThrottled();
+      return;
+    }
     if (method === "item/agentMessage/delta") {
       const chunk = String(params.text || "");
       if (!chunk) {
         return;
       }
+      this.answerStreaming = true;
       if (!this.streamingAssistantId) {
         this.streamingAssistantId = `a-${Date.now()}`;
         this.messages.push({
@@ -527,10 +657,34 @@ export class MainChatPanel {
       }
       return;
     }
+    if (method === "uncertainty/upsert") {
+      const node = params.node as { id?: string; state?: string; status?: string } | undefined;
+      const st = String(node?.state || node?.status || "open").toLowerCase();
+      const closed = st === "resolved" || st === "closed" || st === "cleared" || st === "done";
+      if (node?.id && !closed && !this.uncertaintyAutoOpenedThisTurn) {
+        this.uncertaintyAutoOpenedThisTurn = true;
+        void vscode.commands.executeCommand("z.focusUncertainty");
+      }
+      return;
+    }
+    if (
+      method === "gate/commit_blocked" ||
+      method === "gate/commit_updated" ||
+      method === "uncertainty/changed"
+    ) {
+      void this.refreshGate().then(() => this.postStateThrottled());
+      if (method === "gate/commit_blocked") {
+        // Auto-surface gate when something is blocked
+        void vscode.commands.executeCommand("z.focusCommitGate");
+      }
+      return;
+    }
     if (method === "turn/completed") {
       this.busyLabel = "";
       this.waiting = null;
       this.streamingAssistantId = null;
+      this.uncertaintyAutoOpenedThisTurn = false;
+      this.answerStreaming = false;
       if (params.ok === false && params.interrupted) {
         this.messages.push({
           id: `sys-${Date.now()}`,
@@ -539,7 +693,7 @@ export class MainChatPanel {
         });
       }
       this.settleActivitySoon();
-      this.postState();
+      void this.refreshGate().then(() => this.postState());
       return;
     }
     if (method === "turn/error") {
@@ -550,47 +704,23 @@ export class MainChatPanel {
         text: friendlyError(String(params.message || "turn failed")),
       });
       this.busyLabel = "";
+      this.answerStreaming = false;
       this.settleActivitySoon();
       this.postState();
       return;
     }
     if (method === "mcp/tool_started") {
-      const server = String(params.serverName || "");
-      const tool = String(params.toolName || "");
-      this.messages.push({
-        id: `tool-${params.callId || Date.now()}`,
-        role: "system",
-        kind: "tool",
-        text: `▸ ${server}.${tool}…`,
-      });
+      // Traces own MCP UI (turn/step); keep phase for Contemplating indicator.
       this.markActivityLive("mcp");
       this.postStateThrottled();
       return;
     }
     if (method === "mcp/tool_finished") {
-      const server = String(params.serverName || "");
-      const tool = String(params.toolName || "");
-      const ms = params.durationMs != null ? ` · ${params.durationMs}ms` : "";
-      const id = `tool-${params.callId || Date.now()}`;
-      const existing = this.messages.find((m) => m.id === id);
-      const line = `✓ ${server}.${tool}${ms}`;
-      if (existing) {
-        existing.text = line;
-      } else {
-        this.messages.push({ id, role: "system", kind: "tool", text: line });
-      }
       this.postStateThrottled();
       return;
     }
     if (method === "mcp/tool_error") {
-      const server = String(params.serverName || "");
-      const tool = String(params.toolName || "");
-      this.messages.push({
-        id: `tool-err-${Date.now()}`,
-        role: "system",
-        kind: "error",
-        text: `✗ ${server}.${tool}: ${String(params.error || "failed")}`,
-      });
+      this.markActivityLive("mcp");
       this.postState();
     }
   }
@@ -603,6 +733,17 @@ export class MainChatPanel {
       this.postTimer = null;
       this.postState();
     }, 50);
+  }
+
+  private buildIndicator(): StateIndicator {
+    return deriveStateIndicator({
+      live: this.activity.live,
+      phase: this.activity.phase,
+      answerStreaming: this.answerStreaming,
+      waitingForUser: Boolean(this.waiting),
+      busyLabel: this.busyLabel,
+      exploredFiles: this.activity.exploredFiles,
+    });
   }
 
   private postState(): void {
@@ -618,6 +759,8 @@ export class MainChatPanel {
       messages: this.messages,
       queue: this.queue,
       banner: this.connectionBanner,
+      gateBlockedCount: this.gateBlockedCount,
+      indicator: this.buildIndicator(),
     });
   }
 
@@ -630,19 +773,32 @@ export class MainChatPanel {
   ${zThemeCss()}
   html, body {
     height: 100%; margin: 0; padding: 0;
-    font-family: "IBM Plex Mono", "JetBrains Mono", "SF Mono", ui-monospace, monospace;
+    font-family: var(--z-font-ui);
   }
   #app {
     display: flex; flex-direction: column; height: 100vh; box-sizing: border-box;
-    max-width: 820px; margin: 0 auto; width: 100%;
+    max-width: 860px; margin: 0 auto; width: 100%;
     background:
-      radial-gradient(ellipse 80% 50% at 50% -10%, rgba(201,106,43,0.18), transparent 55%),
+      radial-gradient(ellipse 90% 55% at 50% -12%, rgba(247,165,107,0.10), transparent 58%),
       var(--z-bg);
   }
+  #topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 20px 4px; gap: 12px;
+  }
   #brand {
-    padding: 20px 20px 6px;
     font-size: 28px; font-weight: 700; letter-spacing: -0.03em;
-    color: var(--z-accent-bright);
+    color: var(--z-accent); font-family: var(--z-font-ui);
+  }
+  #rail {
+    display: flex; gap: 6px; align-items: center;
+  }
+  #rail button {
+    background: transparent; color: var(--z-secondary); border: 1px solid transparent;
+    padding: 6px 10px; font-size: 12px; font-weight: 500; border-radius: 999px;
+  }
+  #rail button:hover {
+    color: var(--z-text); background: var(--z-accent-wash); border-color: var(--z-border);
   }
   #activity {
     padding: 0 20px 10px;
@@ -698,63 +854,186 @@ export class MainChatPanel {
   .msg.user .role { color: var(--z-muted); }
   .msg.system .bubble { color: var(--z-muted); font-size: 12px; }
   #waiting {
-    display: none; margin: 0 16px; padding: 12px 14px;
-    border: 1px solid var(--z-accent-dim);
+    display: none; margin: 0 18px; padding: 14px 16px;
+    border: 1px solid var(--z-border);
     background: var(--z-raised);
+    border-radius: var(--z-radius);
   }
   #waiting.show { display: block; }
-  #waiting .q { font-weight: 600; margin-bottom: 6px; color: var(--z-accent-bright); }
+  #waiting .q { font-weight: 600; margin-bottom: 6px; color: var(--z-accent); }
   #waiting .subject {
-    max-height: 160px; overflow: auto; font-size: 12px; color: var(--z-muted);
+    max-height: 160px; overflow: auto; font-size: 12px; color: var(--z-secondary);
     margin-bottom: 8px; white-space: pre-wrap;
   }
-  #waiting .actions { display: flex; flex-wrap: wrap; gap: 6px; }
+  #waiting .actions { display: flex; flex-wrap: wrap; gap: 8px; }
   #queue {
-    display: none; margin: 8px 16px 0; padding: 10px 12px;
-    border: 1px dashed var(--z-accent);
-    background: var(--z-surface);
+    display: none; margin: 10px 18px 0; padding: 12px 14px;
+    border: 1px solid var(--z-border);
+    border-left: 3px solid var(--z-accent);
+    background: var(--z-raised);
     font-size: 12px;
+    border-radius: var(--z-radius);
   }
   #queue.show { display: block; }
   #queue .label {
     font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
-    color: var(--z-accent); margin-bottom: 4px;
+    color: var(--z-secondary); margin-bottom: 4px;
   }
   #queue .preview { white-space: pre-wrap; word-break: break-word; color: var(--z-text); }
   #queue .more { color: var(--z-muted); margin-top: 4px; font-size: 11px; }
   #composer {
     position: sticky; bottom: 0;
-    border-top: 1px solid var(--z-border);
-    padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 8px;
-    background: var(--z-surface);
+    padding: 10px 18px 18px; display: flex; flex-direction: column; gap: 8px;
+    background: linear-gradient(180deg, transparent, var(--z-bg) 28%);
+  }
+  .composer-shell {
+    border: 1px solid var(--z-border);
+    background: var(--z-raised);
+    border-radius: var(--z-radius);
+    padding: 10px 12px 12px;
+    display: flex; flex-direction: column; gap: 8px;
   }
   #banner {
-    display: none; margin: 0 16px 8px; padding: 8px 10px;
-    border: 1px solid var(--z-accent); color: var(--z-accent-bright);
+    display: none; margin: 0 18px 8px; padding: 10px 12px;
+    border: 1px solid var(--z-border); color: var(--z-accent);
     font-size: 12px; background: var(--z-raised);
+    border-radius: var(--z-radius-sm);
   }
   #banner.show { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
   textarea {
     width: 100%; min-height: 72px; resize: vertical; box-sizing: border-box;
-    padding: 10px; font-family: inherit; font-size: 14px;
+    padding: 8px 4px; font-family: var(--z-font-ui); font-size: 14px;
+    border: none; background: transparent; box-shadow: none;
   }
+  textarea:focus { outline: none; border: none; box-shadow: none; }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .hint { font-size: 11px; color: var(--z-muted); }
+  .msg .bubble { font-family: var(--z-font-mono); }
   .msg.tool .bubble { color: var(--z-accent); font-size: 12px; }
-  .msg.error .bubble { color: var(--z-accent-bright); font-size: 12px; }
+  .msg.error .bubble { color: var(--z-status-blocked); font-size: 12px; }
   #waiting.kind-mcp_tool .q { color: var(--z-accent); }
-  #waiting.kind-plan_confirm .q { color: var(--z-accent-bright); }
+  #waiting.kind-plan_confirm .q { color: var(--z-accent); }
+  #gatePill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 500;
+    border: 1px solid var(--z-border); background: var(--z-surface);
+    color: var(--z-secondary); cursor: pointer;
+  }
+  #gatePill .dot {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--z-status-ok);
+  }
+  #gatePill.blocked { color: var(--z-text); border-color: rgba(217,119,87,0.45); }
+  #gatePill.blocked .dot { background: var(--z-status-blocked); }
+  /* Phase 1 — Contemplating / live state indicator (ambient, not content) */
+  #stateIndicator {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    margin: 0 20px 10px;
+    padding: 2px 0;
+    opacity: 0.7;
+    color: var(--z-secondary);
+    font-family: var(--z-font-ui);
+    font-size: 13px;
+    line-height: 1.2;
+    transition: opacity 0.15s ease;
+  }
+  #stateIndicator.show { display: inline-flex; }
+  #stateIndicator .si-icon {
+    width: 16px; height: 16px; flex: 0 0 16px;
+    color: var(--z-accent);
+    display: none;
+  }
+  #stateIndicator .si-icon svg { width: 16px; height: 16px; display: block; }
+  #stateIndicator.icon-sunburst .si-icon.sunburst { display: block; }
+  #stateIndicator.icon-magnifier .si-icon.magnifier { display: block; }
+  #stateIndicator .si-label {
+    font-weight: 450;
+    color: var(--z-secondary);
+    font-family: var(--z-font-ui);
+  }
+  #stateIndicator .si-icon.sunburst {
+    animation: z-sunburst-spin 3.5s linear infinite;
+  }
+  @keyframes z-sunburst-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #stateIndicator .si-icon.sunburst { animation: none; }
+  }
+  .msg.trace {
+    margin: 0 0 10px;
+    font-family: var(--z-font-ui);
+  }
+  .msg.trace .trace-title {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    background: transparent; border: none; padding: 4px 0;
+    color: var(--z-secondary); font-size: 13px; font-weight: 500;
+    font-family: var(--z-font-ui); text-align: left; cursor: pointer;
+  }
+  .msg.trace .trace-title:hover { color: var(--z-text); }
+  .msg.trace .chev {
+    color: var(--z-muted); font-size: 11px; width: 12px; flex: 0 0 12px;
+  }
+  .msg.trace .trace-body {
+    display: none;
+    margin: 2px 0 6px 20px;
+    padding: 0 0 4px 14px;
+    border-left: 1px solid var(--z-border);
+    color: var(--z-secondary);
+    font-size: 12.5px;
+    line-height: 1.45;
+    font-family: var(--z-font-ui);
+  }
+  .msg.trace.expanded .trace-body { display: block; }
+  .msg.trace .trace-row {
+    display: flex; gap: 8px; align-items: flex-start; margin: 0 0 6px;
+  }
+  .msg.trace .trace-glyph {
+    flex: 0 0 14px; width: 14px; text-align: center;
+    color: var(--z-secondary); font-size: 12px; line-height: 1.4;
+  }
+  .msg.trace .trace-excerpt { flex: 1; white-space: pre-wrap; word-break: break-word; }
+  .msg.trace .res-ok { color: var(--z-status-ok); }
+  .msg.trace .res-bad { color: var(--z-status-blocked); }
+  .msg.trace .res-label { font-weight: 500; }
 </style>
 </head>
 <body>
   <div id="app">
-    <div id="brand">Z</div>
+    <div id="topbar">
+      <div id="brand">Z</div>
+      <div id="rail">
+        <button type="button" id="btnUnc" title="Uncertainty">Uncertainty</button>
+        <button type="button" id="btnSkills" title="Skills">Skills</button>
+        <button type="button" id="btnMcp" title="MCP">MCP</button>
+        <button type="button" id="btnGate" title="Commit Gate">Gate</button>
+        <button type="button" id="btnProfile" title="Profile">Profile</button>
+      </div>
+    </div>
     <div id="activity" class="idle" aria-live="polite">
       <div class="line1"><span class="summary">Agent ready — you prompt, Z programs</span></div>
       <div class="line2"></div>
     </div>
     <div id="banner"><span id="bannerText"></span><button class="secondary" id="reconnect">Reconnect</button></div>
     <div id="msgs"></div>
+    <div id="stateIndicator" class="icon-sunburst" aria-live="polite" aria-hidden="true">
+      <span class="si-icon sunburst" aria-hidden="true">
+        <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M8 1.2v2.2M8 12.6v2.2M1.2 8h2.2M12.6 8h2.2M3.05 3.05l1.56 1.56M11.39 11.39l1.56 1.56M3.05 12.95l1.56-1.56M11.39 4.61l1.56-1.56"
+            stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+          <circle cx="8" cy="8" r="2.1" stroke="currentColor" stroke-width="1.4"/>
+        </svg>
+      </span>
+      <span class="si-icon magnifier" aria-hidden="true">
+        <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="7" cy="7" r="4.2" stroke="currentColor" stroke-width="1.4"/>
+          <path d="M10.2 10.2L13.5 13.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+      </span>
+      <span class="si-label">Contemplating</span>
+    </div>
     <div id="waiting">
       <div class="q" id="wq"></div>
       <div class="subject" id="wsubject"></div>
@@ -772,12 +1051,17 @@ export class MainChatPanel {
       <div class="more" id="qmore"></div>
     </div>
     <div id="composer">
-      <textarea id="input" placeholder="Prompt the agent…"></textarea>
-      <div class="row">
-        <button id="send">Send</button>
-        <button class="secondary" id="cancel">Stop</button>
-        <button class="secondary" id="clear">Clear</button>
-        <span class="hint">Enter to send · Shift+Enter newline · busy → queues</span>
+      <div class="composer-shell">
+        <textarea id="input" placeholder="Prompt the agent…"></textarea>
+        <div class="row">
+          <button type="button" id="gatePill" title="Commit Gate">
+            <span class="dot"></span><span id="gatePillLabel">Ready</span>
+          </button>
+          <button id="send">Send</button>
+          <button class="secondary" id="cancel">Stop</button>
+          <button class="secondary" id="clear">Clear</button>
+          <span class="hint">Enter to send · Shift+Enter newline · busy → queues</span>
+        </div>
       </div>
     </div>
   </div>
@@ -787,6 +1071,7 @@ export class MainChatPanel {
     const activityEl = document.getElementById('activity');
     const waitingEl = document.getElementById('waiting');
     const queueEl = document.getElementById('queue');
+    const stateIndicatorEl = document.getElementById('stateIndicator');
     const input = document.getElementById('input');
     let waiting = null;
 
@@ -912,6 +1197,33 @@ export class MainChatPanel {
 
     function renderMessages(messages) {
       msgsEl.innerHTML = messages.map(m => {
+        if (m.kind === 'trace' && m.step) {
+          const s = m.step;
+          const expanded = !!s.expanded;
+          const status = String(s.status || 'done');
+          const resLabel = s.resolutionLabel
+            || (status === 'needs_input' ? 'Needs input'
+              : status === 'blocked' ? 'Blocked'
+              : status === 'cancelled' ? 'Cancelled'
+              : 'Done');
+          const bad = status === 'blocked' || status === 'needs_input' || status === 'cancelled';
+          const resCls = bad ? 'res-bad' : 'res-ok';
+          const check = bad ? '!' : '✓';
+          const excerpt = s.excerpt
+            ? ('<div class="trace-row"><span class="trace-glyph" aria-hidden="true">⏱</span>'
+              + '<div class="trace-excerpt">' + escapeHtml(s.excerpt) + '</div></div>')
+            : '';
+          return '<div class="msg system trace' + (expanded ? ' expanded' : '') + '" data-step="' + escapeHtml(s.stepId) + '">'
+            + '<button type="button" class="trace-title" aria-expanded="' + (expanded ? 'true' : 'false') + '">'
+            + '<span class="chev">' + (expanded ? '▾' : '▸') + '</span>'
+            + '<span class="t">' + escapeHtml(s.title || m.text || 'Step') + '</span>'
+            + '</button>'
+            + '<div class="trace-body" ' + (expanded ? '' : 'aria-hidden="true"') + '>'
+            + excerpt
+            + '<div class="trace-row"><span class="trace-glyph ' + resCls + '" aria-hidden="true">' + check + '</span>'
+            + '<span class="res-label ' + resCls + '">' + escapeHtml(resLabel) + '</span></div>'
+            + '</div></div>';
+        }
         const kind = m.kind || '';
         const role = kind === 'tool' ? 'Tool'
           : m.role === 'user' ? 'You'
@@ -920,6 +1232,13 @@ export class MainChatPanel {
         const cls = 'msg ' + m.role + (kind ? ' ' + kind : '');
         return '<div class="' + cls + '"><div class="role">' + role + '</div><div class="bubble">' + escapeHtml(m.text) + '</div></div>';
       }).join('');
+      for (const btn of msgsEl.querySelectorAll('.trace-title')) {
+        btn.addEventListener('click', () => {
+          const row = btn.closest('[data-step]');
+          const stepId = row && row.getAttribute('data-step');
+          if (stepId) vscode.postMessage({ type: 'toggleTrace', stepId });
+        });
+      }
       msgsEl.scrollTop = msgsEl.scrollHeight;
     }
 
@@ -935,6 +1254,35 @@ export class MainChatPanel {
       document.getElementById('qmore').textContent = extra
         ? ('+' + extra + ' more queued')
         : (q.queueLen + ' in queue');
+    }
+
+    function renderGate(n) {
+      const pill = document.getElementById('gatePill');
+      const label = document.getElementById('gatePillLabel');
+      if (!pill || !label) return;
+      const count = Number(n) || 0;
+      if (count > 0) {
+        pill.classList.add('blocked');
+        label.textContent = count + ' blocked';
+      } else {
+        pill.classList.remove('blocked');
+        label.textContent = 'Ready';
+      }
+    }
+
+    function renderIndicator(ind) {
+      if (!stateIndicatorEl) return;
+      if (!ind || !ind.visible) {
+        stateIndicatorEl.classList.remove('show');
+        stateIndicatorEl.setAttribute('aria-hidden', 'true');
+        return;
+      }
+      const icon = ind.icon === 'magnifier' ? 'magnifier' : 'sunburst';
+      stateIndicatorEl.className = 'show icon-' + icon;
+      stateIndicatorEl.setAttribute('aria-hidden', 'false');
+      stateIndicatorEl.setAttribute('aria-label', ind.label || 'Contemplating');
+      const labelEl = stateIndicatorEl.querySelector('.si-label');
+      if (labelEl) labelEl.textContent = ind.label || 'Contemplating';
     }
 
     function renderWaiting(w) {
@@ -983,6 +1331,8 @@ export class MainChatPanel {
       renderMessages(data.messages || []);
       renderWaiting(data.waiting || null);
       renderQueue(data.queue || null);
+      renderGate(data.gateBlockedCount);
+      renderIndicator(data.indicator);
     });
 
     document.getElementById('send').onclick = () => {
@@ -993,6 +1343,12 @@ export class MainChatPanel {
     document.getElementById('cancel').onclick = () => vscode.postMessage({ type: 'cancel' });
     document.getElementById('clear').onclick = () => vscode.postMessage({ type: 'clear' });
     document.getElementById('reconnect').onclick = () => vscode.postMessage({ type: 'reconnect' });
+    document.getElementById('gatePill').onclick = () => vscode.postMessage({ type: 'openGate' });
+    document.getElementById('btnProfile').onclick = () => vscode.postMessage({ type: 'openProfile' });
+    document.getElementById('btnGate').onclick = () => vscode.postMessage({ type: 'openGate' });
+    document.getElementById('btnUnc').onclick = () => vscode.postMessage({ type: 'openUncertainty' });
+    document.getElementById('btnSkills').onclick = () => vscode.postMessage({ type: 'openSkills' });
+    document.getElementById('btnMcp').onclick = () => vscode.postMessage({ type: 'openMcp' });
     document.getElementById('wchangeSend').onclick = () => {
       const t = document.getElementById('wchangetext').value;
       vscode.postMessage({ type: 'respond', response: 'change', changeText: t });
