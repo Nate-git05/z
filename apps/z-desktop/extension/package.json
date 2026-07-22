@@ -2,7 +2,7 @@
   "name": "z-editor",
   "displayName": "Z",
   "description": "Z coding agent — Chat-first shell, soft black / sherbet UI, uncertainty, skills, commit gate",
-  "version": "0.9.0",
+  "version": "0.9.2",
   "publisher": "z",
   "license": "MIT",
   "repository": {
