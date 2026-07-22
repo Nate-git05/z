@@ -8,8 +8,9 @@ import atexit
 import json
 import logging
 import os
+from datetime import date, datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from aider.z.app_server.handlers import AppServerSession, HandlerError
 from aider.z.app_server.protocol import make_error, make_notification, make_result, parse_message
@@ -18,6 +19,21 @@ logger = logging.getLogger("z.app_server")
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8741
+
+
+def _json_default(obj: Any) -> Any:
+    """Make Chroma/skill metadata (datetime, etc.) safe for JSON-RPC."""
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    if isinstance(obj, bytes):
+        return obj.decode("utf-8", errors="replace")
+    if isinstance(obj, set):
+        return list(obj)
+    return str(obj)
+
+
+def _dumps(msg: dict) -> str:
+    return json.dumps(msg, default=_json_default)
 
 
 def _write_pid_file(path: Optional[str]) -> None:
