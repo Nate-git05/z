@@ -534,6 +534,7 @@ class InputOutput:
         commands,
         abs_read_only_fnames=None,
         edit_format=None,
+        prompt_chrome=None,
     ):
         self.rule()
 
@@ -548,12 +549,15 @@ class InputOutput:
             ]
             show = self.format_files_for_input(rel_fnames, rel_read_only_fnames)
 
-        prompt_prefix = ""
-        if edit_format:
-            prompt_prefix += edit_format
-        if self.multiline_mode:
-            prompt_prefix += (" " if edit_format else "") + "multi"
-        prompt_prefix += "> "
+        if prompt_chrome is not None:
+            prompt_prefix = prompt_chrome
+        else:
+            prompt_prefix = ""
+            if edit_format:
+                prompt_prefix += edit_format
+            if self.multiline_mode:
+                prompt_prefix += (" " if edit_format else "") + "multi"
+            prompt_prefix += "> "
 
         show += prompt_prefix
         self.prompt_prefix = prompt_prefix
@@ -1184,11 +1188,18 @@ class InputOutput:
     def tool_warning(self, message="", strip=True):
         self._tool_message(message, strip, self.tool_warning_color)
 
-    def tool_output(self, *messages, log_only=False, bold=False):
+    def tool_output(self, *messages, log_only=False, bold=False, mirror_history=None):
         if messages:
-            hist = " ".join(messages)
-            hist = f"{hist.strip()}"
-            self.append_chat_history(hist, linebreak=True, blockquote=True)
+            if mirror_history is None:
+                from aider.z.ux_flags import history_mirror_status_enabled
+
+                mirror = history_mirror_status_enabled()
+            else:
+                mirror = bool(mirror_history)
+            if mirror:
+                hist = " ".join(messages)
+                hist = f"{hist.strip()}"
+                self.append_chat_history(hist, linebreak=True, blockquote=True)
 
         if log_only:
             return
@@ -1202,6 +1213,10 @@ class InputOutput:
 
         style = RichStyle(**style)
         self.console.print(*messages, style=style)
+
+    def session_note(self, message="", *, bold=False):
+        """Print a status line that always mirrors into chat history (mode changes, etc.)."""
+        self.tool_output(message, bold=bold, mirror_history=True)
 
     def get_assistant_mdstream(self):
         mdargs = dict(
