@@ -125,14 +125,19 @@ class PlanChangeOptionTest(unittest.TestCase):
         self.assertIsNotNone(final)
         self.assertEqual(io.plan_confirm_ask.call_count, 2)
         self.assertTrue(io.prompt_ask.called)
-        # After Change: pause prompt so updated plan is readable
+        # Change re-confirms compactly — no full-plan dump / Enter pause
         pause_calls = [
             c for c in io.prompt_ask.call_args_list
             if c.args and "done reading" in str(c.args[0]).lower()
         ]
-        self.assertTrue(pause_calls, "expected Enter-to-continue after plan update")
-        blob = " ".join(final.steps).lower()
+        self.assertFalse(pause_calls, "Change should not dump full plan + Enter pause")
+        out_blob = " ".join(
+            str(c.args[0]) for c in io.tool_output.call_args_list if c.args
+        )
+        self.assertIn("Plan updated", out_blob)
+        blob = " ".join(final.steps).lower() + " " + (final.approach or "").lower()
         self.assertIn("socket", blob)
+        self.assertIn("python", blob)
 
     def test_view_pauses_before_reconfirm(self):
         plan = draft_plan_from_request("build me a slack chatbot")
