@@ -1,8 +1,8 @@
 {
   "name": "z-editor",
   "displayName": "Z",
-  "description": "Z coding agent — agent-first chat, uncertainty chain, skills, commit gate",
-  "version": "0.6.0",
+  "description": "Z coding agent — agent-first chat, uncertainty chain, skills, commit gate (Z Terminal orange/black)",
+  "version": "0.6.1",
   "publisher": "z",
   "engines": {
     "vscode": "^1.85.0"
@@ -14,6 +14,13 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "themes": [
+      {
+        "label": "Z Terminal",
+        "uiTheme": "vs-dark",
+        "path": "./themes/z-terminal-color-theme.json"
+      }
+    ],
     "viewsContainers": {
       "activitybar": [
         {
@@ -74,6 +81,10 @@
         "title": "Z: Focus Skills"
       },
       {
+        "command": "z.applyTerminalTheme",
+        "title": "Z: Apply Terminal Theme (orange / black)"
+      },
+      {
         "command": "z.startAppServer",
         "title": "Z: Start app-server"
       },
@@ -124,6 +135,11 @@
           "type": "boolean",
           "default": true,
           "description": "Open the center Chat panel when the extension activates (agent-first main interface)."
+        },
+        "z.applyTerminalThemeOnActivate": {
+          "type": "boolean",
+          "default": true,
+          "description": "Apply the Z Terminal color theme (burnt orange on near-black, matching the CLI) when the extension activates."
         }
       }
     }

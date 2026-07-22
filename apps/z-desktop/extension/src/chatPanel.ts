@@ -5,6 +5,7 @@
 
 import * as vscode from "vscode";
 import { AppServerManager } from "./appServerManager";
+import { zThemeCss } from "./zTheme";
 
 type ChatRole = "user" | "assistant" | "system";
 
@@ -364,80 +365,73 @@ export class MainChatPanel {
 <head>
 <meta charset="UTF-8" />
 <style>
-  :root { color-scheme: light dark; }
+  ${zThemeCss()}
   html, body {
     height: 100%; margin: 0; padding: 0;
-    font-family: var(--vscode-font-family);
-    color: var(--vscode-foreground);
-    background: var(--vscode-editor-background);
+    font-family: "IBM Plex Mono", "JetBrains Mono", "SF Mono", ui-monospace, monospace;
   }
   #app {
     display: flex; flex-direction: column; height: 100vh; box-sizing: border-box;
     max-width: 820px; margin: 0 auto; width: 100%;
+    background:
+      radial-gradient(ellipse 80% 50% at 50% -10%, rgba(201,106,43,0.18), transparent 55%),
+      var(--z-bg);
   }
   #brand {
-    padding: 16px 20px 8px;
-    font-size: 22px; font-weight: 700; letter-spacing: -0.02em;
+    padding: 20px 20px 6px;
+    font-size: 28px; font-weight: 700; letter-spacing: -0.03em;
+    color: var(--z-accent-bright);
   }
   #status {
-    padding: 0 20px 10px; font-size: 12px; opacity: 0.8; min-height: 16px;
+    padding: 0 20px 12px; font-size: 12px; color: var(--z-muted); min-height: 16px;
   }
-  #status.busy { opacity: 1; }
+  #status.busy { color: var(--z-accent); }
   #msgs {
     flex: 1; overflow-y: auto; padding: 8px 20px 16px;
   }
-  .msg { margin: 0 0 16px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+  .msg { margin: 0 0 16px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
   .msg .role {
-    font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
-    opacity: 0.55; margin-bottom: 4px;
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--z-accent); margin-bottom: 4px;
   }
-  .msg.system .bubble { opacity: 0.8; font-size: 12px; }
+  .msg.user .role { color: var(--z-muted); }
+  .msg.system .bubble { color: var(--z-muted); font-size: 12px; }
   #waiting {
     display: none; margin: 0 16px; padding: 12px 14px;
-    border: 1px solid var(--vscode-panel-border, rgba(127,127,127,0.35));
-    background: var(--vscode-inputValidation-infoBackground, transparent);
+    border: 1px solid var(--z-accent-dim);
+    background: var(--z-raised);
   }
   #waiting.show { display: block; }
-  #waiting .q { font-weight: 600; margin-bottom: 6px; }
+  #waiting .q { font-weight: 600; margin-bottom: 6px; color: var(--z-accent-bright); }
   #waiting .subject {
-    max-height: 160px; overflow: auto; font-size: 12px; opacity: 0.85;
+    max-height: 160px; overflow: auto; font-size: 12px; color: var(--z-muted);
     margin-bottom: 8px; white-space: pre-wrap;
   }
   #waiting .actions { display: flex; flex-wrap: wrap; gap: 6px; }
   #queue {
     display: none; margin: 8px 16px 0; padding: 10px 12px;
-    border: 1px dashed var(--vscode-panel-border, rgba(127,127,127,0.45));
-    background: var(--vscode-editorWidget-background, transparent);
+    border: 1px dashed var(--z-accent);
+    background: var(--z-surface);
     font-size: 12px;
   }
   #queue.show { display: block; }
   #queue .label {
     font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
-    opacity: 0.65; margin-bottom: 4px;
+    color: var(--z-accent); margin-bottom: 4px;
   }
-  #queue .preview { white-space: pre-wrap; word-break: break-word; }
-  #queue .more { opacity: 0.65; margin-top: 4px; font-size: 11px; }
+  #queue .preview { white-space: pre-wrap; word-break: break-word; color: var(--z-text); }
+  #queue .more { color: var(--z-muted); margin-top: 4px; font-size: 11px; }
   #composer {
-    border-top: 1px solid var(--vscode-panel-border, rgba(127,127,127,0.3));
+    border-top: 1px solid var(--z-border);
     padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 8px;
+    background: var(--z-surface);
   }
   textarea {
     width: 100%; min-height: 88px; resize: vertical; box-sizing: border-box;
-    background: var(--vscode-input-background); color: var(--vscode-input-foreground);
-    border: 1px solid var(--vscode-input-border, transparent); padding: 10px;
-    font-family: inherit; font-size: 14px;
+    padding: 10px; font-family: inherit; font-size: 14px;
   }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  button {
-    background: var(--vscode-button-background); color: var(--vscode-button-foreground);
-    border: none; padding: 7px 14px; cursor: pointer;
-  }
-  button.secondary {
-    background: var(--vscode-button-secondaryBackground);
-    color: var(--vscode-button-secondaryForeground);
-  }
-  button:disabled { opacity: 0.5; cursor: default; }
-  .hint { font-size: 11px; opacity: 0.55; }
+  .hint { font-size: 11px; color: var(--z-muted); }
 </style>
 </head>
 <body>

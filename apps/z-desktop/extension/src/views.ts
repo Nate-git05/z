@@ -12,6 +12,7 @@ import { MainChatPanel } from "./chatPanel";
 import { UncertaintyTreeProvider } from "./uncertaintyView";
 import { CommitGateProvider } from "./commitGateView";
 import { SkillsViewProvider } from "./skillsView";
+import { zThemeCss } from "./zTheme";
 
 export function registerViews(
   context: vscode.ExtensionContext,
@@ -129,32 +130,21 @@ class ProfileViewProvider implements vscode.WebviewViewProvider {
 <head>
 <meta charset="UTF-8" />
 <style>
+  ${zThemeCss()}
   body {
-    font-family: var(--vscode-font-family);
-    color: var(--vscode-foreground);
+    font-family: "IBM Plex Mono", "JetBrains Mono", ui-monospace, monospace;
     padding: 12px;
     margin: 0;
     font-size: 13px;
   }
-  h3 { margin: 0 0 10px; font-weight: 600; }
-  .muted { opacity: 0.75; margin: 0 0 12px; line-height: 1.4; }
+  h3 { margin: 0 0 10px; font-weight: 600; color: var(--z-accent-bright); }
+  .muted { color: var(--z-muted); margin: 0 0 12px; line-height: 1.4; }
   .row { margin: 8px 0; }
-  .label { opacity: 0.7; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .label { color: var(--z-accent); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
   .value { margin-top: 2px; word-break: break-all; }
-  button {
-    background: var(--vscode-button-background);
-    color: var(--vscode-button-foreground);
-    border: none;
-    padding: 6px 12px;
-    margin: 4px 6px 4px 0;
-    cursor: pointer;
-  }
-  button.secondary {
-    background: var(--vscode-button-secondaryBackground);
-    color: var(--vscode-button-secondaryForeground);
-  }
-  .ok { color: var(--vscode-testing-iconPassed, #3fb950); }
-  .bad { color: var(--vscode-errorForeground); }
+  button { margin: 4px 6px 4px 0; }
+  .ok { color: var(--z-accent); }
+  .bad { color: var(--z-accent-bright); }
 </style>
 </head>
 <body>

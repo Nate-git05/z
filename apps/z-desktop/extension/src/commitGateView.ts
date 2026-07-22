@@ -4,6 +4,7 @@
 
 import * as vscode from "vscode";
 import { AppServerManager } from "./appServerManager";
+import { zThemeCss } from "./zTheme";
 
 interface BlockRecord {
   id?: string;
@@ -91,41 +92,39 @@ export class CommitGateProvider implements vscode.WebviewViewProvider {
 <head>
 <meta charset="UTF-8" />
 <style>
-  :root { color-scheme: light dark; }
+  ${zThemeCss()}
   html, body {
     height: 100%; margin: 0; padding: 0;
-    font-family: var(--vscode-font-family);
-    color: var(--vscode-foreground);
-    background: var(--vscode-sideBar-background);
+    font-family: "IBM Plex Mono", "JetBrains Mono", ui-monospace, monospace;
     font-size: 12px;
   }
   #hdr {
     display: flex; align-items: center; justify-content: space-between;
     padding: 10px 12px 6px;
   }
-  h3 { margin: 0; font-size: 13px; font-weight: 600; }
+  h3 { margin: 0; font-size: 13px; font-weight: 600; color: var(--z-accent-bright); }
   #banner {
     margin: 0 12px 10px; padding: 8px 10px; font-size: 12px; font-weight: 600;
-    border: 1px solid var(--vscode-panel-border, rgba(127,127,127,0.35));
+    border: 1px solid var(--z-border); background: var(--z-raised);
   }
-  #banner.ok { color: var(--vscode-testing-iconPassed, #3fb950); }
-  #banner.blocked { color: var(--vscode-errorForeground); }
+  #banner.ok { color: var(--z-muted); border-color: var(--z-border); }
+  #banner.blocked { color: var(--z-accent-bright); border-color: var(--z-accent); }
   section { padding: 0 12px 14px; }
   .sec-title {
     font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
-    opacity: 0.55; margin-bottom: 6px;
+    color: var(--z-accent); margin-bottom: 6px;
   }
   .item {
-    padding: 8px 0; border-bottom: 1px solid var(--vscode-panel-border, rgba(127,127,127,0.25));
+    padding: 8px 0; border-bottom: 1px solid var(--z-border);
   }
   .item .reason { line-height: 1.35; }
-  .item .meta { opacity: 0.6; margin-top: 3px; font-size: 11px; }
-  .empty { opacity: 0.65; line-height: 1.4; }
-  .err { color: var(--vscode-errorForeground); padding: 12px; }
-  button {
-    background: transparent; color: var(--vscode-foreground);
-    border: 1px solid var(--vscode-panel-border, rgba(127,127,127,0.4));
-    padding: 2px 8px; font-size: 11px; cursor: pointer;
+  .item .meta { color: var(--z-muted); margin-top: 3px; font-size: 11px; }
+  .empty { color: var(--z-muted); line-height: 1.4; }
+  .err { color: var(--z-accent-bright); padding: 12px; }
+  button.secondary, #refresh {
+    background: transparent; color: var(--z-text);
+    border: 1px solid var(--z-border);
+    padding: 2px 8px; font-size: 11px; font-weight: 500;
   }
 </style>
 </head>

@@ -4,6 +4,7 @@
 
 import * as vscode from "vscode";
 import { AppServerManager } from "./appServerManager";
+import { zThemeCss } from "./zTheme";
 
 interface SkillSummary {
   id?: string;
@@ -261,65 +262,56 @@ export class SkillsViewProvider implements vscode.WebviewViewProvider {
 <head>
 <meta charset="UTF-8" />
 <style>
-  :root { color-scheme: light dark; }
+  ${zThemeCss()}
   html, body {
     height: 100%; margin: 0; padding: 0;
-    font-family: var(--vscode-font-family);
-    color: var(--vscode-foreground);
-    background: var(--vscode-sideBar-background);
+    font-family: "IBM Plex Mono", "JetBrains Mono", ui-monospace, monospace;
     font-size: 12px;
   }
   #hdr {
     display: flex; align-items: center; justify-content: space-between;
     padding: 10px 12px 6px; gap: 8px;
   }
-  h3 { margin: 0; font-size: 13px; font-weight: 600; }
+  h3 { margin: 0; font-size: 13px; font-weight: 600; color: var(--z-accent-bright); }
   #filters {
     display: flex; flex-direction: column; gap: 4px; padding: 0 12px 8px;
   }
   #filters row, .row { display: flex; gap: 4px; flex-wrap: wrap; }
   input, select, textarea {
-    background: var(--vscode-input-background); color: var(--vscode-input-foreground);
-    border: 1px solid var(--vscode-panel-border, rgba(127,127,127,0.35));
     padding: 4px 6px; font-size: 11px; font-family: inherit; box-sizing: border-box;
   }
   input, select { flex: 1; min-width: 0; }
   textarea { width: 100%; min-height: 72px; resize: vertical; }
-  button {
-    background: var(--vscode-button-background); color: var(--vscode-button-foreground);
-    border: none; padding: 4px 10px; font-size: 11px; cursor: pointer;
-  }
-  button.secondary {
-    background: transparent; color: var(--vscode-foreground);
-    border: 1px solid var(--vscode-panel-border, rgba(127,127,127,0.4));
-  }
+  button { padding: 4px 10px; font-size: 11px; }
   #list, #detail, #create { padding: 0 12px 16px; overflow-y: auto; }
   .item {
-    padding: 8px 0; border-bottom: 1px solid var(--vscode-panel-border, rgba(127,127,127,0.25));
+    padding: 8px 0; border-bottom: 1px solid var(--z-border);
     cursor: pointer;
   }
+  .item:hover .title { color: var(--z-accent-bright); }
   .item .title { font-weight: 600; }
-  .item .meta { opacity: 0.65; margin-top: 2px; font-size: 11px; }
+  .item .meta { color: var(--z-muted); margin-top: 2px; font-size: 11px; }
   .badge {
     display: inline-block; font-size: 10px; padding: 1px 5px; margin-right: 4px;
-    border: 1px solid var(--vscode-panel-border, rgba(127,127,127,0.4));
+    border: 1px solid var(--z-accent-dim); color: var(--z-accent);
   }
-  .empty, .err, .status { padding: 8px 0; line-height: 1.4; opacity: 0.8; }
-  .err { color: var(--vscode-errorForeground); opacity: 1; }
-  .status { color: var(--vscode-testing-iconPassed, #3fb950); opacity: 1; }
+  .empty, .err, .status { padding: 8px 0; line-height: 1.4; color: var(--z-muted); }
+  .err { color: var(--z-accent-bright); }
+  .status { color: var(--z-accent); }
   .field { margin: 0 0 8px; }
   .field label {
     display: block; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
-    opacity: 0.6; margin-bottom: 3px;
+    color: var(--z-accent); margin-bottom: 3px;
   }
   .near {
     margin: 8px 0; padding: 8px;
-    border: 1px dashed var(--vscode-charts-orange, #e2a03e);
+    border: 1px dashed var(--z-accent);
+    background: var(--z-raised);
   }
   .hidden { display: none; }
   pre {
     white-space: pre-wrap; word-break: break-word; font-size: 11px;
-    background: var(--vscode-editor-background); padding: 8px; margin: 6px 0 0;
+    background: var(--z-raised); padding: 8px; margin: 6px 0 0; border: 1px solid var(--z-border);
   }
 </style>
 </head>

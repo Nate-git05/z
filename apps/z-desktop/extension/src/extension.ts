@@ -28,6 +28,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Agent-first: Chat is the main interface (center), not a sidebar.
   const cfgEarly = vscode.workspace.getConfiguration("z");
+  if (cfgEarly.get<boolean>("applyTerminalThemeOnActivate", true)) {
+    await applyZTerminalTheme();
+  }
   if (cfgEarly.get<boolean>("openChatOnActivate", true)) {
     openChat();
     void vscode.commands.executeCommand("workbench.view.extension.z-left");
@@ -35,6 +38,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   }
 
   context.subscriptions.push(
+    vscode.commands.registerCommand("z.applyTerminalTheme", () => applyZTerminalTheme(true)),
     vscode.commands.registerCommand("z.startAppServer", async () => {
       try {
         await manager!.startProcess();
@@ -87,6 +91,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 export function deactivate(): void {
   manager?.dispose();
   manager = null;
+}
+
+/** Apply burnt-orange / near-black theme matching aider/z/theme.py (CLI). */
+async function applyZTerminalTheme(showToast = false): Promise<void> {
+  // Contributed theme id: ${publisher}.${name}-${label}
+  const themeId = "z.z-editor-Z Terminal";
+  try {
+    await vscode.workspace
+      .getConfiguration("workbench")
+      .update("colorTheme", themeId, vscode.ConfigurationTarget.Global);
+    if (showToast) {
+      vscode.window.showInformationMessage("Z Terminal theme applied (orange / black).");
+    }
+  } catch (err) {
+    if (showToast) {
+      vscode.window.showWarningMessage(
+        `Could not apply Z Terminal theme: ${err instanceof Error ? err.message : err}`
+      );
+    }
+  }
 }
 
 function updateStatusBar(m: AppServerManager): void {

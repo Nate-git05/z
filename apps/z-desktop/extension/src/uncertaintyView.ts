@@ -4,6 +4,7 @@
 
 import * as vscode from "vscode";
 import { AppServerManager } from "./appServerManager";
+import { zThemeCss } from "./zTheme";
 
 interface ResolutionContract {
   node_id?: string;
@@ -220,71 +221,67 @@ export class UncertaintyTreeProvider implements vscode.WebviewViewProvider {
 <head>
 <meta charset="UTF-8" />
 <style>
-  :root { color-scheme: light dark; }
+  ${zThemeCss()}
   html, body {
     height: 100%; margin: 0; padding: 0;
-    font-family: var(--vscode-font-family);
-    color: var(--vscode-foreground);
-    background: var(--vscode-sideBar-background);
+    font-family: "IBM Plex Mono", "JetBrains Mono", ui-monospace, monospace;
     font-size: 12px;
   }
   #hdr {
     display: flex; align-items: center; justify-content: space-between;
     padding: 10px 12px 4px; gap: 8px;
   }
-  h3 { margin: 0; font-size: 13px; font-weight: 600; }
+  h3 { margin: 0; font-size: 13px; font-weight: 600; color: var(--z-accent-bright); }
   .live {
     font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
-    opacity: 0.5;
+    color: var(--z-muted);
   }
-  .live.on { opacity: 1; color: var(--vscode-charts-orange, #e2a03e); }
+  .live.on { color: var(--z-accent); }
   #toolbar {
     display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 12px 8px; align-items: center;
   }
   #toolbar select, #toolbar label {
-    font-size: 11px; background: var(--vscode-input-background);
-    color: var(--vscode-input-foreground); border: 1px solid var(--vscode-panel-border, rgba(127,127,127,0.35));
-    padding: 2px 4px;
+    font-size: 11px; padding: 2px 4px;
   }
-  #toolbar label { display: flex; align-items: center; gap: 4px; border: none; background: transparent; }
+  #toolbar label { display: flex; align-items: center; gap: 4px; border: none; background: transparent; color: var(--z-muted); }
   #chain { padding: 0 10px 16px; overflow-y: auto; }
   .group-title {
     font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
-    opacity: 0.55; padding: 8px 4px 4px;
+    color: var(--z-accent-dim); padding: 8px 4px 4px;
   }
   .card {
     position: relative; margin: 0 0 0 10px; padding: 8px 10px 8px 14px;
-    border-left: 2px solid var(--vscode-panel-border, rgba(127,127,127,0.45));
+    border-left: 2px solid var(--z-border);
     cursor: pointer;
   }
   .card::before {
     content: ''; position: absolute; left: -5px; top: 14px;
     width: 8px; height: 8px; border-radius: 50%;
-    background: var(--vscode-descriptionForeground, #888);
+    background: var(--z-accent-dim);
   }
-  .card.High { border-left-color: var(--vscode-errorForeground, #f14c4c); }
-  .card.High::before { background: var(--vscode-errorForeground, #f14c4c); }
-  .card.Medium { border-left-color: var(--vscode-charts-orange, #e2a03e); }
-  .card.Medium::before { background: var(--vscode-charts-orange, #e2a03e); }
-  .card .title { font-weight: 600; line-height: 1.3; }
-  .card .meta { opacity: 0.65; margin-top: 2px; font-size: 11px; }
-  .card .sum { opacity: 0.85; margin-top: 4px; line-height: 1.35; }
+  .card.High { border-left-color: var(--z-accent-bright); }
+  .card.High::before { background: var(--z-accent-bright); }
+  .card.Medium { border-left-color: var(--z-accent); }
+  .card.Medium::before { background: var(--z-accent); }
+  .card .title { font-weight: 600; line-height: 1.3; color: var(--z-text); }
+  .card .meta { color: var(--z-muted); margin-top: 2px; font-size: 11px; }
+  .card .sum { color: var(--z-muted); margin-top: 4px; line-height: 1.35; }
   .detail {
     margin-top: 8px; padding-top: 8px;
-    border-top: 1px solid var(--vscode-panel-border, rgba(127,127,127,0.3));
-    font-size: 11px; line-height: 1.4;
+    border-top: 1px solid var(--z-border);
+    font-size: 11px; line-height: 1.4; color: var(--z-muted);
   }
   .detail .label {
     font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
-    opacity: 0.55; margin: 6px 0 2px;
+    color: var(--z-accent); margin: 6px 0 2px;
   }
   .detail ul { margin: 0; padding-left: 16px; }
-  .empty, .err { padding: 12px; opacity: 0.7; line-height: 1.4; }
-  .err { color: var(--vscode-errorForeground); }
-  button {
-    background: transparent; color: var(--vscode-foreground);
-    border: 1px solid var(--vscode-panel-border, rgba(127,127,127,0.4));
-    padding: 2px 8px; font-size: 11px; cursor: pointer;
+  .empty, .err { padding: 12px; color: var(--z-muted); line-height: 1.4; }
+  .err { color: var(--z-accent-bright); }
+  button.secondary, #refresh {
+    background: transparent; color: var(--z-text);
+    border: 1px solid var(--z-border);
+    padding: 2px 8px; font-size: 11px; font-weight: 500;
   }
 </style>
 </head>

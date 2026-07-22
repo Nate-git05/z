@@ -1,6 +1,7 @@
 # Z Desktop (app shell)
 
-**Status:** Phase 0–7 — agent-first Chat, gateway TaskMode routing, Uncertainty chain, Skills author.
+**Status:** Phase 0–7 — agent-first Chat, gateway TaskMode routing, Uncertainty chain, Skills author.  
+**Look:** Z Terminal palette (burnt orange `#C96A2B` on near-black `#0A0A0A`) — same as the CLI.
 
 **Read first:** [`docs/app/z-editor-v1-implementation-plan.md`](../../docs/app/z-editor-v1-implementation-plan.md)
 
@@ -52,6 +53,22 @@ Extension settings: `z.appServerUrl`, `z.autoStartAppServer`, `z.zBinary`.
 - `POST /v1/gateway/routing/outcome` — local verify/commit gate → calibration store
 - `GET /v1/gateway/usage`
 - Client: `aider.z.gateway_client` injects `task_mode` / `intent` via litellm `extra_body` (`Z_USE_GATEWAY=0` to disable)
+
+## Look & feel (Z Terminal theme)
+
+Matches `aider/z/theme.py`:
+
+| Token | Hex |
+|-------|-----|
+| Background | `#0A0A0A` |
+| Text | `#F5F5F5` |
+| Accent | `#C96A2B` |
+| Accent bright | `#E07830` |
+| Muted / status | `#D8D8D8` |
+
+- Workbench: contributed theme **Z Terminal** (applied on activate by default; `Z: Apply Terminal Theme`)
+- All Z webviews (Chat, Uncertainty, Skills, Commit Gate, Profile) share the same CSS tokens
+- Escape: `z.applyTerminalThemeOnActivate: false`
 
 ## Agent-first layout (Phase 4)
 
