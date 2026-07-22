@@ -400,21 +400,12 @@ class Commands:
                         )
                         self.io.tool_output(result.reflect_message)
                         return
-                    if not result.allow_commit:
-                        from aider.z.uncertainty.gate import (
-                            format_commit_blocked_message,
-                        )
+                    from aider.z.uncertainty.gate_ui import render_commit_gate
 
-                        detail = result.reason or "Resolve high-risk issues first."
-                        if getattr(result, "block_ui_emitted", False):
-                            msg = result.block_message or format_commit_blocked_message(
-                                detail, dirty_count=len(dirty or [])
-                            )
-                        else:
-                            msg = format_commit_blocked_message(
-                                detail, dirty_count=len(dirty or [])
-                            )
-                            self.io.tool_error(msg)
+                    render_commit_gate(
+                        result, io=self.io, dirty_count=len(dirty or [])
+                    )
+                    if not result.allow_commit:
                         return
                     commit_message = args.strip() if args else None
                     res = self.coder.repo.commit(

@@ -461,6 +461,85 @@ class TestCommands(TestCase):
             commands.cmd_commit(commit_message)
             self.assertFalse(repo.is_dirty())
 
+    def _verify_gate_commit_setup(self):
+        """Shared fixture: a dirty repo with the Z verify gate wired on."""
+        fname = "test.txt"
+        with open(fname, "w") as f:
+            f.write("test")
+        repo = git.Repo()
+        repo.git.add(fname)
+        repo.git.commit("-m", "initial")
+
+        io = InputOutput(pretty=False, fancy_input=False, yes=True)
+        coder = Coder.create(self.GPT35, None, io)
+        coder.uncertainty_engine = mock.MagicMock()
+        coder.verify_commit_gate = True
+        coder.dry_run = False
+        commands = Commands(io, coder)
+
+        with open(fname, "w") as f:
+            f.write("new")
+        return commands, coder
+
+    def test_raw_cmd_commit_renders_panel_and_blocks(self):
+        from aider.z.uncertainty.gate import GateResult
+        from aider.z.uncertainty.schema import NodeStatus, NodeType, Tier, UncertaintyNode
+
+        with GitTemporaryDirectory():
+            commands, coder = self._verify_gate_commit_setup()
+            blocked_node = UncertaintyNode(
+                title="Untested path",
+                type=NodeType.MISSING_TEST,
+                confidence_tier=Tier.LOW,
+                risk_tier=Tier.HIGH,
+                summary="no test coverage",
+                status=NodeStatus.OPEN,
+            )
+            result = GateResult(
+                allow_commit=False,
+                blocked_high=[blocked_node],
+                reason="high-risk blockers",
+            )
+            coder.repo.commit = mock.MagicMock()
+
+            with mock.patch(
+                "aider.z.uncertainty.gate.prepare_commit", return_value=result
+            ), mock.patch(
+                "aider.z.uncertainty.verify.gate_enabled", return_value=True
+            ), mock.patch(
+                "aider.z.uncertainty.gate_ui.render_commit_gate"
+            ) as render:
+                commands.raw_cmd_commit("msg")
+
+            render.assert_called_once()
+            _, kwargs = render.call_args
+            self.assertIs(render.call_args[0][0], result)
+            self.assertEqual(kwargs.get("dirty_count"), 1)
+            coder.repo.commit.assert_not_called()
+
+    def test_raw_cmd_commit_renders_panel_and_proceeds_when_clear(self):
+        from aider.z.uncertainty.gate import GateResult
+
+        with GitTemporaryDirectory():
+            commands, coder = self._verify_gate_commit_setup()
+            result = GateResult(allow_commit=True)
+            coder.repo.commit = mock.MagicMock(return_value="deadbeef")
+
+            with mock.patch(
+                "aider.z.uncertainty.gate.prepare_commit", return_value=result
+            ), mock.patch(
+                "aider.z.uncertainty.verify.gate_enabled", return_value=True
+            ), mock.patch(
+                "aider.z.uncertainty.gate_ui.render_commit_gate"
+            ) as render, mock.patch.object(
+                coder, "_maybe_suggest_skill", create=True
+            ):
+                commands.raw_cmd_commit("msg")
+
+            render.assert_called_once()
+            self.assertIs(render.call_args[0][0], result)
+            coder.repo.commit.assert_called_once()
+
     def test_cmd_add_from_outside_root(self):
         with ChdirTemporaryDirectory() as tmp_dname:
             root = Path("root")

@@ -810,26 +810,44 @@ class Coder:
             return True
         return bool(getattr(spinner, "visible", False))
 
+    def _emit_retained_step(self, retained_label: Optional[str]) -> None:
+        """Print a phase's "✓ done" scrollback line once it's finished."""
+        if not retained_label:
+            return
+        try:
+            self.io.tool_output(retained_label)
+        except Exception:
+            pass
+
     def _phase_spinner_start(self, text: str) -> None:
         """Start (or restart) the mascot/eyes spinner for a planning step."""
         self._stop_waiting_spinner()
         if not text:
             return
+        from aider.z.phase_kinds import infer_phase_kind
         from aider.z.ux_preamble import public_busy_label
 
-        # Quiet default: one "Working…" line; verbose keeps phase detail.
+        kind = infer_phase_kind(text)
+        # Default (non-verbose): a short live phase-kind label; verbose keeps
+        # the full detailed string.
         public = public_busy_label(text, coder=self)
         io = getattr(self, "io", None)
         orch = None
+        retained = None
+        kind_changed = True
         try:
             orch = io.ensure_turn_ux()
-            orch.enter_busy(public)
+            if getattr(orch, "phase_kind", None) is not None:
+                kind_changed = orch.phase_kind != kind
+                retained = orch.set_phase(public, kind=kind)
+            else:
+                orch.enter_busy(public, kind=kind)
         except Exception:
             orch = getattr(io, "turn_orchestrator", None)
+        self._emit_retained_step(retained)
         label = public
         if orch is not None:
             try:
-                orch.set_phase(public)
                 label = orch.status_label(public)
             except Exception:
                 if "Ctrl+C" not in label:
@@ -838,8 +856,11 @@ class Coder:
             label = f"{public}  · Ctrl+C to interrupt"
         try:
             if not self.show_pretty():
-                # Non-pretty / dumb terminals: still print a static breadcrumb
-                self.io.tool_output(label)
+                # Non-pretty / dumb terminals: print a static breadcrumb once
+                # per real phase-kind transition (not every same-kind
+                # sub-label update, to avoid reprinting the same bucket text).
+                if kind_changed:
+                    self.io.tool_output(label)
                 return
         except Exception:
             return
@@ -875,24 +896,30 @@ class Coder:
         """Update spinner status text without stopping the eyes animation."""
         if not text:
             return
+        from aider.z.phase_kinds import infer_phase_kind
+
+        new_kind = infer_phase_kind(text)
+        orch = getattr(getattr(self, "io", None), "turn_orchestrator", None)
+        same_kind = (
+            orch is not None
+            and getattr(orch, "phase_kind", None) == new_kind
+            and getattr(self, "waiting_spinner", None) is not None
+        )
+        if not same_kind:
+            # Real phase-kind transition — let _phase_spinner_start handle
+            # stopping the old spinner and emitting its retained line.
+            self._phase_spinner_start(text)
+            return
+
         from aider.z.ux_preamble import public_busy_label
 
         public = public_busy_label(text, coder=self)
-        orch = getattr(getattr(self, "io", None), "turn_orchestrator", None)
-        if orch is not None:
-            try:
-                orch.set_phase(public)
-                label = orch.status_label(public)
-            except Exception:
-                label = public
-        else:
+        try:
+            orch.set_phase(public, kind=new_kind)
+            label = orch.status_label(public)
+        except Exception:
             label = public
-            if "Ctrl+C" not in label:
-                label = f"{public}  · Ctrl+C to interrupt"
-        spinner = getattr(self, "waiting_spinner", None)
-        if spinner is None:
-            self._phase_spinner_start(text)
-            return
+        spinner = self.waiting_spinner
         try:
             if hasattr(spinner, "set_text"):
                 spinner.set_text(label)
@@ -905,7 +932,15 @@ class Coder:
 
     def _phase_spinner_stop(self) -> None:
         """Stop planning-phase spinner before printing or prompting."""
+        orch = getattr(getattr(self, "io", None), "turn_orchestrator", None)
+        retained = None
+        if orch is not None:
+            try:
+                retained = orch.finish_phase()
+            except Exception:
+                retained = None
         self._stop_waiting_spinner()
+        self._emit_retained_step(retained)
         try:
             self.io.stop_busy_queue_reader()
         except Exception:
@@ -3558,32 +3593,9 @@ class Coder:
             utils.show_messages(messages, functions=self.functions)
 
         self.multi_response_content = ""
-        if self.show_pretty():
-            from aider.z.ux_preamble import public_busy_label
-
-            detailed = "Waiting for " + self.main_model.name
-            base = public_busy_label(detailed, coder=self, waiting_model=True)
-            try:
-                orch = self.io.ensure_turn_ux()
-                orch.enter_busy(base)
-                spinner_text = orch.status_label(base)
-            except Exception:
-                spinner_text = f"{base}  · Ctrl+C to interrupt"
-            if getattr(self.io, "z_theme", True):
-                self.waiting_spinner = waiting_display(spinner_text)
-            else:
-                self.waiting_spinner = WaitingSpinner(spinner_text)
-            self.waiting_spinner.start()
-            try:
-                self.io.agent_busy = True
-                self.io._stop_agent_busy = self._stop_waiting_spinner
-                self.io.start_busy_queue_reader()
-            except Exception:
-                pass
-            if self.stream:
-                self.mdstream = self.io.get_assistant_mdstream()
-            else:
-                self.mdstream = None
+        self._phase_spinner_start("Waiting for " + self.main_model.name)
+        if self.show_pretty() and self.stream:
+            self.mdstream = self.io.get_assistant_mdstream()
         else:
             self.mdstream = None
 
