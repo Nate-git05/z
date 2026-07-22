@@ -12,21 +12,37 @@ from typing import Any, Optional, Sequence
 
 ROUTING_POLICY_VERSION = "v1-taskmode"
 
+# Registry provider -> (server-side override env var, generic fallback env var).
+# Server-side override lets an operator run the gateway with different keys
+# than whatever's in the process's own provider env vars.
+_PROVIDER_KEY_ENV = {
+    "openai": ("Z_GATEWAY_OPENAI_API_KEY", "OPENAI_API_KEY"),
+    "anthropic": ("Z_GATEWAY_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY"),
+    "google": ("Z_GATEWAY_GOOGLE_API_KEY", "GEMINI_API_KEY"),
+    "deepseek": ("Z_GATEWAY_DEEPSEEK_API_KEY", "DEEPSEEK_API_KEY"),
+    "groq": ("Z_GATEWAY_GROQ_API_KEY", "GROQ_API_KEY"),
+}
+
+
+def provider_key(provider: str) -> Optional[str]:
+    server_var, generic_var = _PROVIDER_KEY_ENV.get(provider, (None, None))
+    if server_var and os.environ.get(server_var):
+        return os.environ.get(server_var)
+    if generic_var and os.environ.get(generic_var):
+        return os.environ.get(generic_var)
+    return None
+
 
 def _openai_key() -> Optional[str]:
-    return (
-        os.environ.get("Z_GATEWAY_OPENAI_API_KEY")
-        or os.environ.get("OPENAI_API_KEY")
-        or None
-    )
+    return provider_key("openai")
 
 
 def _anthropic_key() -> Optional[str]:
-    return (
-        os.environ.get("Z_GATEWAY_ANTHROPIC_API_KEY")
-        or os.environ.get("ANTHROPIC_API_KEY")
-        or None
-    )
+    return provider_key("anthropic")
+
+
+def _any_provider_key() -> bool:
+    return any(provider_key(p) for p in _PROVIDER_KEY_ENV)
 
 
 def _stub_mode() -> bool:
@@ -38,20 +54,20 @@ def _stub_mode() -> bool:
     return (
         os.environ.get("Z_SERVER_DEV", "1").strip().lower()
         in ("1", "true", "yes", "on")
-        and not _openai_key()
-        and not _anthropic_key()
+        and not _any_provider_key()
     )
+
+
+def stub_mode() -> bool:
+    """Public alias — gateway_proxy shares this instead of re-deriving it."""
+    return _stub_mode()
 
 
 def available_providers() -> set[str]:
     """Providers the gateway can actually call (or simulate in stub mode)."""
     if _stub_mode():
-        return {"openai", "anthropic", "google", "groq", "deepseek"}
-    out: set[str] = set()
-    if _openai_key():
-        out.add("openai")
-    if _anthropic_key():
-        out.add("anthropic")
+        return set(_PROVIDER_KEY_ENV)
+    out = {p for p in _PROVIDER_KEY_ENV if provider_key(p)}
     if not out:
         out.add("openai")
     return out
@@ -113,13 +129,14 @@ def resolve_policy_route(
     messages: Optional[Sequence[Any]] = None,
     task_mode: Optional[str] = None,
     intent: Optional[str] = None,
+    domain: Optional[str] = None,
     tier: Optional[str] = None,
     escalate: bool = False,
     escalation_depth: int = 0,
     customer_id: str = "",
     context_tokens: int = 8192,
 ) -> dict[str, Any]:
-    """Select model_id + tier using TaskMode/Intent policy.
+    """Select model_id + tier using TaskMode/Intent/Domain policy.
 
     Returns a route dict consumed by ``gateway_proxy``.
     """
@@ -132,6 +149,7 @@ def resolve_policy_route(
         resolve_capability_tier,
         select_or_prefer,
     )
+    from aider.z.routing.classify import domain_from_text
     from aider.z.routing.select import NoEligibleModelError
 
     messages = messages or []
@@ -146,6 +164,10 @@ def resolve_policy_route(
         depth = 1
     final_tier = bump_tier(base_tier, depth)
     escalated = depth > 0 or final_tier != base_tier
+
+    # Older clients that don't send a domain hint still get one derived from
+    # whatever intent text is available server-side.
+    resolved_domain = (domain or "").strip().lower() or domain_from_text(intent_text)
 
     preferred = normalize_model_id(preferred_model) or (preferred_model or "").strip()
     if not preferred:
@@ -165,6 +187,7 @@ def resolve_policy_route(
             latency_budget_ms=None,
             pricing=pricing,
             calibration=calibration,
+            domain=resolved_domain,
         )
     except NoEligibleModelError:
         fallback_id = OPENAI_TIER_FALLBACK[final_tier]
@@ -179,27 +202,21 @@ def resolve_policy_route(
                 "escalated": escalated,
                 "escalation_depth": depth,
                 "task_mode": task_mode,
+                "domain": resolved_domain,
                 "preferred_model": preferred,
                 "routing_policy_version": ROUTING_POLICY_VERSION,
                 "selection": "openai_fallback",
             }
 
-    # Remap to a callable upstream when the selected provider has no key.
+    # Remap to a callable upstream when the selected provider has no key —
+    # uniform across all providers (not just openai/anthropic special-cased).
     provider = profile.provider
     upstream_model = profile.model_id
     selection = "policy"
-    if not _stub_mode():
-        if provider == "openai" and not _openai_key():
-            provider, upstream_model, selection = "openai", OPENAI_TIER_FALLBACK[final_tier], "no_key_fallback"
-        elif provider == "anthropic" and not _anthropic_key():
-            if _openai_key():
-                provider = "openai"
-                upstream_model = OPENAI_TIER_FALLBACK[final_tier]
-                selection = "provider_remap"
-            else:
-                provider = "openai"
-                upstream_model = OPENAI_TIER_FALLBACK[final_tier]
-                selection = "no_key_fallback"
+    if not _stub_mode() and not provider_key(provider):
+        provider = "openai"
+        upstream_model = OPENAI_TIER_FALLBACK[final_tier]
+        selection = "provider_remap" if _openai_key() else "no_key_fallback"
 
     # Preferred model id for logging (may differ from upstream after remap)
     model_id = profile.model_id
@@ -215,6 +232,7 @@ def resolve_policy_route(
         "escalated": escalated,
         "escalation_depth": depth,
         "task_mode": (task_mode or None),
+        "domain": resolved_domain,
         "preferred_model": preferred,
         "routing_policy_version": ROUTING_POLICY_VERSION,
         "selection": selection,

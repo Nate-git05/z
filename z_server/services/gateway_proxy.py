@@ -8,40 +8,55 @@ import time
 import uuid
 from typing import Any, Optional, Tuple
 
+from aider.z.routing import PricingCache, model_by_id
 from z_server.services.gateway_routing import (
     ROUTING_POLICY_VERSION,
+    provider_key,
     record_attempt_failure,
     record_attempt_success,
     resolve_policy_route,
+    stub_mode,
 )
+
+# litellm's provider prefix, when it differs from the registry's own provider
+# string (openai needs no prefix — bare model id already resolves correctly).
+_LITELLM_PROVIDER_PREFIX = {
+    "anthropic": "anthropic",
+    "google": "gemini",
+    "deepseek": "deepseek",
+    "groq": "groq",
+}
 
 # Back-compat alias (tests / older imports)
 # v0-hardcoded → v1-taskmode
 
-# Rough USD / 1M tokens for cost_usd when upstream omits pricing (Phase 14b).
-_PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
-    "gpt-4o": (2.50, 10.00),
-    "gpt-4o-mini": (0.15, 0.60),
-    "gpt-4.1": (2.00, 8.00),
-    "gpt-4.1-mini": (0.40, 1.60),
-    "o3-mini": (1.10, 4.40),
-    "claude-sonnet": (3.00, 15.00),
-    "claude-haiku": (0.80, 4.00),
-    "z-composer": (1.00, 4.00),
-    "z-sonnet": (3.00, 15.00),
-}
+# Single source of truth for pricing — aider.z.routing.PricingCache (backed by
+# litellm's bundled cost table, falling back to the static MODEL_REGISTRY row).
+# Replaces the old hand-maintained _PRICE_PER_MTOK dict, which had silently
+# drifted out of sync with the registry (e.g. different spellings for the
+# same model, several rows never actually matched).
+_PRICING = PricingCache()
+
+# Default rate when the selected model isn't in MODEL_REGISTRY at all (e.g. a
+# raw preferred_model string that bypassed selection entirely).
+_UNKNOWN_MODEL_RATE = (1.0, 4.0)
 
 
 def _estimate_cost_usd(model_id: str, input_tokens: int, output_tokens: int) -> float:
-    mid = (model_id or "").strip().lower()
-    in_rate, out_rate = 1.0, 4.0  # default fallback
-    for key, rates in _PRICE_PER_MTOK.items():
-        if key in mid:
-            in_rate, out_rate = rates
-            break
+    profile = model_by_id(model_id or "")
+    if profile is None:
+        in_rate, out_rate = _UNKNOWN_MODEL_RATE
+        return round(
+            (max(0, input_tokens) / 1_000_000.0) * in_rate
+            + (max(0, output_tokens) / 1_000_000.0) * out_rate,
+            6,
+        )
     return round(
-        (max(0, input_tokens) / 1_000_000.0) * in_rate
-        + (max(0, output_tokens) / 1_000_000.0) * out_rate,
+        _PRICING.estimate_call_cost(
+            profile,
+            tokens_in=max(0, input_tokens),
+            tokens_out=max(0, output_tokens),
+        ),
         6,
     )
 
@@ -52,6 +67,7 @@ def resolve_route(
     messages: Optional[list] = None,
     task_mode: Optional[str] = None,
     intent: Optional[str] = None,
+    domain: Optional[str] = None,
     tier: Optional[str] = None,
     escalate: bool = False,
     escalation_depth: int = 0,
@@ -64,6 +80,7 @@ def resolve_route(
             messages=messages or [],
             task_mode=task_mode,
             intent=intent,
+            domain=domain,
             tier=tier,
             escalate=escalate,
             escalation_depth=escalation_depth,
@@ -93,25 +110,13 @@ def resolve_route(
 
 
 def _openai_key() -> Optional[str]:
-    return (
-        os.environ.get("Z_GATEWAY_OPENAI_API_KEY")
-        or os.environ.get("OPENAI_API_KEY")
-        or None
-    )
+    return provider_key("openai")
 
 
 def _stub_enabled() -> bool:
-    flag = os.environ.get("Z_GATEWAY_STUB", "").strip().lower()
-    if flag in ("1", "true", "yes", "on"):
-        return True
-    if flag in ("0", "false", "no", "off"):
-        return False
-    # Dev default: stub when no server-side provider key is configured.
-    return (
-        os.environ.get("Z_SERVER_DEV", "1").strip().lower()
-        in ("1", "true", "yes", "on")
-        and not _openai_key()
-    )
+    # Shared with gateway_routing.available_providers() so the two never
+    # disagree about whether the gateway is in stub mode.
+    return stub_mode()
 
 
 def stub_completion(model: str, messages: list, *, route: Optional[dict] = None) -> dict[str, Any]:
@@ -234,6 +239,82 @@ def _call_openai_upstream(
     return resp.json()
 
 
+def _call_upstream_via_litellm(
+    *,
+    provider: str,
+    upstream_model: str,
+    messages: list[dict[str, Any]],
+    temperature: Optional[float],
+    max_tokens: Optional[int],
+) -> dict[str, Any]:
+    """Anthropic/Google/DeepSeek/Groq — litellm already normalizes these to
+    an OpenAI-compatible response shape, so one function covers all four
+    instead of a bespoke HTTP integration per vendor."""
+    import litellm
+
+    key = provider_key(provider)
+    if not key:
+        raise GatewayUpstreamError(
+            503,
+            f"Gateway has no {provider} key. Set Z_GATEWAY_{provider.upper()}_API_KEY "
+            "on the server.",
+            {"status": "upstream_unavailable"},
+        )
+    prefix = _LITELLM_PROVIDER_PREFIX.get(provider, provider)
+    litellm_model = f"{prefix}/{upstream_model}"
+    kwargs: dict[str, Any] = {
+        "model": litellm_model,
+        "messages": messages,
+        "api_key": key,
+        "timeout": 120.0,
+    }
+    if temperature is not None:
+        kwargs["temperature"] = temperature
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
+
+    try:
+        resp = litellm.completion(**kwargs)
+    except Exception as err:
+        status = int(getattr(err, "status_code", 0) or 502)
+        raise GatewayUpstreamError(
+            status,
+            str(err)[:500],
+            {"status": "error", "error_message": str(err)[:500]},
+        ) from err
+
+    if hasattr(resp, "model_dump"):
+        return resp.model_dump()
+    if hasattr(resp, "to_dict"):
+        return resp.to_dict()
+    return dict(resp)
+
+
+def _call_upstream(
+    *,
+    provider: str,
+    upstream_model: str,
+    messages: list[dict[str, Any]],
+    temperature: Optional[float],
+    max_tokens: Optional[int],
+) -> dict[str, Any]:
+    """Dispatch to the right provider integration."""
+    if provider == "openai":
+        return _call_openai_upstream(
+            upstream_model=upstream_model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+    return _call_upstream_via_litellm(
+        provider=provider,
+        upstream_model=upstream_model,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+
+
 def proxy_chat_completion(
     *,
     model: str,
@@ -243,6 +324,7 @@ def proxy_chat_completion(
     stream: bool = False,
     task_mode: Optional[str] = None,
     intent: Optional[str] = None,
+    domain: Optional[str] = None,
     tier: Optional[str] = None,
     escalate: bool = False,
     escalation_depth: int = 0,
@@ -255,6 +337,7 @@ def proxy_chat_completion(
         messages=messages,
         task_mode=task_mode,
         intent=intent,
+        domain=domain,
         tier=tier,
         escalate=escalate,
         escalation_depth=escalation_depth,
@@ -269,7 +352,9 @@ def proxy_chat_completion(
         meta["latency_ms"] = int((time.perf_counter() - t0) * 1000)
         raise GatewayUpstreamError(400, meta["error_message"], meta)
 
-    key = _openai_key()
+    # route's provider is already remapped to one with a real key (or "openai"
+    # as the universal fallback) by resolve_policy_route — see gateway_routing.
+    key = provider_key(route["provider"])
     force_stub = os.environ.get("Z_GATEWAY_STUB", "").strip().lower() in (
         "1",
         "true",
@@ -317,13 +402,15 @@ def proxy_chat_completion(
             return _finish_ok(body, "stub")
         meta["status"] = "upstream_unavailable"
         meta["error_message"] = (
-            "Gateway has no provider keys. Set Z_GATEWAY_OPENAI_API_KEY on the server."
+            f"Gateway has no {route['provider']} key. Set "
+            f"Z_GATEWAY_{route['provider'].upper()}_API_KEY on the server."
         )
         meta["latency_ms"] = int((time.perf_counter() - t0) * 1000)
         raise GatewayUpstreamError(503, meta["error_message"], meta)
 
     try:
-        body = _call_openai_upstream(
+        body = _call_upstream(
+            provider=route["provider"],
             upstream_model=route["upstream_model"],
             messages=messages,
             temperature=temperature,
@@ -343,6 +430,7 @@ def proxy_chat_completion(
                 messages=messages,
                 task_mode=task_mode,
                 intent=intent,
+                domain=domain,
                 tier=tier,
                 escalate=True,
                 escalation_depth=int(route.get("escalation_depth") or 0) + 1,
@@ -351,7 +439,8 @@ def proxy_chat_completion(
             meta = _meta_from_route(retry_route)
             meta["auto_escalated"] = True
             try:
-                body = _call_openai_upstream(
+                body = _call_upstream(
+                    provider=retry_route["provider"],
                     upstream_model=retry_route["upstream_model"],
                     messages=messages,
                     temperature=temperature,

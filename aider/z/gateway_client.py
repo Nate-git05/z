@@ -89,6 +89,7 @@ def set_gateway_routing_hints(
     *,
     task_mode: Optional[Union[str, object]] = None,
     intent: Optional[str] = None,
+    domain: Optional[str] = None,
     escalate: bool = False,
     escalation_depth: int = 0,
     thread_id: Optional[str] = None,
@@ -104,6 +105,14 @@ def set_gateway_routing_hints(
         os.environ["Z_GATEWAY_INTENT"] = str(intent)[:2000]
     else:
         os.environ.pop("Z_GATEWAY_INTENT", None)
+
+    # Separate from Z_GATEWAY_INTENT (freeform text the server re-derives
+    # tier from) — domain is a closed-list categorical value, kept distinct
+    # so the server never has to parse a compound string.
+    if domain:
+        os.environ["Z_GATEWAY_DOMAIN"] = str(domain)
+    else:
+        os.environ.pop("Z_GATEWAY_DOMAIN", None)
 
     if escalate:
         os.environ["Z_GATEWAY_ESCALATE"] = "1"
@@ -128,6 +137,9 @@ def gateway_routing_extra_body() -> Dict[str, Any]:
     intent = os.environ.get("Z_GATEWAY_INTENT")
     if intent:
         body["intent"] = intent
+    domain = os.environ.get("Z_GATEWAY_DOMAIN")
+    if domain:
+        body["domain"] = domain
     if os.environ.get("Z_GATEWAY_ESCALATE", "").strip() in ("1", "true", "yes"):
         body["escalate"] = True
     depth = os.environ.get("Z_GATEWAY_ESCALATION_DEPTH", "").strip()

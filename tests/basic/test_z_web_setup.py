@@ -30,6 +30,9 @@ class FakeIO:
     def prompt_ask(self, prompt, default=None):
         return default or ""
 
+    def confirm_ask(self, question, default="y", **kwargs):
+        return str(default).strip().lower() in ("y", "yes", "true", "1")
+
 
 def test_open_web_setup_falls_back_to_dev_flow_when_no_backend(monkeypatch):
     io = FakeIO()
@@ -479,6 +482,7 @@ def test_auth_switch_uses_web_login_and_byok_skip_login():
     from aider.z import cli as z_cli
 
     io = MagicMock()
+    io.confirm_ask.return_value = False  # decline "add another provider key?"
     creds = Credentials(
         access_token="tok",
         user=UserProfile(email="a@b.com", provider="email"),

@@ -86,6 +86,21 @@ def build_parser() -> argparse.ArgumentParser:
     mcp_sub = mcp.add_subparsers(dest="mcp_command")
     mcp_sub.add_parser("list", help="List MCP tools connected to your Z account/workspace")
 
+    byok = sub.add_parser(
+        "byok",
+        help="Manage multiple BYOK provider keys (Z_ALLOW_BYOK=1) so Z can "
+        "route between them per task",
+    )
+    byok_sub = byok.add_subparsers(dest="byok_command")
+    byok_sub.add_parser(
+        "add",
+        help="Add another provider's API key without changing your default model",
+    )
+    byok_sub.add_parser(
+        "list",
+        help="List which providers currently have a configured key",
+    )
+
     unc = sub.add_parser("uncertainty", help="Uncertainty tree utilities")
     unc_sub = unc.add_subparsers(dest="uncertainty_command")
     unc_sub.add_parser(
@@ -273,7 +288,7 @@ def _complete_mode_setup(io, mode: str) -> bool:
             io.tool_output("BYOK is disabled — using Z's model router.")
             mode = "router"
         else:
-            from aider.z.auth import prompt_byok_setup
+            from aider.z.auth import _dev_byok_setup, prompt_byok_setup
 
             io.tool_output("")
             io.tool_output("Bring your own key — choose a model and paste its API key.")
@@ -281,6 +296,13 @@ def _complete_mode_setup(io, mode: str) -> bool:
                 return False
             save_auth_mode(mode)
             _load_byok_env()
+            # Optional: additional provider keys let Z route between them
+            # per task instead of always using the one model above.
+            while io.confirm_ask("Add another provider key now?", default="n"):
+                extra = _dev_byok_setup(io)
+                if extra is None:
+                    break
+                _load_byok_env()
             return True
 
     if mode == "router":
@@ -520,6 +542,7 @@ def main(argv: list[str] | None = None) -> int | None:
         "workspace",
         "models",
         "mcp",
+        "byok",
         "skill",
         "taxonomy",
         "uncertainty",
@@ -568,6 +591,8 @@ def dispatch(args) -> int:
         return cmd_models(io, search=args.search or "", show_all=args.all)
     if args.command == "mcp":
         return cmd_mcp(io, args)
+    if args.command == "byok":
+        return cmd_byok(io, args)
     if args.command == "skill":
         return cmd_skill(io, args)
     if args.command == "taxonomy":
@@ -705,6 +730,47 @@ def cmd_mcp(io, args) -> int:
         return 0
     io.tool_error(f"Unknown mcp subcommand: {sub}")
     io.tool_output("Usage: z mcp list")
+    return 1
+
+
+def cmd_byok(io, args) -> int:
+    from aider.z.onboarding import byok_allowed
+
+    sub = getattr(args, "byok_command", None) or "list"
+    if sub == "list":
+        from aider.z.byok_routing import configured_byok_providers
+
+        _load_byok_env()
+        providers = sorted(configured_byok_providers())
+        if not providers:
+            io.tool_output("No BYOK provider keys configured.")
+        else:
+            io.tool_output("Configured BYOK providers: " + ", ".join(providers))
+            if len(providers) > 1:
+                io.tool_output(
+                    "Z will route each turn across these providers by task "
+                    "complexity/domain."
+                )
+        return 0
+    if sub == "add":
+        if not byok_allowed():
+            io.tool_error("BYOK is disabled. Set Z_ALLOW_BYOK=1 to use it.")
+            return 1
+        from aider.z.auth import _dev_byok_setup
+
+        io.tool_output("")
+        io.tool_output("Add another provider key — your default model is unchanged.")
+        # _dev_byok_setup already saves the key(s) it collects; deliberately
+        # not calling apply_byok_setup_result so selected_model stays as-is.
+        result = _dev_byok_setup(io)
+        if result is None:
+            io.tool_output("Cancelled.")
+            return 1
+        _load_byok_env()
+        io.tool_output(f"Added a provider key ({result.get('model_id')}).")
+        return 0
+    io.tool_error(f"Unknown byok subcommand: {sub}")
+    io.tool_output("Usage: z byok add | list")
     return 1
 
 

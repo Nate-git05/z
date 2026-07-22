@@ -22,6 +22,7 @@ class ChatCompletionRequest(BaseModel):
     thread_id: Optional[str] = Field(default=None, alias="thread_id")
     task_mode: Optional[str] = None
     intent: Optional[str] = None
+    domain: Optional[str] = None
     tier: Optional[str] = None
     escalate: bool = False
     escalation_depth: int = 0

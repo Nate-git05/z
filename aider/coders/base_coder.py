@@ -1390,13 +1390,49 @@ class Coder:
                         intent_text = intent_text.strip() or None
                 if not intent_text and isinstance(user_text, str):
                     intent_text = user_text
+                from aider.z.routing.classify import domain_from_text
+
+                domain = domain_from_text(intent_text)
                 set_gateway_routing_hints(
                     task_mode=mode,
                     intent=intent_text,
+                    domain=domain,
                     escalate=esc_depth > 0,
                     escalation_depth=esc_depth,
                     thread_id=getattr(self, "thread_id", None),
                 )
+            except Exception:
+                pass
+
+            # Multi-key BYOK — locally route across the user's own configured
+            # providers per turn instead of always using one saved model.
+            # Router/gateway mode already routed above; this only fires when
+            # the gateway isn't active and BYOK auth mode is on.
+            try:
+                from aider.z.gateway_client import router_uses_gateway
+
+                if not router_uses_gateway():
+                    from aider.z.onboarding import load_config
+
+                    if load_config().auth_mode == "byok":
+                        from aider.z.byok_routing import select_local_model
+
+                        chosen = select_local_model(
+                            task_mode=mode,
+                            intent=intent_text,
+                            domain=domain,
+                            preferred_model_id=getattr(self.main_model, "name", None),
+                            escalation_depth=esc_depth,
+                        )
+                        if chosen and chosen != getattr(self.main_model, "name", None):
+                            from aider.models import Model
+
+                            new_model = Model(
+                                chosen,
+                                weak_model=getattr(self.main_model, "weak_model_name", None),
+                                editor_model=getattr(self.main_model, "editor_model_name", None),
+                            )
+                            self.main_model = new_model
             except Exception:
                 pass
 

@@ -52,6 +52,9 @@ class FakeIO:
             return self.answers.pop(0)
         return default or ""
 
+    def confirm_ask(self, question, default="y", **kwargs):
+        return str(default).strip().lower() in ("y", "yes", "true", "1")
+
 
 class ConfigMergeTest(unittest.TestCase):
     def setUp(self):
@@ -84,6 +87,18 @@ class ConfigMergeTest(unittest.TestCase):
         self.assertIn("ANTHROPIC_API_KEY=sk-test-key", byok_env.read_text())
         self.assertFalse(creds_env.exists())
         self.assertEqual(os.environ.get("ANTHROPIC_API_KEY"), "sk-test-key")
+
+    def test_save_byok_key_supports_multiple_providers_in_one_file(self):
+        """Regression guard: multi-key BYOK routing depends on this already
+        working — locks in that the storage layer was never the gap."""
+        save_byok_key("ANTHROPIC_API_KEY", "sk-a")
+        save_byok_key("OPENAI_API_KEY", "sk-b")
+        text = (self._dir / "byok.env").read_text()
+        self.assertIn("ANTHROPIC_API_KEY=sk-a", text)
+        self.assertIn("OPENAI_API_KEY=sk-b", text)
+        self.assertEqual(os.environ.get("ANTHROPIC_API_KEY"), "sk-a")
+        self.assertEqual(os.environ.get("OPENAI_API_KEY"), "sk-b")
+        os.environ.pop("OPENAI_API_KEY", None)
 
     def test_clear_setup_forgets_mode_and_keys(self):
         from aider.z.onboarding import clear_setup
@@ -208,6 +223,78 @@ class ResetSetupTest(unittest.TestCase):
         logout.assert_called_once()
         clear.assert_called_once_with(clear_keys=True)
         mode.assert_not_called()
+
+
+class ByokCommandTest(unittest.TestCase):
+    """`z byok add|list` — multi-key BYOK CLI surface."""
+
+    def setUp(self):
+        self._dir = Path(tempfile.mkdtemp(prefix="z_byok_cmd_"))
+        os.environ["Z_HOME"] = str(self._dir)
+        self._prev_allow = os.environ.pop("Z_ALLOW_BYOK", None)
+        self._prev_anthropic = os.environ.pop("ANTHROPIC_API_KEY", None)
+        self._prev_openai = os.environ.pop("OPENAI_API_KEY", None)
+
+    def tearDown(self):
+        for var, val in (
+            ("Z_ALLOW_BYOK", self._prev_allow),
+            ("ANTHROPIC_API_KEY", self._prev_anthropic),
+            ("OPENAI_API_KEY", self._prev_openai),
+        ):
+            os.environ.pop(var, None)
+            if val is not None:
+                os.environ[var] = val
+
+    def test_list_with_no_keys(self):
+        from aider.z.cli import cmd_byok
+        from types import SimpleNamespace
+
+        io = FakeIO()
+        code = cmd_byok(io, SimpleNamespace(byok_command="list"))
+        self.assertEqual(code, 0)
+        self.assertTrue(any("No BYOK provider keys" in o for o in io.outputs))
+
+    def test_list_with_multiple_keys_mentions_routing(self):
+        from aider.z.cli import cmd_byok
+        from types import SimpleNamespace
+
+        os.environ["ANTHROPIC_API_KEY"] = "sk-a"
+        os.environ["OPENAI_API_KEY"] = "sk-b"
+        io = FakeIO()
+        code = cmd_byok(io, SimpleNamespace(byok_command="list"))
+        self.assertEqual(code, 0)
+        joined = " ".join(io.outputs)
+        self.assertIn("anthropic", joined)
+        self.assertIn("openai", joined)
+        self.assertIn("route", joined.lower())
+
+    def test_add_requires_byok_allowed(self):
+        from aider.z.cli import cmd_byok
+        from types import SimpleNamespace
+
+        io = FakeIO()
+        code = cmd_byok(io, SimpleNamespace(byok_command="add"))
+        self.assertEqual(code, 1)
+        self.assertTrue(any("Z_ALLOW_BYOK" in e for e in io.errors))
+
+    def test_add_does_not_change_selected_model(self):
+        """Adding a second provider key must not touch config.selected_model —
+        only the very first BYOK pick does that."""
+        from aider.z.cli import cmd_byok
+        from types import SimpleNamespace
+
+        os.environ["Z_ALLOW_BYOK"] = "1"
+        save_auth_mode("byok")
+        save_selected_model("claude-sonnet-5")
+
+        io = FakeIO()
+        with patch(
+            "aider.z.auth._dev_byok_setup",
+            return_value={"model_id": "gpt-4o-mini", "env_var": "OPENAI_API_KEY", "api_key": "sk-b"},
+        ):
+            code = cmd_byok(io, SimpleNamespace(byok_command="add"))
+        self.assertEqual(code, 0)
+        self.assertEqual(load_config().selected_model, "claude-sonnet-5")
 
 
 class ByokSetupTest(unittest.TestCase):
