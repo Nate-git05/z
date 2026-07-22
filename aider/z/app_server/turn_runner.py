@@ -306,6 +306,22 @@ class ThreadTurnRunner:
             while message:
                 self._current_turn_id = turn_id if message is first_text else str(uuid.uuid4())
                 if message is not first_text:
+                    # Phase 3 — reset activity/trace between queued follow-ups.
+                    try:
+                        self._io.activity.reset()
+                        mid = getattr(
+                            getattr(self._coder, "main_model", None), "name", None
+                        )
+                        if mid:
+                            self._io.activity.set_model(str(mid))
+                        self._io.activity.set_phase("thinking")
+                        self._io.activity.flush(force=True)
+                        tr = getattr(self._io, "trace", None)
+                        if tr is not None:
+                            tr.reset()
+                            tr.open_thinking()
+                    except Exception:
+                        pass
                     self._notify(
                         "turn/started",
                         {
@@ -354,6 +370,7 @@ class ThreadTurnRunner:
                 tr = getattr(self._io, "trace", None)
                 if tr is not None:
                     tr.finalize(ok=ok, interrupted=interrupted)
+                    tr.emit_snapshot()
             except Exception:
                 pass
             self._notify(

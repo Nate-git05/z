@@ -1,11 +1,12 @@
-"""Turn trace — resolved step titles/excerpts for Chat (Phase 2).
+"""Turn trace — resolved step titles/excerpts for Chat (Phase 2–3).
 
-Emits ``turn/step`` notifications. Prefer resolve-only emits (no running UI).
-See ``docs/app/z-agent-state-trace-plan.md``.
+Emits ``turn/step`` notifications (resolve-only) and optional
+``turn/trace/snapshot`` on finalize. See ``docs/app/z-agent-state-trace-plan.md``.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import time
 from pathlib import Path
@@ -16,6 +17,25 @@ NotifyFn = Callable[[str, dict], None]
 _MAX_STEPS = 40
 _EXCERPT_MAX = 280
 _TITLE_MAX = 72
+
+_WEB_MCP_RE = re.compile(
+    r"(brave|bing|duckduck|serp|tavily|exa|perplexity|google.?search|"
+    r"web.?search|search.?web|browser.?search)",
+    re.I,
+)
+
+
+def is_web_search(*, server: str = "", tool: str = "", text: str = "") -> bool:
+    blob = f"{server} {tool} {text}".strip().lower()
+    if not blob:
+        return False
+    if _WEB_MCP_RE.search(blob):
+        return True
+    if "scraping" in blob or "scrape " in blob:
+        return True
+    if re.search(r"\bweb\b", blob) and "search" in blob:
+        return True
+    return False
 
 
 def _basename(path: str) -> str:
@@ -46,11 +66,112 @@ def _title_from_text(text: str, fallback: str = "Thought") -> str:
     return first if len(first) >= 4 else fallback
 
 
+def _purpose_title(text: str, fallback: str = "Thought") -> str:
+    """Slightly smarter title when Z_TRACE_TITLES=llm (no network required)."""
+    raw = " ".join((text or "").split()).strip()
+    if not raw:
+        return fallback
+    # Prefer a short purpose-like clause before em-dash / "because" / "so that".
+    chunk = re.split(r"\s+[—\-–]\s+|\bbecause\b|\bso that\b", raw, maxsplit=1, flags=re.I)[0]
+    chunk = re.sub(r"^(i (need to|should|will|am going to)|let me)\s+", "", chunk, flags=re.I)
+    chunk = chunk.strip(" .,;:")
+    if len(chunk) < 8:
+        return _title_from_text(text, fallback)
+    if len(chunk) > _TITLE_MAX:
+        chunk = chunk[: _TITLE_MAX - 1] + "…"
+    # Capitalize first letter for scanability
+    return chunk[0].upper() + chunk[1:] if chunk else fallback
+
+
+def summarize_step_title(text: str, fallback: str = "Thought") -> str:
+    """
+    Title for a thinking step.
+
+    Default: first-line heuristic.
+    ``Z_TRACE_TITLES=llm``: purpose-oriented heuristic (optional network LLM later).
+    ``Z_TRACE_TITLES_STUB=...``: force exact title (tests).
+    """
+    stub = (os.environ.get("Z_TRACE_TITLES_STUB") or "").strip()
+    if stub:
+        return stub[:_TITLE_MAX]
+    mode = (os.environ.get("Z_TRACE_TITLES") or "").strip().lower()
+    if mode in ("llm", "1", "true", "yes"):
+        # Optional real LLM one-liner — best-effort, never invent excerpts.
+        try:
+            titled = _llm_title_one_liner(text)
+            if titled:
+                return titled[:_TITLE_MAX]
+        except Exception:
+            pass
+        return _purpose_title(text, fallback)
+    return _title_from_text(text, fallback)
+
+
+def _llm_title_one_liner(text: str) -> Optional[str]:
+    """Tiny optional completion; skipped unless explicitly configured."""
+    if (os.environ.get("Z_TRACE_TITLES_LLM") or "").strip().lower() not in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return None
+    api_key = (os.environ.get("OPENAI_API_KEY") or "").strip()
+    if not api_key:
+        return None
+    import json
+    import urllib.request
+
+    body = json.dumps(
+        {
+            "model": os.environ.get("Z_TRACE_TITLES_MODEL") or "gpt-4o-mini",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "Summarize the agent's reasoning step in one short title "
+                        "(max 12 words). No quotes. Describe purpose, not raw thought."
+                    ),
+                },
+                {"role": "user", "content": (text or "")[:1200]},
+            ],
+            "max_tokens": 40,
+            "temperature": 0.2,
+        }
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/chat/completions",
+        data=body,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=2.5) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    content = (
+        (((data.get("choices") or [{}])[0].get("message") or {}).get("content")) or ""
+    ).strip()
+    content = content.strip(" \"'")
+    return content or None
+
+
 def _short_cmd(cmd: str) -> str:
     one = " ".join((cmd or "").split())
     if len(one) > 48:
         return one[:47] + "…"
     return one
+
+
+def web_query_from_args(args: Any) -> str:
+    if args is None:
+        return ""
+    if isinstance(args, dict):
+        for key in ("query", "q", "search", "text", "prompt", "url"):
+            if args.get(key):
+                return _short_cmd(str(args[key]))
+        return _short_cmd(str(args)[:80])
+    return _short_cmd(str(args))
 
 
 class TurnTraceTracker:
@@ -71,7 +192,7 @@ class TurnTraceTracker:
         self._thinking_id: Optional[str] = None
         self._thinking_buf: list[str] = []
         self._thinking_started: float = 0.0
-        self._mcp_open: dict[str, str] = {}  # callId -> stepId
+        self._mcp_open: dict[str, dict[str, Any]] = {}  # callId -> meta
         self._emitted = 0
 
     def _turn_id(self) -> Optional[str]:
@@ -144,7 +265,7 @@ class TurnTraceTracker:
             "turnId": self._turn_id(),
             "stepId": self._thinking_id,
             "kind": "thinking",
-            "title": _title_from_text(buf, "Thought"),
+            "title": summarize_step_title(buf, "Thought"),
             "excerpt": _excerpt(buf),
             "status": status,
             "resolutionLabel": label,
@@ -181,6 +302,47 @@ class TurnTraceTracker:
             step["durationMs"] = duration_ms
         self._emit(step)
 
+    def note_z_tool(
+        self,
+        name: str,
+        args: str = "",
+        *,
+        excerpt: Optional[str] = None,
+    ) -> None:
+        """Structured z-tool / tool-loop call → resolved trace step."""
+        name_l = (name or "").strip().lower()
+        args_s = (args or "").strip()
+        body = excerpt if excerpt is not None else args_s
+        if name_l in ("grep", "search"):
+            q = _short_cmd(args_s) or "code"
+            web = is_web_search(tool=name_l, text=args_s)
+            self._resolve_step(
+                kind="search_web" if web else "search",
+                title=(
+                    f"Searched the web for “{q}”" if web else f"Searched for “{q}”"
+                ),
+                excerpt=_excerpt(body or args_s),
+            )
+            return
+        if name_l in ("read", "glob", "ls", "list", "find"):
+            target = args_s.split()[0] if args_s else ""
+            title = f"Read {_basename(target)}" if target else "Read files"
+            self._resolve_step(kind="read", title=title, excerpt=_excerpt(body or args_s))
+            return
+        if name_l in ("web", "web_search", "search_web"):
+            q = _short_cmd(args_s) or "query"
+            self._resolve_step(
+                kind="search_web",
+                title=f"Searched the web for “{q}”",
+                excerpt=_excerpt(body or args_s),
+            )
+            return
+        self._resolve_step(
+            kind="other",
+            title=_title_from_text(f"{name_l} {args_s}".strip(), name_l or "Tool"),
+            excerpt=_excerpt(body or args_s or name_l),
+        )
+
     def note_edit(self, paths: Any, *, lines_added: int = 0, lines_removed: int = 0) -> None:
         names = [_basename(str(p)) for p in (paths or ()) if p]
         if not names:
@@ -202,14 +364,26 @@ class TurnTraceTracker:
             excerpt=_excerpt(" · ".join(parts) if parts else title),
         )
 
-    def note_mcp_started(self, *, server: str, tool: str, call_id: str) -> None:
+    def note_mcp_started(
+        self,
+        *,
+        server: str,
+        tool: str,
+        call_id: str,
+        arguments: Any = None,
+    ) -> None:
         self.close_thinking_if_open()
         cid = str(call_id or "").strip()
         if not cid:
             return
         sid = self._new_id()
-        self._mcp_open[cid] = sid
-        # Resolve-only UI: hold until finished (no running emit).
+        self._mcp_open[cid] = {
+            "stepId": sid,
+            "server": server,
+            "tool": tool,
+            "arguments": arguments,
+            "web": is_web_search(server=server, tool=tool, text=str(arguments or "")),
+        }
 
     def note_mcp_finished(
         self,
@@ -221,15 +395,27 @@ class TurnTraceTracker:
         summary: Optional[str] = None,
         error: Optional[str] = None,
         duration_ms: Optional[int] = None,
+        arguments: Any = None,
     ) -> None:
         self.close_thinking_if_open()
         cid = str(call_id or "").strip()
-        sid = self._mcp_open.pop(cid, None) or self._new_id()
-        title = f"{server}.{tool}".strip(".")
+        meta = self._mcp_open.pop(cid, None) or {}
+        sid = str(meta.get("stepId") or self._new_id())
+        web = bool(meta.get("web")) or is_web_search(
+            server=server, tool=tool, text=f"{arguments or ''} {summary or ''}"
+        )
+        args = meta.get("arguments", arguments)
+        if web:
+            q = web_query_from_args(args) or _short_cmd(tool) or "query"
+            title = f"Searched the web for “{q}”"
+            kind = "search_web"
+        else:
+            title = f"{server}.{tool}".strip(".") or "MCP tool"
+            kind = "mcp"
         if ok:
             self._resolve_step(
-                kind="mcp",
-                title=title or "MCP tool",
+                kind=kind,
+                title=title,
                 excerpt=_excerpt(summary or ""),
                 status="done",
                 resolution_label="Done",
@@ -238,8 +424,8 @@ class TurnTraceTracker:
             )
         else:
             self._resolve_step(
-                kind="mcp",
-                title=title or "MCP tool",
+                kind=kind,
+                title=title,
                 excerpt=_excerpt(error or "failed"),
                 status="blocked",
                 resolution_label="Blocked",
@@ -280,6 +466,20 @@ class TurnTraceTracker:
             # apply_updates hook owns edit steps; ignore IO echo.
             return
 
+        m = re.match(r"Scraping\s+(.+)$", line, re.I)
+        if m:
+            target = m.group(1).strip()
+            self._resolve_step(
+                kind="search_web",
+                title=f"Searched the web for “{_short_cmd(target)}”",
+                excerpt=_excerpt(target),
+            )
+            return
+
+        if line.startswith("Tool-loop:") or line.startswith("MCP turn:"):
+            # Summary lines — per-call note_z_tool / note_mcp_* own the steps.
+            return
+
         m = re.match(r"Running (.+)$", line)
         if m:
             cmd = m.group(1).strip()
@@ -313,30 +513,7 @@ class TurnTraceTracker:
 
         m = re.match(r"##\s*`(\w+)\s*(.*)`", line)
         if m:
-            name = (m.group(1) or "").lower()
-            args = (m.group(2) or "").strip()
-            if name in ("grep", "search"):
-                q = _short_cmd(args) or "code"
-                web = bool(re.search(r"\bweb\b|search_web|brave|bing", args, re.I))
-                self._resolve_step(
-                    kind="search_web" if web else "search",
-                    title=(
-                        f"Searched the web for “{q}”"
-                        if web
-                        else f"Searched for “{q}”"
-                    ),
-                    excerpt=_excerpt(args or line),
-                )
-            elif name in ("read", "glob", "ls", "list"):
-                target = args.split()[0] if args else ""
-                title = f"Read {_basename(target)}" if target else "Read files"
-                self._resolve_step(kind="read", title=title, excerpt=_excerpt(args or line))
-            else:
-                self._resolve_step(
-                    kind="other",
-                    title=_title_from_text(f"{name} {args}".strip(), name or "Tool"),
-                    excerpt=_excerpt(line),
-                )
+            self.note_z_tool(m.group(1), m.group(2) or "")
             return
 
     def finalize(self, *, ok: bool = True, interrupted: bool = False) -> None:
@@ -345,9 +522,10 @@ class TurnTraceTracker:
         else:
             self.close_thinking_if_open(status="done", resolution_label="Done")
         # Drop dangling MCP opens as cancelled
-        for cid, sid in list(self._mcp_open.items()):
+        for cid, meta in list(self._mcp_open.items()):
+            sid = str(meta.get("stepId") or self._new_id())
             self._resolve_step(
-                kind="mcp",
+                kind="search_web" if meta.get("web") else "mcp",
                 title="MCP tool",
                 status="cancelled",
                 resolution_label="Cancelled",
@@ -360,3 +538,9 @@ class TurnTraceTracker:
             "turnId": self._turn_id(),
             "steps": list(self._steps.values()),
         }
+
+    def emit_snapshot(self) -> None:
+        try:
+            self._notify("turn/trace/snapshot", self.snapshot())
+        except Exception:
+            pass
