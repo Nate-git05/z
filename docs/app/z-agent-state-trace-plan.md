@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-22  
 **Branch:** `cursor/z-agent-state-trace-plan-313a`  
-**Status:** Phase 1+2 implemented on `cursor/z-agent-state-p1-313a` (indicator + turn traces); Phase 3 polish still optional  
+**Status:** Phases 1–3 implemented on `cursor/z-agent-state-p3-313a` (indicator + traces + polish)  
 **Product:** Z Editor (agent-first Chat)  
 **Companion specs:**
 - User state/trace visual spec (this plan implements)
@@ -390,10 +390,14 @@ If redesign PR #161 is not yet on `main`, implement tokens against whatever is m
 
 ### Phase 3 — Polish & replace noisy system tool lines
 
-- MCP/system tool bubbles → traces (or shorten to one line)
-- Search web detection
-- Snapshot on complete / reconnect
-- Optional title summarizer behind `Z_TRACE_TITLES=llm`
+**Status:** Done (`cursor/z-agent-state-p3-313a`, extension 0.9.3)
+
+- [x] MCP/system tool bubbles → traces (failures no longer dual-warn; tool-loop wired)
+- [x] Search web detection (brave/MCP + Scraping + magnifier live flag)
+- [x] Snapshot on complete (`turn/trace/snapshot`) + Chat upsert rebuild
+- [x] Optional title summarizer (`Z_TRACE_TITLES=llm` purpose heuristic; `Z_TRACE_TITLES_LLM=1` for real API)
+- [x] Queued follow-up resets activity/trace
+- [x] Single `mcp/tool_started` after callId known
 
 ### Phase 4 — Optional CLI parity
 

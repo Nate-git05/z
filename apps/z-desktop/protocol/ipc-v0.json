@@ -313,6 +313,11 @@
       "durationMs": { "optional": true },
       "notes": "Phase 2 — resolved turn-trace rows for Chat (collapsed titles; expand for excerpt)."
     },
+    "turn/trace/snapshot": {
+      "turnId": "string",
+      "steps": "TurnStep[]",
+      "notes": "Phase 3 — full step list after finalize for reconnect/rebuild."
+    },
     "turn/log": { "turnId": "string", "level": "info|warning|error", "text": "string" },
     "turn/queued": {
       "turnId": "string",
@@ -341,7 +346,8 @@
       "turnId": "string",
       "serverName": "string",
       "toolName": "string",
-      "callId": "string"
+      "callId": "string",
+      "webSearch": { "optional": true, "type": "boolean" }
     },
     "mcp/tool_finished": {
       "turnId": "string",
@@ -350,14 +356,16 @@
       "toolName": "string",
       "ok": true,
       "summary": { "optional": true },
-      "durationMs": "number"
+      "durationMs": "number",
+      "webSearch": { "optional": true, "type": "boolean" }
     },
     "mcp/tool_error": {
       "turnId": "string",
       "callId": "string",
       "serverName": "string",
       "toolName": "string",
-      "error": "string"
+      "error": "string",
+      "webSearch": { "optional": true, "type": "boolean" }
     },
     "turn/completed": {
       "turnId": "string",

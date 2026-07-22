@@ -1,8 +1,10 @@
-"""Turn trace tracker + reasoning divert (Phase 2)."""
+"""Turn trace tracker + Phase 3 polish (web search, snapshot, titles)."""
 
 from __future__ import annotations
 
+import os
 import unittest
+from unittest.mock import patch
 
 
 class TurnTraceTrackerTests(unittest.TestCase):
@@ -31,7 +33,6 @@ class TurnTraceTrackerTests(unittest.TestCase):
 
     def test_answer_closes_thinking(self):
         self.tr.append_reasoning("Need to inspect chatPanel.")
-        # simulate answer path
         self.tr.close_thinking_if_open()
         self.assertEqual(self.events[-1][1]["status"], "done")
 
@@ -44,17 +45,53 @@ class TurnTraceTrackerTests(unittest.TestCase):
         self.assertEqual(self.events[-1][1]["kind"], "read")
         self.assertIn("chatPanel", self.events[-1][1]["title"])
 
+    def test_note_z_tool_structured(self):
+        self.tr.note_z_tool("grep", "Contemplating --glob '*.ts'")
+        self.assertEqual(self.events[-1][1]["kind"], "search")
+        self.tr.note_z_tool("read", "apps/z-desktop/extension/src/chatPanel.ts")
+        self.assertEqual(self.events[-1][1]["kind"], "read")
+        self.assertIn("chatPanel", self.events[-1][1]["title"])
+
     def test_edit_and_mcp(self):
         self.tr.note_edit(["apps/z-desktop/extension/src/chatPanel.ts"], lines_added=3, lines_removed=1)
         self.assertEqual(self.events[-1][1]["kind"], "edit")
-        self.tr.note_mcp_started(server="github", tool="search", call_id="c1")
+        self.tr.note_mcp_started(server="github", tool="list_issues", call_id="c1")
         n = len(self.events)
         self.tr.note_mcp_finished(
-            server="github", tool="search", call_id="c1", ok=True, summary="3 hits", duration_ms=12
+            server="github",
+            tool="list_issues",
+            call_id="c1",
+            ok=True,
+            summary="3 hits",
+            duration_ms=12,
         )
         self.assertEqual(len(self.events), n + 1)
         self.assertEqual(self.events[-1][1]["kind"], "mcp")
         self.assertEqual(self.events[-1][1]["status"], "done")
+
+    def test_brave_mcp_is_search_web(self):
+        self.tr.note_mcp_started(
+            server="brave-search",
+            tool="brave_web_search",
+            call_id="w1",
+            arguments={"query": "z editor contemplating"},
+        )
+        self.tr.note_mcp_finished(
+            server="brave-search",
+            tool="brave_web_search",
+            call_id="w1",
+            ok=True,
+            summary="top results",
+            arguments={"query": "z editor contemplating"},
+        )
+        step = self.events[-1][1]
+        self.assertEqual(step["kind"], "search_web")
+        self.assertIn("web", step["title"].lower())
+        self.assertIn("contemplating", step["title"].lower())
+
+    def test_scraping_line(self):
+        self.tr.observe_tool_line("Scraping https://example.com/docs")
+        self.assertEqual(self.events[-1][1]["kind"], "search_web")
 
     def test_waiting_marks_needs_input(self):
         self.tr.append_reasoning("Unclear what to build next.")
@@ -62,14 +99,36 @@ class TurnTraceTrackerTests(unittest.TestCase):
         self.assertEqual(self.events[-1][1]["status"], "needs_input")
         self.assertEqual(self.events[-1][1]["resolutionLabel"], "Needs input")
 
-    def test_finalize_cancels_open_thinking(self):
+    def test_finalize_emits_snapshot(self):
         self.tr.append_reasoning("Still thinking…")
         self.tr.finalize(ok=False, interrupted=True)
-        self.assertEqual(self.events[-1][1]["status"], "cancelled")
+        kinds = [m for m, _ in self.events]
+        self.assertIn("turn/step", kinds)
+        self.tr.emit_snapshot()
+        self.assertEqual(self.events[-1][0], "turn/trace/snapshot")
+        self.assertTrue(self.events[-1][1]["steps"])
 
     def test_applied_edit_echo_ignored(self):
         self.tr.observe_tool_line("Applied edit to foo.py")
+        self.tr.observe_tool_line("Tool-loop: ran 2 read-only tool(s) (read, grep).")
         self.assertEqual(self.events, [])
+
+    def test_title_stub_and_llm_mode(self):
+        with patch.dict(os.environ, {"Z_TRACE_TITLES_STUB": "Clarified vague request"}):
+            from aider.z.app_server.turn_trace import summarize_step_title
+
+            self.assertEqual(
+                summarize_step_title("raw thought about calculus"),
+                "Clarified vague request",
+            )
+        with patch.dict(os.environ, {"Z_TRACE_TITLES": "llm"}, clear=False):
+            os.environ.pop("Z_TRACE_TITLES_STUB", None)
+            from aider.z.app_server.turn_trace import summarize_step_title
+
+            titled = summarize_step_title(
+                "I need to inspect the chat panel because the indicator is missing."
+            )
+            self.assertTrue(len(titled) >= 4)
 
 
 class ReasoningStripTests(unittest.TestCase):
@@ -82,6 +141,15 @@ class ReasoningStripTests(unittest.TestCase):
         self.assertIn("Hello", out)
         self.assertNotIn("THINKING", out)
         self.assertNotIn("ANSWER", out)
+
+
+class WebSearchHelperTests(unittest.TestCase):
+    def test_is_web_search(self):
+        from aider.z.app_server.turn_trace import is_web_search
+
+        self.assertTrue(is_web_search(server="brave-search", tool="brave_web_search"))
+        self.assertFalse(is_web_search(server="github", tool="list_issues"))
+        self.assertTrue(is_web_search(text="Scraping https://x.com"))
 
 
 if __name__ == "__main__":

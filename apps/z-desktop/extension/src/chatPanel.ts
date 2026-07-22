@@ -145,6 +145,8 @@ export class MainChatPanel {
   private uncertaintyAutoOpenedThisTurn = false;
   /** True while assistant answer tokens are arriving — hides Contemplating row. */
   private answerStreaming = false;
+  /** Live web-search MCP in flight — drives magnifier indicator. */
+  private webSearchLive = false;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -423,6 +425,7 @@ export class MainChatPanel {
       this.streamingAssistantId = null;
       this.busyLabel = "Working…";
       this.answerStreaming = false;
+      this.webSearchLive = false;
       this.activity = emptyActivity();
       this.markActivityLive("thinking");
       this.queue = { queueLen: 0, items: [], preview: null };
@@ -544,6 +547,7 @@ export class MainChatPanel {
     if (method === "turn/started") {
       this.uncertaintyAutoOpenedThisTurn = false;
       this.answerStreaming = false;
+      this.webSearchLive = false;
       const text = String(params.text || "").trim();
       const fromQueue = Boolean(params.fromQueue);
       if (fromQueue && text) {
@@ -584,19 +588,38 @@ export class MainChatPanel {
         durationMs:
           typeof params.durationMs === "number" ? params.durationMs : undefined,
       };
-      const existing = this.messages.find(
-        (m) => m.kind === "trace" && m.step?.stepId === stepId
-      );
-      if (existing && existing.step) {
-        existing.step = { ...existing.step, ...step, expanded: existing.step.expanded };
-        existing.text = step.title;
-      } else {
-        this.messages.push({
-          id: `trace-${stepId}`,
-          role: "system",
-          kind: "trace",
-          text: step.title,
-          step,
+      this.upsertTraceStep(step);
+      if (step.kind === "search_web") {
+        this.webSearchLive = false;
+      }
+      this.postStateThrottled();
+      return;
+    }
+    if (method === "turn/trace/snapshot") {
+      const steps = Array.isArray(params.steps) ? params.steps : [];
+      for (const raw of steps) {
+        if (!raw || typeof raw !== "object") {
+          continue;
+        }
+        const row = raw as Record<string, unknown>;
+        const stepId = String(row.stepId || "");
+        if (!stepId) {
+          continue;
+        }
+        this.upsertTraceStep({
+          stepId,
+          turnId: row.turnId != null ? String(row.turnId) : undefined,
+          kind: row.kind != null ? String(row.kind) : "other",
+          title: String(row.title || "Step"),
+          excerpt:
+            row.excerpt != null && String(row.excerpt).trim()
+              ? String(row.excerpt)
+              : null,
+          status: String(row.status || "done"),
+          resolutionLabel:
+            row.resolutionLabel != null ? String(row.resolutionLabel) : undefined,
+          durationMs:
+            typeof row.durationMs === "number" ? row.durationMs : undefined,
         });
       }
       this.postStateThrottled();
@@ -647,6 +670,10 @@ export class MainChatPanel {
       if (!text) {
         return;
       }
+      // Phase 3 — traces own MCP/process UI; skip MCP-prefixed warnings (no double chrome).
+      if (/^MCP:\s*/i.test(text) || text.startsWith("Tool-loop:") || text.startsWith("MCP turn:")) {
+        return;
+      }
       if (level === "warning" || level === "error") {
         this.messages.push({
           id: `log-${Date.now()}`,
@@ -685,6 +712,7 @@ export class MainChatPanel {
       this.streamingAssistantId = null;
       this.uncertaintyAutoOpenedThisTurn = false;
       this.answerStreaming = false;
+      this.webSearchLive = false;
       if (params.ok === false && params.interrupted) {
         this.messages.push({
           id: `sys-${Date.now()}`,
@@ -711,17 +739,23 @@ export class MainChatPanel {
     }
     if (method === "mcp/tool_started") {
       // Traces own MCP UI (turn/step); keep phase for Contemplating indicator.
-      this.markActivityLive("mcp");
+      const web =
+        Boolean(params.webSearch) ||
+        /brave|bing|duckduck|web.?search|search.?web|tavily|serp/i.test(
+          `${params.serverName || ""} ${params.toolName || ""}`
+        );
+      this.webSearchLive = web;
+      this.markActivityLive(web ? "searching" : "mcp");
+      if (web) {
+        this.busyLabel = "Searching the web…";
+      }
       this.postStateThrottled();
       return;
     }
-    if (method === "mcp/tool_finished") {
+    if (method === "mcp/tool_finished" || method === "mcp/tool_error") {
+      this.webSearchLive = false;
       this.postStateThrottled();
       return;
-    }
-    if (method === "mcp/tool_error") {
-      this.markActivityLive("mcp");
-      this.postState();
     }
   }
 
@@ -743,7 +777,26 @@ export class MainChatPanel {
       waitingForUser: Boolean(this.waiting),
       busyLabel: this.busyLabel,
       exploredFiles: this.activity.exploredFiles,
+      webSearchLive: this.webSearchLive,
     });
+  }
+
+  private upsertTraceStep(step: TraceStep): void {
+    const existing = this.messages.find(
+      (m) => m.kind === "trace" && m.step?.stepId === step.stepId
+    );
+    if (existing && existing.step) {
+      existing.step = { ...existing.step, ...step, expanded: existing.step.expanded };
+      existing.text = step.title;
+    } else {
+      this.messages.push({
+        id: `trace-${step.stepId}`,
+        role: "system",
+        kind: "trace",
+        text: step.title,
+        step,
+      });
+    }
   }
 
   private postState(): void {
@@ -943,10 +996,17 @@ export class MainChatPanel {
     width: 16px; height: 16px; flex: 0 0 16px;
     color: var(--z-accent);
     display: none;
+    opacity: 0;
+    transition: opacity 0.2s ease;
   }
+  #stateIndicator .si-icon.svg-host,
   #stateIndicator .si-icon svg { width: 16px; height: 16px; display: block; }
-  #stateIndicator.icon-sunburst .si-icon.sunburst { display: block; }
-  #stateIndicator.icon-magnifier .si-icon.magnifier { display: block; }
+  #stateIndicator.icon-sunburst .si-icon.sunburst {
+    display: block; opacity: 1;
+  }
+  #stateIndicator.icon-magnifier .si-icon.magnifier {
+    display: block; opacity: 1;
+  }
   #stateIndicator .si-label {
     font-weight: 450;
     color: var(--z-secondary);

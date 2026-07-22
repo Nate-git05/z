@@ -2103,6 +2103,21 @@ class Coder:
             res = run_tool_loop(content, root=getattr(self, "root", None) or ".")
             if not res.ran:
                 return False
+            # Phase 3 — emit structured activity + turn traces per z-tool call.
+            try:
+                act = getattr(self.io, "activity", None)
+                tr = getattr(self.io, "trace", None)
+                for call in res.calls:
+                    name = getattr(call, "name", "") or ""
+                    args = getattr(call, "args", "") or ""
+                    if act is not None:
+                        act.note_z_tool(name, args)
+                    if tr is not None:
+                        tr.note_z_tool(name, args)
+                if act is not None:
+                    act.flush(force=True)
+            except Exception:
+                pass
             names = ", ".join(f"{c.name}" for c in res.calls)
             self.io.tool_output(f"Tool-loop: ran {len(res.calls)} read-only tool(s) ({names}).")
             prev = getattr(self, "reflected_message", None) or ""

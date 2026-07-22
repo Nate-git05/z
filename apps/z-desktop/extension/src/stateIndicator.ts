@@ -44,11 +44,13 @@ export interface DeriveIndicatorInput {
   waitingForUser: boolean;
   busyLabel?: string;
   exploredFiles?: number;
+  /** Live MCP/web-search signal from mcp/tool_started. */
+  webSearchLive?: boolean;
 }
 
 const HIDDEN: StateIndicator = { visible: false };
 
-function looksLikeWebSearch(label: string): boolean {
+export function looksLikeWebSearch(label: string): boolean {
   const t = (label || "").toLowerCase();
   return (
     t.includes("web search") ||
@@ -57,6 +59,8 @@ function looksLikeWebSearch(label: string): boolean {
     t.includes("brave") ||
     t.includes("bing") ||
     t.includes("duckduck") ||
+    t.includes("tavily") ||
+    t.includes("serp") ||
     (/\bweb\b/.test(t) && t.includes("search"))
   );
 }
@@ -80,19 +84,19 @@ export function deriveStateIndicator(input: DeriveIndicatorInput): StateIndicato
   }
 
   const label = input.busyLabel || "";
+  if (input.webSearchLive || looksLikeWebSearch(label)) {
+    return {
+      visible: true,
+      stateId: "searching_web",
+      label: "Searching the web",
+      icon: "magnifier",
+    };
+  }
 
   switch (input.phase) {
     case "editing":
       return { visible: true, stateId: "editing", label: "Editing", icon: "sunburst" };
     case "searching":
-      if (looksLikeWebSearch(label)) {
-        return {
-          visible: true,
-          stateId: "searching_web",
-          label: "Searching the web",
-          icon: "magnifier",
-        };
-      }
       return { visible: true, stateId: "searching", label: "Searching", icon: "sunburst" };
     case "running":
       return { visible: true, stateId: "running", label: "Running", icon: "sunburst" };
@@ -101,7 +105,6 @@ export function deriveStateIndicator(input: DeriveIndicatorInput): StateIndicato
     case "thinking":
     case "planning":
     case "choosing_model":
-      // Prefer Reading when the live signal is file exploration without edits/searches.
       if (
         input.phase === "thinking" &&
         (input.exploredFiles || 0) > 0 &&

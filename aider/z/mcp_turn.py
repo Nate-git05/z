@@ -40,6 +40,16 @@ _ANGLE_RE = re.compile(
 NotifyFn = Callable[[str, dict], None]
 
 
+def _mcp_is_web(server: str, tool: str, arguments: Any = None) -> bool:
+    try:
+        from aider.z.app_server.turn_trace import is_web_search
+
+        return is_web_search(server=server or "", tool=tool or "", text=str(arguments or ""))
+    except Exception:
+        blob = f"{server} {tool}".lower()
+        return any(x in blob for x in ("brave", "bing", "duckduck", "web_search", "search_web"))
+
+
 @dataclass
 class McpCall:
     server: str
@@ -211,23 +221,11 @@ def run_mcp_turn(
             continue
 
         call_id = ""
-        if notify:
-            notify(
-                "mcp/tool_started",
-                {
-                    "turnId": turn_id,
-                    "serverName": server_name,
-                    "toolName": call.tool,
-                    "callId": "",
-                },
-            )
-
         t0_result = mgr.call_tool(
             connection_id, call.tool, call.arguments, timeout=60.0
         )
         call_id = t0_result.call_id
         if notify:
-            # patch started with id if we emitted empty
             notify(
                 "mcp/tool_started",
                 {
@@ -235,13 +233,17 @@ def run_mcp_turn(
                     "serverName": server_name,
                     "toolName": call.tool,
                     "callId": call_id,
+                    "webSearch": _mcp_is_web(server_name, call.tool, call.arguments),
                 },
             )
         try:
             tr = getattr(io, "trace", None) if io is not None else None
             if tr is not None:
                 tr.note_mcp_started(
-                    server=server_name, tool=call.tool, call_id=str(call_id or "")
+                    server=server_name,
+                    tool=call.tool,
+                    call_id=str(call_id or ""),
+                    arguments=call.arguments,
                 )
         except Exception:
             pass
@@ -264,6 +266,7 @@ def run_mcp_turn(
                         "ok": True,
                         "summary": (t0_result.text or "")[:160],
                         "durationMs": t0_result.duration_ms,
+                        "webSearch": _mcp_is_web(server_name, call.tool, call.arguments),
                     },
                 )
             try:
@@ -276,14 +279,21 @@ def run_mcp_turn(
                         ok=True,
                         summary=(t0_result.text or "")[:160],
                         duration_ms=t0_result.duration_ms,
+                        arguments=call.arguments,
                     )
             except Exception:
                 pass
             if io is not None:
                 try:
+                    # Activity counters only — Chat ignores info turn/log; traces own UI.
                     io.tool_output(
-                        f"MCP: {server_name}.{call.tool} ok ({t0_result.duration_ms}ms)"
+                        f"MCP: {server_name}.{call.tool} ok ({t0_result.duration_ms}ms)",
+                        log_only=True,
                     )
+                    act = getattr(io, "activity", None)
+                    if act is not None:
+                        act.note_mcp()
+                        act.maybe_flush()
                 except Exception:
                     pass
         else:
@@ -298,6 +308,7 @@ def run_mcp_turn(
                         "serverName": server_name,
                         "toolName": call.tool,
                         "error": err,
+                        "webSearch": _mcp_is_web(server_name, call.tool, call.arguments),
                     },
                 )
             try:
@@ -310,14 +321,11 @@ def run_mcp_turn(
                         ok=False,
                         error=err,
                         duration_ms=getattr(t0_result, "duration_ms", None),
+                        arguments=call.arguments,
                     )
             except Exception:
                 pass
-            if io is not None:
-                try:
-                    io.tool_warning(f"MCP: {server_name}.{call.tool} failed: {err}")
-                except Exception:
-                    pass
+            # Do not tool_warning — traces already show Blocked; avoids double system bubble.
 
     if not blocks:
         return result
