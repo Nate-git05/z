@@ -4,8 +4,13 @@ src/**
 tsconfig.json
 **/*.ts
 **/*.map
-node_modules/**
 .gitignore
 .eslint*
 **/tsconfig*.json
 **/*.vsix
+
+# Keep production deps (esp. `ws`) — do not exclude all of node_modules.
+# Ignore bulky / unused trees; vsce still packs declared dependencies.
+node_modules/@types/**
+node_modules/typescript/**
+node_modules/@vscode/**
