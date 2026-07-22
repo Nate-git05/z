@@ -3,7 +3,7 @@
  */
 
 import * as vscode from "vscode";
-import { spawn, ChildProcess, execFileSync } from "child_process";
+import { spawn, ChildProcess } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
@@ -14,6 +14,7 @@ import {
   AuthStatus,
   InitializeResult,
 } from "./appServerClient";
+import { findZOnPath, resolveBundledZBinary } from "./firstRun";
 
 export type ConnectionState =
   | "disconnected"
@@ -178,15 +179,13 @@ export class AppServerManager implements vscode.Disposable {
     if (configured && configured.trim()) {
       return configured.trim();
     }
-    try {
-      const which = process.platform === "win32" ? "where" : "which";
-      const out = execFileSync(which, ["z"], { encoding: "utf8" }).trim();
-      const first = out.split(/\r?\n/)[0];
-      if (first) {
-        return first;
-      }
-    } catch {
-      /* fall through */
+    const bundled = resolveBundledZBinary(this.context.extensionPath);
+    if (bundled) {
+      return bundled;
+    }
+    const onPath = findZOnPath();
+    if (onPath) {
+      return onPath;
     }
     return "z";
   }

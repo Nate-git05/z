@@ -1,0 +1,51 @@
+name: Z Desktop Brand Check
+
+on:
+  push:
+    paths:
+      - "apps/z-desktop/product.z.json"
+      - "apps/z-desktop/scripts/**"
+      - "apps/z-desktop/brand/**"
+      - "apps/z-desktop/extension/**"
+      - ".github/workflows/z-desktop-brand.yml"
+  pull_request:
+    paths:
+      - "apps/z-desktop/product.z.json"
+      - "apps/z-desktop/scripts/**"
+      - "apps/z-desktop/brand/**"
+      - "apps/z-desktop/extension/**"
+      - ".github/workflows/z-desktop-brand.yml"
+  workflow_dispatch:
+
+jobs:
+  brand-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Generate icons
+        run: |
+          pip install pillow
+          python3 apps/z-desktop/scripts/generate-icons.py
+          test -f apps/z-desktop/brand/z-editor.png
+          test -f apps/z-desktop/brand/z-editor.ico
+          test -f apps/z-desktop/brand/z-editor.icns
+      - name: Clone Seam (pinned) & apply product
+        env:
+          SEAM_SHA: 0514584208c175847d65abd907aa51937343cffb
+        run: |
+          git clone --depth 1 https://github.com/Nate-git05/Seam.git apps/z-desktop/vendor/vscode
+          cd apps/z-desktop/vendor/vscode
+          git fetch --depth 1 origin "$SEAM_SHA"
+          git checkout "$SEAM_SHA"
+          cd "$GITHUB_WORKSPACE"
+          ./apps/z-desktop/scripts/apply-product.sh --require-icons
+          ./apps/z-desktop/scripts/apply-product.sh --check
+          # Built-in inject needs npm compile
+          cd apps/z-desktop/extension && npm ci || npm install
+          cd "$GITHUB_WORKSPACE"
+          ./apps/z-desktop/scripts/inject-builtin-extension.sh
+          test -f apps/z-desktop/vendor/vscode/extensions/z-editor/out/extension.js
+          python3 -c "import json; p=json.load(open('apps/z-desktop/vendor/vscode/product.json')); assert p['nameShort']=='Z'; assert p['urlProtocol']=='z-editor'; assert 'defaultChatAgent' not in p"

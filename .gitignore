@@ -29,3 +29,4 @@ web/.env*.local
 apps/z-desktop/vendor/
 apps/z-desktop/extension/out/
 apps/z-desktop/extension/node_modules/
+apps/z-desktop/extension/*.vsix

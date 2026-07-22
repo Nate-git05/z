@@ -3,6 +3,7 @@ import { AppServerManager } from "./appServerManager";
 import { registerAuthCommands } from "./authCommands";
 import { registerWorkspaceSync } from "./workspaceSync";
 import { registerViews } from "./views";
+import { ensureEngineOrWizard } from "./firstRun";
 
 let manager: AppServerManager | null = null;
 let status: vscode.StatusBarItem;
@@ -36,6 +37,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     void vscode.commands.executeCommand("workbench.view.extension.z-left");
     void vscode.commands.executeCommand("workbench.view.extension.z-right");
   }
+
+  // P5 — guide install when `z` is missing (before auto-start fails silently)
+  await ensureEngineOrWizard(context);
 
   context.subscriptions.push(
     vscode.commands.registerCommand("z.applyTerminalTheme", () => applyZTerminalTheme(true)),
@@ -72,7 +76,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("z.openAppServerLog", () => {
       // Output channel is created inside manager; expose via command palette indirectly
       vscode.commands.executeCommand("workbench.action.output.show");
-    })
+    }),
+    vscode.commands.registerCommand("z.installEngineHelp", () =>
+      ensureEngineOrWizard(context)
+    )
   );
 
   updateStatusBar(manager);

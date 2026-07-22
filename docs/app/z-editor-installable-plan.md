@@ -1,9 +1,10 @@
 # Z Editor — Installable Desktop Packaging Plan
 
 **Date:** 2026-07-22  
-**Branch:** `cursor/z-editor-installable-plan-313a`  
-**Status:** Plan only — not yet implemented  
+**Branch:** `cursor/z-editor-installable-impl-313a`  
+**Status:** Implementing — P0–P5 landed (VSIX, icons, inject, CI, first-run); P6 signing deferred  
 **Depends on:** Phases 0–15 on `cursor/z-editor-completion-impl-313a`  
+**Pinned Seam SHA:** `0514584208c175847d65abd907aa51937343cffb`  
 **Related:** [`z-editor-completion-plan.md`](./z-editor-completion-plan.md), [`z-editor-v1-implementation-plan.md`](./z-editor-v1-implementation-plan.md), [`apps/z-desktop/README.md`](../../apps/z-desktop/README.md)
 
 ---
@@ -449,13 +450,26 @@ Do not mix full gulp packaging with MCP runtime changes in the same PR.
 ## 20. Implementation checklist
 
 ```
-[ ] P0 Pin Seam SHA + refresh README packaging section
-[ ] P1 vsce + CI VSIX + INSTALL.md
-[ ] P2 Icons + AppIds + builtInExtensions merge strategy
-[ ] P3 Inject built-in Z extension + brand-check CI
-[ ] P4 Linux unsigned artifact on Release
-[ ] P4 macOS unsigned artifact on Release
-[ ] P5 First-run wizard + (optional) embed z-runtime
+[x] P0 Pin Seam SHA + refresh README packaging section
+[x] P1 vsce + CI VSIX + INSTALL.md
+[x] P2 Icons + AppIds + builtInExtensions merge strategy
+[x] P3 Inject built-in Z extension + brand-check CI
+[x] P4 Linux/macOS package workflows (workflow_dispatch / tags)
+[x] P5 First-run wizard + bundled z-runtime path resolution
 [ ] P6 Sign / notarize / updateUrl
-[ ] Update north-star + z-desktop README Download section
+[x] Update z-desktop README Download section
 ```
+
+### Implementation map (landed)
+
+| Piece | Path |
+|-------|------|
+| Icons | `apps/z-desktop/brand/`, `scripts/generate-icons.py` |
+| Apply + icons | `scripts/apply-product.sh` |
+| Built-in inject | `scripts/inject-builtin-extension.sh` |
+| Package | `scripts/package.sh [gulp-target]` |
+| VSIX | `extension` `npm run package` + `.github/workflows/z-extension-vsix.yml` |
+| Brand CI | `.github/workflows/z-desktop-brand.yml` |
+| Electron CI | `.github/workflows/z-desktop-package.yml` |
+| First-run | `extension/src/firstRun.ts` |
+| User doc | `apps/z-desktop/INSTALL.md` |
