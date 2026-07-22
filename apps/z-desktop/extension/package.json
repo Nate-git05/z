@@ -2,8 +2,13 @@
   "name": "z-editor",
   "displayName": "Z",
   "description": "Z coding agent — agent-first chat, uncertainty chain, skills, commit gate (Z Terminal orange/black)",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "publisher": "z",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Nate-git05/z.git"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -13,6 +18,7 @@
     "onUri"
   ],
   "main": "./out/extension.js",
+  "icon": "media/z-activity.png",
   "contributes": {
     "themes": [
       {
@@ -120,6 +126,10 @@
       {
         "command": "z.cancelSignIn",
         "title": "Z: Cancel sign-in"
+      },
+      {
+        "command": "z.installEngineHelp",
+        "title": "Z: Install engine help"
       }
     ],
     "configuration": {
@@ -149,13 +159,20 @@
           "type": "boolean",
           "default": true,
           "description": "Apply the Z Terminal color theme (burnt orange on near-black, matching the CLI) when the extension activates."
+        },
+        "z.promptInstallEngine": {
+          "type": "boolean",
+          "default": true,
+          "description": "When the Z engine (`z` CLI) is missing, show the first-run install wizard."
         }
       }
     }
   },
   "scripts": {
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile",
+    "package": "npm run compile && vsce package --no-dependencies --allow-missing-repository"
   },
   "dependencies": {
     "ws": "^8.16.0"
@@ -164,6 +181,7 @@
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.85.0",
     "@types/ws": "^8.5.10",
+    "@vscode/vsce": "^3.2.1",
     "typescript": "^5.3.3"
   }
 }

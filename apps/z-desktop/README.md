@@ -1,9 +1,11 @@
 # Z Desktop (app shell)
 
-**Status:** Phase 0–15 — agent-first Chat, MCP **runtime** (tools in turns), OAuth deep-link, usage honesty, branded shell scripts, Chat polish.  
+**Status:** Phase 0–15 + **installable packaging (P0–P5)** — VSIX, brand/icons, built-in inject, CI, first-run engine wizard.  
 **Look:** Z Terminal palette (burnt orange `#C96A2B` on near-black `#0A0A0A`) — same as the CLI.  
-**Completion plan:** [`docs/app/z-editor-completion-plan.md`](../../docs/app/z-editor-completion-plan.md)  
-**Installable packaging plan:** [`docs/app/z-editor-installable-plan.md`](../../docs/app/z-editor-installable-plan.md) — VSIX → unsigned Electron artifacts → signed releases (not shipped yet).
+**Install:** [`INSTALL.md`](./INSTALL.md)  
+**Plans:** [`z-editor-installable-plan.md`](../../docs/app/z-editor-installable-plan.md) · [`z-editor-completion-plan.md`](../../docs/app/z-editor-completion-plan.md)
+
+**Pinned Seam SHA:** `0514584208c175847d65abd907aa51937343cffb` (Code-OSS 1.128.0, Node 24.17)
 
 **Read first:** [`docs/app/z-editor-v1-implementation-plan.md`](../../docs/app/z-editor-v1-implementation-plan.md)
 
@@ -23,14 +25,27 @@
 | `extension/` | Z activity-bar contribution + lifecycle manager |
 | `vendor/` | Local clones only — **gitignored** |
 
+## Install / download
+
+| Path | Doc |
+|------|-----|
+| VSIX into VS Code/Cursor | [`INSTALL.md`](./INSTALL.md) Path A · CI workflow **Z Extension VSIX** |
+| Branded unsigned Electron | [`INSTALL.md`](./INSTALL.md) Path B · `./scripts/package.sh vscode-linux-x64` |
+| First-run missing `z` | Command **Z: Install engine help** |
+
 ## Clone vendors (your forks)
 
 ```bash
 # From repo root — trees stay gitignored under apps/z-desktop/vendor/
 rm -rf apps/z-desktop/vendor/vscode apps/z-desktop/vendor/codex
 gh repo clone Nate-git05/Seam apps/z-desktop/vendor/vscode -- --depth 1
+cd apps/z-desktop/vendor/vscode && git checkout 0514584208c175847d65abd907aa51937343cffb
+cd ../../..
 gh repo clone Nate-git05/codex apps/z-desktop/vendor/codex -- --depth 1
 # remotes: origin = your fork, upstream = microsoft/vscode | openai/codex
+
+# Brand + inject Z extension (no full gulp yet):
+./apps/z-desktop/scripts/package.sh
 ```
 
 ## Phase 3 — shell lifecycle

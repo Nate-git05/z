@@ -1,0 +1,86 @@
+name: Z Desktop Package (unsigned)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Gulp target"
+        required: true
+        default: "vscode-linux-x64"
+        type: choice
+        options:
+          - vscode-linux-x64
+          - vscode-darwin-arm64
+          - vscode-darwin-x64
+  push:
+    tags:
+      - "z-editor-v*"
+
+jobs:
+  package-linux:
+    if: github.event_name == 'push' || inputs.target == 'vscode-linux-x64'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      SEAM_SHA: 0514584208c175847d65abd907aa51937343cffb
+      TARGET: vscode-linux-x64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.17.0"
+      - name: Clone Seam, brand, inject, gulp
+        run: |
+          pip install pillow
+          git clone --depth 1 https://github.com/Nate-git05/Seam.git apps/z-desktop/vendor/vscode
+          cd apps/z-desktop/vendor/vscode
+          git fetch --depth 1 origin "$SEAM_SHA"
+          git checkout "$SEAM_SHA"
+          cd "$GITHUB_WORKSPACE"
+          ./apps/z-desktop/scripts/package.sh "$TARGET"
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: z-editor-linux-x64
+          path: |
+            apps/z-desktop/vendor/vscode/VSCode-linux-x64/**
+            apps/z-desktop/vendor/vscode/.build/vscode-linux-x64/**
+          if-no-files-found: warn
+          retention-days: 14
+
+  package-darwin:
+    if: github.event_name == 'workflow_dispatch' && (inputs.target == 'vscode-darwin-arm64' || inputs.target == 'vscode-darwin-x64')
+    runs-on: ${{ inputs.target == 'vscode-darwin-arm64' && 'macos-14' || 'macos-13' }}
+    timeout-minutes: 180
+    env:
+      SEAM_SHA: 0514584208c175847d65abd907aa51937343cffb
+      TARGET: ${{ inputs.target }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.17.0"
+      - name: Clone Seam, brand, inject, gulp
+        run: |
+          pip install pillow
+          git clone --depth 1 https://github.com/Nate-git05/Seam.git apps/z-desktop/vendor/vscode
+          cd apps/z-desktop/vendor/vscode
+          git fetch --depth 1 origin "$SEAM_SHA"
+          git checkout "$SEAM_SHA"
+          cd "$GITHUB_WORKSPACE"
+          ./apps/z-desktop/scripts/package.sh "$TARGET"
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: z-editor-${{ inputs.target }}
+          path: |
+            apps/z-desktop/vendor/vscode/VSCode-darwin*/**
+            apps/z-desktop/vendor/vscode/.build/vscode-darwin*/**
+          if-no-files-found: warn
+          retention-days: 14
