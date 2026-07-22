@@ -27,7 +27,7 @@ z
 First-run flow:
 
 1. **Z account login** (email / phone / Google) — workspace features, MCP list, skill sync  
-2. **Model access** — BYOK (your API key) **or** Z model router  
+2. **Model access** — **Z model router** (preferred model + escalation). BYOK only if `Z_ALLOW_BYOK=1`  
 3. Agent chat starts in the project directory  
 
 Important: **Z login ≠ model key.** You still need a provider key (or router mode). Keys live in env / `~/.z/byok.env`; account tokens in `~/.z/credentials`.
@@ -36,8 +36,8 @@ Important: **Z login ≠ model key.** You still need a provider key (or router m
 z login          # sign in without starting a session
 z logout
 z whoami
-z reset          # re-pick BYOK vs router / model (keeps login)
-z auth switch    # re-choose BYOK vs router
+z reset          # re-pick Z router model (keeps login)
+z auth switch    # same — re-pick preferred router model
 z --model sonnet # start with a specific model (Aider-compatible flags)
 ```
 
@@ -146,12 +146,12 @@ Full guide: [docs/skills/README.md](../skills/README.md).
 
 ---
 
-### 3.5 Model routing (BYOK vs Z router)
+### 3.5 Model routing (Z router — V1 default)
 
 | Mode | Behavior |
 |------|----------|
-| **BYOK** | You pick provider/model; your keys; Z uses that model |
-| **Router** | Z classifies task difficulty, selects a tier, can escalate on failure within budget |
+| **Router** (default) | Pick a preferred Z model; router classifies difficulty and can escalate within budget |
+| **BYOK** | Escape only: set `Z_ALLOW_BYOK=1` to restore bring-your-own key |
 
 Reconfigure anytime: `z reset` or `z auth switch`. List models: `z models` / `z models --all`.
 

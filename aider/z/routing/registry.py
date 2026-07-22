@@ -43,6 +43,37 @@ class ModelProfile:
 
 
 MODEL_REGISTRY: Tuple[ModelProfile, ...] = (
+    # OpenAI — primary gateway upstream in V1
+    ModelProfile(
+        "gpt-4o-mini",
+        "openai",
+        0.15,
+        0.60,
+        128_000,
+        CapabilityTier.TRIVIAL,
+        500,
+        ("general",),
+    ),
+    ModelProfile(
+        "gpt-4o",
+        "openai",
+        2.50,
+        10.00,
+        128_000,
+        CapabilityTier.HARD,
+        1200,
+        ("general",),
+    ),
+    ModelProfile(
+        "o3-mini",
+        "openai",
+        1.10,
+        4.40,
+        200_000,
+        CapabilityTier.REASONING_HEAVY,
+        2500,
+        ("reasoning",),
+    ),
     ModelProfile(
         "claude-sonnet-5",
         "anthropic",
@@ -107,9 +138,30 @@ MODEL_REGISTRY: Tuple[ModelProfile, ...] = (
 )
 
 
+def normalize_model_id(model_id: str) -> str:
+    """Strip litellm-style ``provider/`` prefix for registry lookup."""
+    mid = (model_id or "").strip()
+    if not mid:
+        return ""
+    if "/" in mid:
+        provider, rest = mid.split("/", 1)
+        if provider in (
+            "openai",
+            "azure",
+            "anthropic",
+            "openrouter",
+            "google",
+            "groq",
+            "deepseek",
+        ):
+            return rest or mid
+    return mid
+
+
 def model_by_id(model_id: str) -> Optional[ModelProfile]:
+    mid = normalize_model_id(model_id) or (model_id or "").strip()
     for m in MODEL_REGISTRY:
-        if m.model_id == model_id:
+        if m.model_id == mid or m.model_id == (model_id or "").strip():
             return m
     return None
 

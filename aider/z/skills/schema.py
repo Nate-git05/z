@@ -77,7 +77,7 @@ class Skill:
     tags: List[str] = field(default_factory=list)
     project_types: List[str] = field(default_factory=list)
     triggers: List[str] = field(default_factory=list)
-    source: str = "generate"  # paste | generate | capture
+    source: str = "generate"  # paste | generate | capture | manual
     # Router fields
     kind: str = SKILL_KIND_PLAYBOOK  # scaffold | playbook | bug_pattern
     languages: List[str] = field(default_factory=list)
