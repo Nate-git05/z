@@ -109,11 +109,11 @@ export class McpViewProvider implements vscode.WebviewViewProvider {
     }
     try {
       const [listRes, catRes] = await Promise.all([
-        this.manager.rpc.request("mcp/list", {}),
-        this.manager.rpc.request("mcp/catalog", {}),
+        this.manager.rpc.request("mcp/list", {}) as Promise<{ connections?: McpConnection[] }>,
+        this.manager.rpc.request("mcp/catalog", {}) as Promise<{ catalog?: CatalogEntry[] }>,
       ]);
-      this.connections = (listRes?.connections || []) as McpConnection[];
-      this.catalog = (catRes?.catalog || []) as CatalogEntry[];
+      this.connections = listRes?.connections || [];
+      this.catalog = catRes?.catalog || [];
       if (!this.selectedServer && this.catalog.length) {
         this.selectedServer = this.catalog[0].serverName;
       }
@@ -122,10 +122,10 @@ export class McpViewProvider implements vscode.WebviewViewProvider {
         const name = c.serverName || c.server_name || "";
         if (!name) continue;
         try {
-          const st = await this.manager.rpc.request("mcp/firstUseStatus", {
+          const st = (await this.manager.rpc.request("mcp/firstUseStatus", {
             serverName: name,
             toolName: "*",
-          });
+          })) as { needsConfirm?: boolean };
           this.firstUse[name] = Boolean(st?.needsConfirm);
         } catch {
           this.firstUse[name] = true;
@@ -142,11 +142,14 @@ export class McpViewProvider implements vscode.WebviewViewProvider {
     const serverName = String(msg.serverName || this.selectedServer || "");
     const credentials = (msg.credentials || {}) as Record<string, string>;
     try {
-      const result = await this.manager.rpc.request("mcp/connect", {
+      const result = (await this.manager.rpc.request("mcp/connect", {
         serverName,
         credentials,
         syncCloud: true,
-      });
+      })) as {
+        test?: { ok?: boolean; error?: string };
+        updated?: boolean;
+      };
       const test = result?.test;
       if (test && test.ok === false) {
         this.status = `Connected with warning: ${test.error || "test failed"}`;
@@ -163,15 +166,17 @@ export class McpViewProvider implements vscode.WebviewViewProvider {
   private async test(msg: Record<string, unknown>): Promise<void> {
     if (!this.manager.rpc) return;
     try {
-      let result: Record<string, unknown>;
+      let result: { ok?: boolean; mode?: string; error?: string };
       if (msg.id) {
-        result = await this.manager.rpc.request("mcp/test", { id: String(msg.id) });
+        result = (await this.manager.rpc.request("mcp/test", {
+          id: String(msg.id),
+        })) as { ok?: boolean; mode?: string; error?: string };
       } else {
-        result = await this.manager.rpc.request("mcp/test", {
+        result = (await this.manager.rpc.request("mcp/test", {
           serverName: String(msg.serverName || this.selectedServer || ""),
           credentials: msg.credentials || {},
           skipPersist: true,
-        });
+        })) as { ok?: boolean; mode?: string; error?: string };
       }
       this.status = result?.ok
         ? `Test OK (${result.mode || "ok"})`
@@ -214,7 +219,13 @@ export class McpViewProvider implements vscode.WebviewViewProvider {
   private async sync(): Promise<void> {
     if (!this.manager.rpc) return;
     try {
-      const result = await this.manager.rpc.request("mcp/sync", {});
+      const result = (await this.manager.rpc.request("mcp/sync", {})) as {
+        ok?: boolean;
+        synced?: number;
+        skipped?: number;
+        error?: string;
+        errors?: string[];
+      };
       this.status = result?.ok
         ? `Synced ${result.synced || 0} (skipped ${result.skipped || 0})`
         : `Sync issue: ${result?.error || (result?.errors || []).join("; ") || "failed"}`;

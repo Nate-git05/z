@@ -22,8 +22,8 @@ from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
 
+from aider.z.auth import get_auth_base_url
 from aider.z.credentials import load_credentials
-from aider.z.urls import api_base
 
 
 def mcp_root() -> Path:
@@ -548,7 +548,7 @@ def sync_to_cloud(*, timeout: float = 20.0) -> dict[str, Any]:
                 **conn.public_fields,
             },
         }
-        url = f"{api_base()}/v1/mcp/connect"
+        url = f"{get_auth_base_url()}/v1/mcp/connect"
         req = urllib.request.Request(
             url,
             data=json.dumps(body).encode("utf-8"),

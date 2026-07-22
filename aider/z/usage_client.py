@@ -14,8 +14,8 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
+from aider.z.auth import get_auth_base_url
 from aider.z.credentials import load_credentials
-from aider.z.urls import api_base
 
 
 ALLOWED_RANGES = frozenset({"billing_period", "all"})
@@ -85,7 +85,7 @@ def fetch_usage_summary(
         out["note"] = "Sign in to load live gateway usage."
         return out
 
-    url = f"{api_base()}/v1/gateway/usage?{urllib.parse.urlencode({'range': key})}"
+    url = f"{get_auth_base_url()}/v1/gateway/usage?{urllib.parse.urlencode({'range': key})}"
     req = urllib.request.Request(
         url,
         headers={
