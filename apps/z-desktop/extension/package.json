@@ -2,7 +2,7 @@
   "name": "z-editor",
   "displayName": "Z",
   "description": "Z coding agent — agent-first chat, uncertainty chain, skills, commit gate (Z Terminal orange/black)",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "publisher": "z",
   "license": "MIT",
   "repository": {
