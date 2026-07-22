@@ -1,6 +1,6 @@
 # Z Desktop (app shell)
 
-**Status:** Phase 0–7 — agent-first Chat, gateway TaskMode routing, Uncertainty chain, Skills author.  
+**Status:** Phase 0–8 — agent-first Chat, gateway routing, Uncertainty, Skills, Commit Gate override.  
 **Look:** Z Terminal palette (burnt orange `#C96A2B` on near-black `#0A0A0A`) — same as the CLI.
 
 **Read first:** [`docs/app/z-editor-v1-implementation-plan.md`](../../docs/app/z-editor-v1-implementation-plan.md)
@@ -99,9 +99,16 @@ Flow:
 - Detail via `skills/get`
 - Create form → always `draft` / `needs_review`; near-dup offers **Merge** or **Create anyway** (`force`)
 
-## Next (Phase 8+)
+## Phase 8 — Commit Gate override
 
-1. Commit-gate override UX
-2. Profile usage charts from `gateway_requests`
-3. In-app MCP connect/test
-4. Apply `product.z.json` when building from `vendor/vscode`
+- Ledger already written on `emit_commit_blocked`
+- Right panel: blocked vs cleared
+- **Override** is two-step (arm → Confirm) and requires `confirm=true` on IPC
+- **Mark resolved** when the underlying issue is fixed
+- Notifications: `gate/commit_blocked`, `gate/commit_updated`
+
+## Next (Phase 9+)
+
+1. Profile usage charts from `gateway_requests`
+2. In-app MCP connect/test
+3. Apply `product.z.json` when building from `vendor/vscode`

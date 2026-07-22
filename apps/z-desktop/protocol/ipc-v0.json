@@ -112,7 +112,24 @@
     },
     "commit_blocks/list": {
       "params": {},
-      "result": { "blocks": "CommitBlockRecord[]" }
+      "result": {
+        "blocks": "CommitBlockRecord[]",
+        "blockedCount": "number",
+        "canCommit": "boolean"
+      }
+    },
+    "commit_blocks/override": {
+      "params": {
+        "id": "string",
+        "confirm": true,
+        "reason": { "optional": true }
+      },
+      "result": { "ok": true, "block": "CommitBlockRecord" },
+      "notes": "Phase 8 — confirm=true required (never one-click)."
+    },
+    "commit_blocks/resolve": {
+      "params": { "id": "string", "note": { "optional": true } },
+      "result": { "ok": true, "block": "CommitBlockRecord" }
     },
     "mcp/list": {
       "params": {},
@@ -185,6 +202,10 @@
     "uncertainty/upsert": { "node": "UncertaintyNode" },
     "uncertainty/changed": { "turnId": { "optional": true }, "reason": "string" },
     "gate/commit_blocked": { "record": "CommitBlockRecord" },
+    "gate/commit_updated": {
+      "record": "CommitBlockRecord",
+      "action": { "enum": ["overridden", "resolved"] }
+    },
     "turn/waiting_input": {
       "turnId": "string",
       "requestId": "string",

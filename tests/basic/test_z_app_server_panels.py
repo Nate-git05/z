@@ -190,5 +190,64 @@ class SkillsPhase7Test(unittest.TestCase):
         self.assertEqual(merged["skill"]["id"], first["skill"]["id"])
 
 
+class CommitGatePhase8Test(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="z_gate_p8_")
+        self.env = mock.patch.dict(os.environ, {"Z_HOME": self.tmp})
+        self.env.start()
+        self.notes = []
+        from aider.z.app_server.handlers import AppServerSession
+
+        self.session = AppServerSession(
+            notify=lambda m, p: self.notes.append((m, p))
+        )
+        self.session.handle(
+            "initialize",
+            {"clientInfo": {"name": "t"}, "workspaceRoot": self.tmp},
+        )
+
+    def tearDown(self):
+        self.session.dispose()
+        self.env.stop()
+
+    def test_override_requires_confirm(self):
+        from aider.z.app_server.handlers import HandlerError
+        from aider.z.uncertainty.commit_block_ledger import append_block
+
+        rec = append_block(reason="tests failed", repo_key=self.tmp)
+        with self.assertRaises(HandlerError) as ctx:
+            self.session.handle(
+                "commit_blocks/override",
+                {"id": rec["id"]},
+            )
+        self.assertIn("confirm", str(ctx.exception).lower())
+
+        out = self.session.handle(
+            "commit_blocks/override",
+            {"id": rec["id"], "confirm": True, "reason": "ship anyway"},
+        )
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["block"]["state"], "overridden")
+        self.assertEqual(out["block"]["override_meta"]["reason"], "ship anyway")
+        listed = self.session.handle("commit_blocks/list", {})
+        self.assertTrue(listed["canCommit"])
+        self.assertEqual(listed["blockedCount"], 0)
+        updated = [p for m, p in self.notes if m == "gate/commit_updated"]
+        self.assertTrue(updated)
+        self.assertEqual(updated[-1]["action"], "overridden")
+
+    def test_resolve_block(self):
+        from aider.z.uncertainty.commit_block_ledger import append_block
+
+        rec = append_block(reason="high risk", repo_key=self.tmp)
+        out = self.session.handle(
+            "commit_blocks/resolve",
+            {"id": rec["id"], "note": "fixed tests"},
+        )
+        self.assertEqual(out["block"]["state"], "resolved")
+        listed = self.session.handle("commit_blocks/list", {})
+        self.assertTrue(listed["canCommit"])
+
+
 if __name__ == "__main__":
     unittest.main()

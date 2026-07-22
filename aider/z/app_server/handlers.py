@@ -64,6 +64,10 @@ class AppServerSession:
             return self._skills_create(params)
         if method == "commit_blocks/list":
             return self._commit_blocks_list(params)
+        if method == "commit_blocks/override":
+            return self._commit_blocks_override(params)
+        if method == "commit_blocks/resolve":
+            return self._commit_blocks_resolve(params)
         if method == "mcp/list":
             return self._mcp_list(params)
         if method == "auth/status":
@@ -429,9 +433,82 @@ class AppServerSession:
             from aider.z.uncertainty.commit_block_ledger import list_blocks
 
             blocks = list_blocks(repo_key=self.workspace_root)
-            return {"blocks": blocks}
+            blocked = [b for b in blocks if (b.get("state") or "blocked") == "blocked"]
+            return {
+                "blocks": blocks,
+                "blockedCount": len(blocked),
+                "canCommit": len(blocked) == 0,
+            }
         except Exception as err:
             raise HandlerError(-32013, f"commit_blocks/list failed: {err}") from err
+
+    def _commit_blocks_override(self, params: dict) -> dict:
+        """Phase 8 — explicit confirm required (never one-click)."""
+        block_id = (params.get("id") or params.get("blockId") or "").strip()
+        if not block_id:
+            raise HandlerError(-32602, "commit_blocks/override requires id")
+        confirmed = bool(params.get("confirm") or params.get("confirmed"))
+        if not confirmed:
+            raise HandlerError(
+                -32026,
+                "Override requires confirm=true (explicit acknowledgement).",
+            )
+        reason = (params.get("reason") or "").strip()
+        try:
+            from aider.z.uncertainty.commit_block_ledger import set_block_state
+
+            updated = set_block_state(
+                block_id,
+                "overridden",
+                repo_key=self.workspace_root,
+                override_meta={
+                    "by": "editor",
+                    "reason": reason or "user override",
+                    "confirmed": True,
+                },
+            )
+            if updated is None:
+                raise HandlerError(-32027, f"Commit block not found: {block_id}")
+            self._notify(
+                "gate/commit_updated",
+                {"record": updated, "action": "overridden"},
+            )
+            return {"ok": True, "block": updated}
+        except HandlerError:
+            raise
+        except Exception as err:
+            raise HandlerError(-32013, f"commit_blocks/override failed: {err}") from err
+
+    def _commit_blocks_resolve(self, params: dict) -> dict:
+        """Mark a block resolved (checks passed / uncertainty cleared)."""
+        block_id = (params.get("id") or params.get("blockId") or "").strip()
+        if not block_id:
+            raise HandlerError(-32602, "commit_blocks/resolve requires id")
+        note = (params.get("note") or params.get("reason") or "").strip()
+        try:
+            from aider.z.uncertainty.commit_block_ledger import set_block_state
+
+            updated = set_block_state(
+                block_id,
+                "resolved",
+                repo_key=self.workspace_root,
+                override_meta={
+                    "by": "editor",
+                    "note": note or "marked resolved",
+                    "action": "resolve",
+                },
+            )
+            if updated is None:
+                raise HandlerError(-32027, f"Commit block not found: {block_id}")
+            self._notify(
+                "gate/commit_updated",
+                {"record": updated, "action": "resolved"},
+            )
+            return {"ok": True, "block": updated}
+        except HandlerError:
+            raise
+        except Exception as err:
+            raise HandlerError(-32013, f"commit_blocks/resolve failed: {err}") from err
 
     def _mcp_list(self, params: dict) -> dict:
         del params
