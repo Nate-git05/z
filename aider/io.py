@@ -891,7 +891,12 @@ class InputOutput:
                         cmd = self.file_watcher.process_changes()
                         return cmd
 
-            except EOFError:
+            except (EOFError, OSError):
+                # OSError here means prompt_toolkit couldn't attach to a real
+                # terminal at all (e.g. piped/non-interactive stdin) — same
+                # "no more input coming" signal as EOF, not a transient error
+                # to retry. Falling through to the generic handler below would
+                # return "" and let the caller's loop call us again forever.
                 raise
             except Exception as err:
                 import traceback
@@ -1155,7 +1160,7 @@ class InputOutput:
                         )
                     else:
                         res = input(cli_prompt)
-                except EOFError:
+                except (EOFError, OSError):
                     # Non-interactive / piped stdin: fail loud instead of
                     # silently accepting the default and then exiting on the
                     # next prompt with no explanation.
@@ -1303,7 +1308,7 @@ class InputOutput:
                         )
                     else:
                         res = input(cli_prompt)
-                except EOFError:
+                except (EOFError, OSError):
                     interactive = False
                     try:
                         interactive = bool(sys.stdin and sys.stdin.isatty())
@@ -1393,7 +1398,7 @@ class InputOutput:
                     )
                 else:
                     res = input(question + " ")
-            except EOFError:
+            except (EOFError, OSError):
                 # Treat EOF (Ctrl+D) as if the user pressed Enter
                 res = default
 

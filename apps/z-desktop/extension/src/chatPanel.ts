@@ -13,7 +13,13 @@ interface ChatMessage {
   id: string;
   role: ChatRole;
   text: string;
-  kind?: "tool" | "error" | "info";
+  kind?: "tool" | "error" | "info" | "trace";
+  title?: string;
+}
+
+interface GateState {
+  ready: boolean;
+  blockedCount: number;
 }
 
 interface WaitingPrompt {
@@ -126,6 +132,7 @@ export class MainChatPanel {
   private disposed = false;
   private postTimer: ReturnType<typeof setTimeout> | null = null;
   private connectionBanner = "";
+  private gate: GateState | null = null;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -141,6 +148,19 @@ export class MainChatPanel {
       } else if (conn === "error" || conn === "disconnected") {
         this.connectionBanner =
           this.manager.errorMessage || "App-server disconnected — Reconnect from the status bar.";
+        // Don't leave the composer stuck on "Working…" if the socket died mid-turn.
+        if (this.busyLabel || this.activity.live) {
+          this.messages.push({
+            id: `sys-${Date.now()}`,
+            role: "system",
+            kind: "error",
+            text: "Connection lost mid-turn — the agent may not have finished. Reconnecting automatically; re-send if needed.",
+          });
+          this.busyLabel = "";
+          this.waiting = null;
+          this.resetActivityImmediate();
+          this.queue = { queueLen: 0, items: [], preview: null };
+        }
       }
       this.postStateThrottled();
     });
@@ -179,9 +199,30 @@ export class MainChatPanel {
       this.context.subscriptions
     );
     this.postState();
+    void this.refreshGate();
   }
 
   refresh(): void {
+    this.postState();
+    void this.refreshGate();
+  }
+
+  private async refreshGate(): Promise<void> {
+    if (!this.manager.rpc) {
+      this.gate = null;
+      this.postState();
+      return;
+    }
+    try {
+      const result = (await this.manager.rpc.request("commit_blocks/list", {})) as {
+        blocks?: Array<{ state?: string }>;
+      };
+      const blocks = Array.isArray(result.blocks) ? result.blocks : [];
+      const blocked = blocks.filter((b) => (b.state || "blocked") === "blocked");
+      this.gate = { ready: blocked.length === 0, blockedCount: blocked.length };
+    } catch {
+      this.gate = null;
+    }
     this.postState();
   }
 
@@ -221,6 +262,10 @@ export class MainChatPanel {
           `turn/respond failed: ${err instanceof Error ? err.message : err}`
         );
       }
+      return;
+    }
+    if (msg.type === "openGate") {
+      await vscode.commands.executeCommand("z.focusCommitGate");
       return;
     }
     if (msg.type === "reconnect") {
@@ -521,10 +566,21 @@ export class MainChatPanel {
         this.messages.push({
           id: `log-${Date.now()}`,
           role: "system",
+          kind: level === "error" ? "error" : undefined,
           text: text.slice(0, 2000),
         });
         this.postState();
+        return;
       }
+      // Titled, collapsed step — the "turn trace" row (agent read/searched/ran something).
+      this.messages.push({
+        id: `trace-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        role: "system",
+        kind: "trace",
+        title: text.length > 76 ? `${text.slice(0, 75)}…` : text,
+        text: text.slice(0, 4000),
+      });
+      this.postStateThrottled();
       return;
     }
     if (method === "turn/completed") {
@@ -540,6 +596,11 @@ export class MainChatPanel {
       }
       this.settleActivitySoon();
       this.postState();
+      void this.refreshGate();
+      return;
+    }
+    if (method === "gate/commit_blocked" || method === "gate/commit_updated") {
+      void this.refreshGate();
       return;
     }
     if (method === "turn/error") {
@@ -557,11 +618,13 @@ export class MainChatPanel {
     if (method === "mcp/tool_started") {
       const server = String(params.serverName || "");
       const tool = String(params.toolName || "");
+      const title = `${server} · ${tool}…`;
       this.messages.push({
         id: `tool-${params.callId || Date.now()}`,
         role: "system",
-        kind: "tool",
-        text: `▸ ${server}.${tool}…`,
+        kind: "trace",
+        title,
+        text: title,
       });
       this.markActivityLive("mcp");
       this.postStateThrottled();
@@ -573,11 +636,12 @@ export class MainChatPanel {
       const ms = params.durationMs != null ? ` · ${params.durationMs}ms` : "";
       const id = `tool-${params.callId || Date.now()}`;
       const existing = this.messages.find((m) => m.id === id);
-      const line = `✓ ${server}.${tool}${ms}`;
+      const title = `${server} · ${tool}${ms}`;
       if (existing) {
-        existing.text = line;
+        existing.title = title;
+        existing.text = title;
       } else {
-        this.messages.push({ id, role: "system", kind: "tool", text: line });
+        this.messages.push({ id, role: "system", kind: "trace", title, text: title });
       }
       this.postStateThrottled();
       return;
@@ -614,10 +678,12 @@ export class MainChatPanel {
       connection: this.manager.connectionState,
       busyLabel: this.busyLabel,
       activity: this.activity,
+      streaming: Boolean(this.streamingAssistantId),
       waiting: this.waiting,
       messages: this.messages,
       queue: this.queue,
       banner: this.connectionBanner,
+      gate: this.gate,
     });
   }
 
@@ -630,7 +696,6 @@ export class MainChatPanel {
   ${zThemeCss()}
   html, body {
     height: 100%; margin: 0; padding: 0;
-    font-family: "IBM Plex Mono", "JetBrains Mono", "SF Mono", ui-monospace, monospace;
   }
   #app {
     display: flex; flex-direction: column; height: 100vh; box-sizing: border-box;
@@ -687,9 +752,56 @@ export class MainChatPanel {
   }
   #activity.idle { color: var(--z-muted); }
   #activity.idle .line2 { display: none; }
+  #activity.ambient { opacity: 0.72; transition: opacity 0.2s ease; }
+  #activity .dot {
+    display: inline-block; width: 6px; height: 6px; margin-right: 7px;
+    border-radius: 50%; background: var(--z-accent-bright);
+    animation: z-dot-pulse 1.1s ease-in-out infinite;
+    vertical-align: middle;
+  }
+  @keyframes z-dot-pulse {
+    0%, 100% { opacity: 0.3; transform: scale(0.85); }
+    50% { opacity: 1; transform: scale(1); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #activity .dot { animation: none; }
+  }
   #msgs {
     flex: 1; overflow-y: auto; padding: 8px 20px 16px;
   }
+  #msgs .hero {
+    height: 100%; min-height: 240px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; gap: 10px; padding: 0 24px; color: var(--z-muted);
+  }
+  #msgs .hero .hero-mark {
+    font-size: 42px; font-weight: 700; letter-spacing: -0.03em;
+    color: var(--z-accent-bright); opacity: 0.9;
+  }
+  #msgs .hero .hero-line { font-size: 13px; color: var(--z-text); max-width: 38em; line-height: 1.5; }
+  #msgs .hero .hero-hint { font-size: 11.5px; color: var(--z-muted); max-width: 36em; line-height: 1.5; }
+  .trace { margin: 0 0 4px; }
+  .trace-row {
+    display: flex; align-items: baseline; gap: 6px; cursor: pointer;
+    padding: 3px 0; font-size: 11.5px; color: var(--z-muted);
+  }
+  .trace-row:hover { color: var(--z-text); }
+  .trace .chev {
+    display: inline-block; font-size: 9px; color: var(--z-accent);
+    transition: transform 0.15s ease; flex: 0 0 auto;
+  }
+  .trace.open .chev { transform: rotate(90deg); }
+  .trace-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .trace-detail {
+    display: none; margin: 4px 0 8px 15px; padding: 8px 10px;
+    border: 1px solid var(--z-border); background: var(--z-surface);
+    font-family: var(--z-font-mono);
+    font-size: 11.5px; color: var(--z-muted); white-space: pre-wrap;
+    word-break: break-word; border-radius: var(--z-radius-sm);
+  }
+  .trace.open .trace-detail { display: block; }
+  .trace.no-detail .trace-row { cursor: default; }
+  .trace.no-detail .chev { visibility: hidden; }
   .msg { margin: 0 0 16px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
   .msg .role {
     font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
@@ -755,6 +867,22 @@ export class MainChatPanel {
   .msg.error .bubble { color: var(--z-accent-bright); font-size: 12px; }
   #waiting.kind-mcp_tool .q { color: var(--z-accent); }
   #waiting.kind-plan_confirm .q { color: var(--z-accent-bright); }
+  .gate-pill {
+    display: none; align-items: center; gap: 6px; font-size: 11px; font-weight: 600;
+    padding: 4px 12px 4px 10px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--z-border); background: transparent;
+  }
+  .gate-pill.show { display: inline-flex; }
+  .gate-pill::before {
+    content: ''; width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto;
+  }
+  .gate-pill.ready { color: var(--z-text-secondary); border-color: var(--z-border); }
+  .gate-pill.ready::before { background: var(--z-status-ok); }
+  .gate-pill.blocked {
+    color: var(--z-status-blocked); border-color: var(--z-status-blocked);
+    background: rgba(217, 119, 87, 0.1);
+  }
+  .gate-pill.blocked::before { background: var(--z-status-blocked); }
 </style>
 </head>
 <body>
@@ -786,6 +914,7 @@ export class MainChatPanel {
       <div class="composer-shell">
         <textarea id="input" placeholder="Prompt the agent…"></textarea>
         <div class="row">
+          <button class="gate-pill" id="gatePill" title="Commit Gate"></button>
           <button id="send">Send</button>
           <button class="secondary" id="cancel">Stop</button>
           <button class="secondary" id="clear">Clear</button>
@@ -878,7 +1007,7 @@ export class MainChatPanel {
       return joined;
     }
 
-    function renderActivity(act, conn, busyLabel) {
+    function renderActivity(act, conn, busyLabel, streaming) {
       const live = act && act.live;
       const phase = (act && act.phase) || 'idle';
       if (!live && phase === 'idle') {
@@ -891,7 +1020,8 @@ export class MainChatPanel {
           '</span></div><div class="line2"></div>';
         return;
       }
-      activityEl.className = 'busy';
+      const ambient = !streaming;
+      activityEl.className = 'busy' + (ambient ? ' ambient' : '');
       const summary = buildSummary(act || {});
       let line1 = summary;
       if (!line1 && busyLabel) {
@@ -910,6 +1040,7 @@ export class MainChatPanel {
         deltas += '</span>';
       }
       const phaseCopy = PHASE_COPY[phase] || (busyLabel ? escapeHtml(busyLabel) : 'Thinking');
+      const dot = ambient ? '<span class="dot" aria-hidden="true"></span>' : '';
       const a11yDeltas =
         (add > 0 || del > 0)
           ? (' plus ' + add + ', minus ' + del)
@@ -919,21 +1050,118 @@ export class MainChatPanel {
           '<span class="summary">' + (line1 || '') + '</span>' +
           deltas +
         '</div>' +
-        '<div class="line2">' + phaseCopy + '</div>';
+        '<div class="line2">' + dot + phaseCopy + '</div>';
       activityEl.setAttribute('aria-label', (line1.replace(/<[^>]+>/g, '') || phaseCopy) + a11yDeltas);
     }
 
+    const HERO_HTML =
+      '<div class="hero">' +
+      '<div class="hero-mark">Z</div>' +
+      '<div class="hero-line">Prompt the agent — it reads the repo, plans, edits, and verifies.</div>' +
+      '<div class="hero-hint">Try: “Add rate limiting to the login API and make sure tests pass.”</div>' +
+      '</div>';
+
+    // Incremental renderer: streaming deltas update one text node instead of
+    // rebuilding the whole transcript's innerHTML on every ~50ms tick.
+    const messageEls = new Map();
+
+    function buildMessageEl(m) {
+      const el = document.createElement('div');
+      if ((m.kind || '') === 'trace') {
+        el.className = 'trace';
+        const row = document.createElement('div');
+        row.className = 'trace-row';
+        const chev = document.createElement('span');
+        chev.className = 'chev';
+        chev.textContent = '▸';
+        const title = document.createElement('span');
+        title.className = 'trace-title';
+        row.appendChild(chev);
+        row.appendChild(title);
+        row.addEventListener('click', () => {
+          if (!el.classList.contains('no-detail')) {
+            el.classList.toggle('open');
+          }
+        });
+        const detail = document.createElement('div');
+        detail.className = 'trace-detail';
+        el.appendChild(row);
+        el.appendChild(detail);
+      } else {
+        const role = document.createElement('div');
+        role.className = 'role';
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble';
+        el.appendChild(role);
+        el.appendChild(bubble);
+      }
+      updateMessageEl(el, m);
+      return el;
+    }
+
+    function updateMessageEl(el, m) {
+      const kind = m.kind || '';
+      if (kind === 'trace') {
+        const title = m.title || m.text;
+        const hasDetail = Boolean(m.text && m.text !== title);
+        const titleEl = el.querySelector('.trace-title');
+        if (titleEl.textContent !== title) titleEl.textContent = title;
+        const detailEl = el.querySelector('.trace-detail');
+        const detailText = hasDetail ? m.text : '';
+        if (detailEl.textContent !== detailText) detailEl.textContent = detailText;
+        el.classList.toggle('no-detail', !hasDetail);
+        return;
+      }
+      const role = m.role === 'user' ? 'You'
+        : m.role === 'assistant' ? 'Z'
+        : kind === 'error' ? 'Error' : 'System';
+      const cls = 'msg ' + m.role + (kind ? ' ' + kind : '');
+      if (el.className !== cls) el.className = cls;
+      const roleEl = el.querySelector('.role');
+      if (roleEl.textContent !== role) roleEl.textContent = role;
+      const bubbleEl = el.querySelector('.bubble');
+      if (bubbleEl.textContent !== m.text) bubbleEl.textContent = m.text;
+    }
+
     function renderMessages(messages) {
-      msgsEl.innerHTML = messages.map(m => {
-        const kind = m.kind || '';
-        const role = kind === 'tool' ? 'Tool'
-          : m.role === 'user' ? 'You'
-          : m.role === 'assistant' ? 'Z'
-          : kind === 'error' ? 'Error' : 'System';
-        const cls = 'msg ' + m.role + (kind ? ' ' + kind : '');
-        return '<div class="' + cls + '"><div class="role">' + role + '</div><div class="bubble">' + escapeHtml(m.text) + '</div></div>';
-      }).join('');
+      if (!messages.length) {
+        messageEls.clear();
+        msgsEl.innerHTML = HERO_HTML;
+        return;
+      }
+      if (msgsEl.querySelector('.hero')) {
+        msgsEl.innerHTML = '';
+      }
+      const seen = new Set();
+      for (const m of messages) {
+        seen.add(m.id);
+        let el = messageEls.get(m.id);
+        if (!el) {
+          el = buildMessageEl(m);
+          messageEls.set(m.id, el);
+          msgsEl.appendChild(el);
+        } else {
+          updateMessageEl(el, m);
+        }
+      }
+      for (const [id, el] of messageEls) {
+        if (!seen.has(id)) {
+          el.remove();
+          messageEls.delete(id);
+        }
+      }
       msgsEl.scrollTop = msgsEl.scrollHeight;
+    }
+
+    function renderGate(gate) {
+      const pill = document.getElementById('gatePill');
+      if (!gate) {
+        pill.classList.remove('show');
+        return;
+      }
+      pill.classList.add('show');
+      pill.className = 'gate-pill show ' + (gate.ready ? 'ready' : 'blocked');
+      pill.textContent = gate.ready ? 'Ready' : (gate.blockedCount + ' blocked');
     }
 
     function renderQueue(q) {
@@ -984,7 +1212,7 @@ export class MainChatPanel {
       if (data.type !== 'state') return;
       const conn = data.connection || 'disconnected';
       const busy = data.busyLabel || '';
-      renderActivity(data.activity || { live: false, phase: 'idle' }, conn, busy);
+      renderActivity(data.activity || { live: false, phase: 'idle' }, conn, busy, Boolean(data.streaming));
       const banner = document.getElementById('banner');
       const bannerText = document.getElementById('bannerText');
       if (data.banner) {
@@ -996,6 +1224,7 @@ export class MainChatPanel {
       renderMessages(data.messages || []);
       renderWaiting(data.waiting || null);
       renderQueue(data.queue || null);
+      renderGate(data.gate || null);
     });
 
     document.getElementById('send').onclick = () => {
@@ -1006,6 +1235,7 @@ export class MainChatPanel {
     document.getElementById('cancel').onclick = () => vscode.postMessage({ type: 'cancel' });
     document.getElementById('clear').onclick = () => vscode.postMessage({ type: 'clear' });
     document.getElementById('reconnect').onclick = () => vscode.postMessage({ type: 'reconnect' });
+    document.getElementById('gatePill').onclick = () => vscode.postMessage({ type: 'openGate' });
     document.getElementById('wchangeSend').onclick = () => {
       const t = document.getElementById('wchangetext').value;
       vscode.postMessage({ type: 'respond', response: 'change', changeText: t });

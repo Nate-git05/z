@@ -68,6 +68,14 @@ class AppServerSession:
             return self._commit_blocks_override(params)
         if method == "commit_blocks/resolve":
             return self._commit_blocks_resolve(params)
+        if method == "git/log":
+            return self._git_log(params)
+        if method == "git/show":
+            return self._git_show(params)
+        if method == "github/prs/list":
+            return self._github_prs_list(params)
+        if method == "github/prs/get":
+            return self._github_prs_get(params)
         if method == "mcp/list":
             return self._mcp_list(params)
         if method == "mcp/catalog":
@@ -135,6 +143,8 @@ class AppServerSession:
                 "turns",
                 "auth",
                 "workspace",
+                "git_history",
+                "github_prs",
             ],
             "workspaceRoot": self.workspace_root,
         }
@@ -541,6 +551,77 @@ class AppServerSession:
             raise
         except Exception as err:
             raise HandlerError(-32013, f"commit_blocks/resolve failed: {err}") from err
+
+    def _git_log(self, params: dict) -> dict:
+        del params
+        root = self.workspace_root
+        if not root:
+            return {"commits": []}
+        try:
+            from aider.z.git_history import list_commits
+
+            return {"commits": list_commits(root)}
+        except Exception as err:
+            raise HandlerError(-32014, f"git/log failed: {err}") from err
+
+    def _git_show(self, params: dict) -> dict:
+        sha = (params.get("sha") or "").strip()
+        if not sha:
+            raise HandlerError(-32602, "git/show requires sha")
+        root = self.workspace_root
+        if not root:
+            raise HandlerError(-32014, "git/show requires an open workspace")
+        try:
+            from aider.z.git_history import show_commit
+
+            return show_commit(root, sha)
+        except Exception as err:
+            raise HandlerError(-32014, f"git/show failed: {err}") from err
+
+    def _github_prs_list(self, params: dict) -> dict:
+        del params
+        root = self.workspace_root
+        if not root:
+            return {"connected": False, "owner": None, "repo": None, "prs": []}
+        try:
+            from aider.z.git_history import detect_github_remote
+            from aider.z.github_prs import get_github_token, list_pull_requests
+
+            remote = detect_github_remote(root)
+            if remote is None:
+                return {"connected": False, "owner": None, "repo": None, "prs": []}
+            owner, repo = remote
+            token = get_github_token()
+            if not token:
+                return {"connected": False, "owner": owner, "repo": repo, "prs": []}
+            prs = list_pull_requests(token, owner, repo)
+            return {"connected": True, "owner": owner, "repo": repo, "prs": prs}
+        except Exception as err:
+            raise HandlerError(-32015, f"github/prs/list failed: {err}") from err
+
+    def _github_prs_get(self, params: dict) -> dict:
+        number = params.get("number")
+        if not number:
+            raise HandlerError(-32602, "github/prs/get requires number")
+        root = self.workspace_root
+        if not root:
+            raise HandlerError(-32015, "github/prs/get requires an open workspace")
+        try:
+            from aider.z.git_history import detect_github_remote
+            from aider.z.github_prs import get_github_token, get_pull_request
+
+            remote = detect_github_remote(root)
+            if remote is None:
+                raise HandlerError(-32015, "No GitHub remote detected for this workspace")
+            owner, repo = remote
+            token = get_github_token()
+            if not token:
+                raise HandlerError(-32016, "GitHub not connected — connect it from the MCP panel")
+            return get_pull_request(token, owner, repo, int(number))
+        except HandlerError:
+            raise
+        except Exception as err:
+            raise HandlerError(-32015, f"github/prs/get failed: {err}") from err
 
     def _mcp_list(self, params: dict) -> dict:
         """Merge local MCP store with cloud runtime (dedupe by server_name)."""

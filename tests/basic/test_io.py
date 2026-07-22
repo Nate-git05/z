@@ -475,6 +475,47 @@ class TestInputOutputMultilineMode(unittest.TestCase):
             mock_print.assert_called_once()
 
 
+class TestInputOutputNonInteractiveStdin(unittest.TestCase):
+    """`z --message ... --yes-always` under piped/CI stdin must not crash.
+
+    A real (non-mocked) PromptSession raises OSError — not EOFError — when
+    the process has no controlling terminal at all (e.g. stdin redirected
+    from a pipe rather than closed). Each prompt path below already has an
+    EOFError handler that degrades gracefully (default value, or a clear
+    "needs human approval" refusal for confirm/plan-confirm) — this only
+    checks that OSError is caught by the same handler instead of escaping
+    as a raw traceback.
+    """
+
+    def test_prompt_ask_falls_back_to_default_on_oserror(self):
+        io = InputOutput(fancy_input=True)
+        io.prompt_session = MagicMock()
+        io.prompt_session.prompt.side_effect = OSError(22, "Invalid argument")
+
+        result = io.prompt_ask("Choose an option", default="1")
+        self.assertEqual(result, "1")
+
+    def test_confirm_ask_refuses_instead_of_crashing_on_oserror(self):
+        io = InputOutput(fancy_input=True)
+        io.prompt_session = MagicMock()
+        io.prompt_session.prompt.side_effect = OSError(22, "Invalid argument")
+
+        with patch("aider.io.sys.stdin") as fake_stdin:
+            fake_stdin.isatty.return_value = False
+            result = io.confirm_ask("Proceed?")
+        self.assertFalse(result)
+
+    def test_plan_confirm_ask_refuses_instead_of_crashing_on_oserror(self):
+        io = InputOutput(fancy_input=True)
+        io.prompt_session = MagicMock()
+        io.prompt_session.prompt.side_effect = OSError(22, "Invalid argument")
+
+        with patch("aider.io.sys.stdin") as fake_stdin:
+            fake_stdin.isatty.return_value = False
+            result = io.plan_confirm_ask("Approve this plan?")
+        self.assertEqual(result, "no")
+
+
 @patch("aider.io.is_dumb_terminal", return_value=False)
 @patch.dict(os.environ, {"NO_COLOR": ""})
 class TestInputOutputFormatFiles(unittest.TestCase):

@@ -13,6 +13,7 @@ import { UncertaintyTreeProvider } from "./uncertaintyView";
 import { CommitGateProvider } from "./commitGateView";
 import { SkillsViewProvider } from "./skillsView";
 import { McpViewProvider } from "./mcpView";
+import { DetailPanelManager } from "./detailPanel";
 import { zThemeCss } from "./zTheme";
 
 interface UsageRow {
@@ -52,7 +53,8 @@ export function registerViews(
   const uncertainty = new UncertaintyTreeProvider(manager);
   const skills = new SkillsViewProvider(manager);
   const mcp = new McpViewProvider(manager);
-  const commitGate = new CommitGateProvider(manager);
+  const detailPanel = new DetailPanelManager(context);
+  const commitGate = new CommitGateProvider(manager, detailPanel);
   const profile = new ProfileViewProvider(manager);
 
   context.subscriptions.push(
@@ -75,11 +77,15 @@ export function registerViews(
   // z.openChat is registered in extension.ts first (portable VS Code harden).
   context.subscriptions.push(
     vscode.commands.registerCommand("z.focusUncertainty", async () => {
-      await vscode.commands.executeCommand("workbench.view.extension.z-left");
-      await vscode.commands.executeCommand("z.uncertainty.focus");
+      await vscode.commands.executeCommand("workbench.view.extension.z-uncertainty");
+      try {
+        await vscode.commands.executeCommand("z.uncertainty.focus");
+      } catch {
+        /* ignore */
+      }
     }),
     vscode.commands.registerCommand("z.focusSkills", async () => {
-      await vscode.commands.executeCommand("workbench.view.extension.z-left");
+      await vscode.commands.executeCommand("workbench.view.extension.z-skills");
       try {
         await vscode.commands.executeCommand("z.skills.focus");
       } catch {
@@ -87,7 +93,7 @@ export function registerViews(
       }
     }),
     vscode.commands.registerCommand("z.focusMcp", async () => {
-      await vscode.commands.executeCommand("workbench.view.extension.z-left");
+      await vscode.commands.executeCommand("workbench.view.extension.z-mcp");
       try {
         await vscode.commands.executeCommand("z.mcp.focus");
       } catch {
@@ -95,9 +101,17 @@ export function registerViews(
       }
     }),
     vscode.commands.registerCommand("z.focusCommitGate", async () => {
-      await vscode.commands.executeCommand("workbench.view.extension.z-left");
+      await vscode.commands.executeCommand("workbench.view.extension.z-commitgate");
       try {
         await vscode.commands.executeCommand("z.commitGate.focus");
+      } catch {
+        /* ignore */
+      }
+    }),
+    vscode.commands.registerCommand("z.focusProfile", async () => {
+      await vscode.commands.executeCommand("workbench.view.extension.z-profile");
+      try {
+        await vscode.commands.executeCommand("z.profile.focus");
       } catch {
         /* ignore */
       }
@@ -232,21 +246,20 @@ class ProfileViewProvider implements vscode.WebviewViewProvider {
 <style>
   ${zThemeCss()}
   body {
-    font-family: "IBM Plex Mono", "JetBrains Mono", ui-monospace, monospace;
-    padding: 12px;
+    padding: 14px;
     margin: 0;
     font-size: 13px;
   }
   h3 { margin: 0 0 10px; font-weight: 600; color: var(--z-accent-bright); }
-  h4 { margin: 16px 0 8px; font-weight: 600; color: var(--z-accent); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
-  .muted { color: var(--z-muted); margin: 0 0 12px; line-height: 1.4; }
-  .row { margin: 8px 0; }
-  .label { color: var(--z-accent); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  h4 { margin: 18px 0 8px; font-weight: 600; color: var(--z-text-secondary); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .muted { color: var(--z-text-secondary); margin: 0 0 12px; line-height: 1.5; }
+  .row { margin: 10px 0; }
+  .label { color: var(--z-text-secondary); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
   .value { margin-top: 2px; word-break: break-all; }
   button { margin: 4px 6px 4px 0; }
   button.active { outline: 1px solid var(--z-accent); }
-  .ok { color: var(--z-accent); }
-  .bad { color: var(--z-accent-bright); }
+  .ok { color: var(--z-status-ok); }
+  .bad { color: var(--z-status-blocked); }
   .totals {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -254,7 +267,7 @@ class ProfileViewProvider implements vscode.WebviewViewProvider {
     margin: 10px 0 14px;
   }
   .total {
-    border-top: 1px solid rgba(201,106,43,0.3);
+    border-top: 1px solid var(--z-border);
     padding-top: 6px;
   }
   .total .n { font-size: 18px; color: var(--z-text); font-weight: 600; }
@@ -262,16 +275,16 @@ class ProfileViewProvider implements vscode.WebviewViewProvider {
   .bar-label { margin-bottom: 4px; color: var(--z-text); }
   .bar-track {
     height: 8px;
-    background: #1a1a1a;
-    border: 1px solid rgba(201,106,43,0.2);
+    background: var(--z-surface);
+    border: 1px solid var(--z-border);
   }
   .bar-track.thin { height: 4px; margin-top: 4px; }
   .bar-fill { height: 100%; background: var(--z-accent); }
-  .bar-fill.dim { background: rgba(224,120,48,0.45); }
-  .bar-meta { font-size: 11px; color: var(--z-muted); margin-top: 4px; }
+  .bar-fill.dim { background: var(--z-accent-dim); }
+  .bar-meta { font-size: 11px; color: var(--z-text-secondary); margin-top: 4px; }
   table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 8px; }
-  th, td { text-align: left; padding: 4px 2px; border-bottom: 1px solid rgba(201,106,43,0.15); }
-  th { color: var(--z-accent); font-weight: 600; }
+  th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--z-border); }
+  th { color: var(--z-text-secondary); font-weight: 600; text-transform: uppercase; font-size: 10px; letter-spacing: 0.04em; }
   td.num, th.num { text-align: right; }
 </style>
 </head>

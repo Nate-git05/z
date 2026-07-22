@@ -2,7 +2,7 @@
   "name": "z-editor",
   "displayName": "Z",
   "description": "Z coding agent — agent-first chat, uncertainty chain, skills, commit gate (Z Terminal orange/black)",
-  "version": "0.8.5",
+  "version": "0.8.6",
   "publisher": "z",
   "license": "MIT",
   "repository": {
@@ -33,37 +33,65 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "z-left",
-          "title": "Z",
-          "icon": "media/z-activity.svg"
+          "id": "z-uncertainty",
+          "title": "Uncertainty",
+          "icon": "media/z-uncertainty.svg"
+        },
+        {
+          "id": "z-skills",
+          "title": "Skills",
+          "icon": "media/z-skills.svg"
+        },
+        {
+          "id": "z-mcp",
+          "title": "MCP",
+          "icon": "media/z-mcp.svg"
+        },
+        {
+          "id": "z-commitgate",
+          "title": "Commit Gate",
+          "icon": "media/z-commitgate.svg"
+        },
+        {
+          "id": "z-profile",
+          "title": "Profile",
+          "icon": "media/z-profile.svg"
         }
       ]
     },
     "views": {
-      "z-left": [
+      "z-uncertainty": [
         {
           "id": "z.uncertainty",
           "name": "Uncertainty Tree",
           "type": "webview"
-        },
+        }
+      ],
+      "z-skills": [
         {
           "id": "z.skills",
           "name": "Skills",
           "type": "webview"
-        },
+        }
+      ],
+      "z-mcp": [
         {
           "id": "z.mcp",
           "name": "MCP",
           "type": "webview"
-        },
-        {
-          "id": "z.profile",
-          "name": "Profile",
-          "type": "webview"
-        },
+        }
+      ],
+      "z-commitgate": [
         {
           "id": "z.commitGate",
           "name": "Commit Gate",
+          "type": "webview"
+        }
+      ],
+      "z-profile": [
+        {
+          "id": "z.profile",
+          "name": "Profile",
           "type": "webview"
         }
       ]
@@ -88,6 +116,10 @@
       {
         "command": "z.focusMcp",
         "title": "Z: Focus MCP"
+      },
+      {
+        "command": "z.focusProfile",
+        "title": "Z: Focus Profile"
       },
       {
         "command": "z.applyTerminalTheme",

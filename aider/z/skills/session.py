@@ -556,19 +556,20 @@ def print_skills_list(io) -> None:
         for s in local:
             kind = s.kind or "playbook"
             langs = ",".join(s.languages or []) or "-"
-            review = " needs-review" if s.needs_review else ""
+            tags = []
+            if s.needs_review:
+                tags.append("needs-review")
             qstate = (s.quality_state or "verified").strip()
             if qstate == "draft":
-                review = (review + " draft").strip()
+                tags.append("draft")
             elif qstate == "rejected":
-                review = (review + " rejected").strip()
+                tags.append("rejected")
             if s.shared:
-                repo_tag = " shared"
+                tags.append("shared")
             elif s.repo_key:
-                repo_tag = " repo-bound"
-            else:
-                repo_tag = ""
-            io.tool_output(f"  • {s.title}  [{kind}/{langs}]{review}{repo_tag}")
+                tags.append("repo-bound")
+            tag_str = f" {' '.join(tags)}" if tags else ""
+            io.tool_output(f"  • {s.title}  [{kind}/{langs}]{tag_str}")
             if s.description:
                 io.tool_output(f"      {s.description}")
             if s.path:

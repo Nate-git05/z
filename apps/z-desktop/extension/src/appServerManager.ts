@@ -37,6 +37,10 @@ export class AppServerManager implements vscode.Disposable {
   readonly onDidChange = this.onChangeEmitter.event;
   private readonly notifyHandlers = new Set<NotifyHandler>();
   private readonly disposables: vscode.Disposable[] = [];
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private retryDelayMs = 1000;
+  private readonly maxRetryDelayMs = 15000;
+  private intentionalStop = false;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.output = vscode.window.createOutputChannel("Z App Server");
@@ -161,9 +165,11 @@ export class AppServerManager implements vscode.Disposable {
       this.output.appendLine(`app-server exited code=${code} signal=${signal}`);
       this.proc = null;
       if (this.state === "connected" || this.state === "connecting") {
-        this.setState("disconnected", "app-server process exited");
+        this.client?.setCloseHandler(null);
         this.client?.disconnect();
         this.client = null;
+        this.setState("disconnected", "app-server process exited");
+        this.scheduleRetry();
       }
     });
     child.on("error", (err) => {
@@ -202,7 +208,10 @@ export class AppServerManager implements vscode.Disposable {
   }
 
   async connectAndInitialize(): Promise<InitializeResult> {
+    this.intentionalStop = false;
+    this.clearRetryTimer();
     this.setState("connecting");
+    this.client?.setCloseHandler(null);
     this.client?.disconnect();
     this.client = new AppServerClient(this.appServerUrl());
     this.client.setNotificationHandler((method, params) => {
@@ -221,6 +230,10 @@ export class AppServerManager implements vscode.Disposable {
       }
       const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
       this.initResult = await this.client.initialize(root);
+      // Only after initialize succeeds does an unexpected close mean "lost connection" —
+      // wire this last so connect()'s own close handling above doesn't race it.
+      this.client.setCloseHandler(() => this.handleUnexpectedClose());
+      this.retryDelayMs = 1000;
       this.setState("connected", null);
       this.output.appendLine(
         `connected ${this.initResult.serverInfo.name} ${this.initResult.serverInfo.version}`
@@ -229,10 +242,45 @@ export class AppServerManager implements vscode.Disposable {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.setState("error", msg);
+      this.client?.setCloseHandler(null);
       this.client?.disconnect();
       this.client = null;
+      this.scheduleRetry();
       throw err;
     }
+  }
+
+  /** WS closed after we were connected — process may still be alive (network blip, etc). */
+  private handleUnexpectedClose(): void {
+    if (this.state !== "connected") {
+      return;
+    }
+    this.setState("disconnected", "app-server connection lost");
+    this.scheduleRetry();
+  }
+
+  private clearRetryTimer(): void {
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
+  }
+
+  private scheduleRetry(): void {
+    if (this.intentionalStop || this.retryTimer) {
+      return;
+    }
+    const delay = this.retryDelayMs;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      if (this.intentionalStop) {
+        return;
+      }
+      this.ensureConnected().catch(() => {
+        this.retryDelayMs = Math.min(this.retryDelayMs * 2, this.maxRetryDelayMs);
+        this.scheduleRetry();
+      });
+    }, delay);
   }
 
   async openWorkspace(root: string): Promise<void> {
@@ -253,6 +301,9 @@ export class AppServerManager implements vscode.Disposable {
   }
 
   async stop(): Promise<void> {
+    this.intentionalStop = true;
+    this.clearRetryTimer();
+    this.client?.setCloseHandler(null);
     this.client?.disconnect();
     this.client = null;
     this.initResult = null;
@@ -266,6 +317,7 @@ export class AppServerManager implements vscode.Disposable {
   }
 
   dispose(): void {
+    this.clearRetryTimer();
     void this.stop();
     for (const d of this.disposables) {
       d.dispose();

@@ -147,7 +147,7 @@ def _menu_inner_lines(
     rows.extend(
         [
             ("", "blank"),
-            ("(Use up/down arrows, numbers, or Enter)", "muted"),
+            ("(Use up/down arrows, numbers, or Enter — q/esc to cancel)", "muted"),
             ("", "blank"),
             ("Terms of Service and Privacy Notice for Z CLI", "dim"),
             (TERMS_URL, "link"),

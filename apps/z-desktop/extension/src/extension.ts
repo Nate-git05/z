@@ -108,7 +108,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     try {
       if (cfg.get<boolean>("openChatOnActivate", true)) {
         openChat();
-        void vscode.commands.executeCommand("workbench.view.extension.z-left");
       }
     } catch {
       /* ignore */

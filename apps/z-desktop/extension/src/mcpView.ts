@@ -277,21 +277,20 @@ export class McpViewProvider implements vscode.WebviewViewProvider {
 <style>
   ${zThemeCss()}
   body {
-    font-family: "IBM Plex Mono", "JetBrains Mono", ui-monospace, monospace;
-    padding: 10px;
+    padding: 14px;
     margin: 0;
-    font-size: 12px;
+    font-size: 12.5px;
   }
   h3 { margin: 0 0 8px; color: var(--z-accent-bright); font-weight: 600; }
-  .muted { color: var(--z-muted); margin: 0 0 10px; line-height: 1.35; }
-  .err { color: var(--z-accent-bright); margin: 8px 0; }
-  .ok { color: var(--z-accent); margin: 8px 0; }
+  .muted { color: var(--z-text-secondary); margin: 0 0 10px; line-height: 1.45; }
+  .err { color: var(--z-status-blocked); margin: 8px 0; }
+  .ok { color: var(--z-status-ok); margin: 8px 0; }
   .conn {
-    border-top: 1px solid rgba(201,106,43,0.25);
-    padding: 8px 0;
+    border-top: 1px solid var(--z-border);
+    padding: 10px 0;
   }
   .name { font-weight: 600; color: var(--z-text); }
-  .meta { color: var(--z-muted); font-size: 11px; margin-top: 2px; }
+  .meta { color: var(--z-text-secondary); font-size: 11px; margin-top: 2px; }
   .badge {
     display: inline-block;
     margin-right: 6px;
@@ -300,19 +299,19 @@ export class McpViewProvider implements vscode.WebviewViewProvider {
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
-  label { display: block; margin: 8px 0 4px; color: var(--z-accent); font-size: 11px; }
+  label { display: block; margin: 8px 0 4px; color: var(--z-text-secondary); font-size: 11px; }
   select, input {
     width: 100%;
     box-sizing: border-box;
-    background: #121212;
+    background: var(--z-raised);
     color: var(--z-text);
-    border: 1px solid rgba(201,106,43,0.35);
-    padding: 6px 8px;
+    border: 1px solid var(--z-border);
+    padding: 7px 9px;
     font: inherit;
   }
   .actions { margin-top: 10px; }
   button { margin: 4px 6px 4px 0; }
-  .warn { color: var(--z-accent-bright); font-size: 11px; margin-top: 4px; }
+  .warn { color: var(--z-status-blocked); font-size: 11px; margin-top: 4px; }
 </style>
 </head>
 <body>

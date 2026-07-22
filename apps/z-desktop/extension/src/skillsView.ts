@@ -265,39 +265,38 @@ export class SkillsViewProvider implements vscode.WebviewViewProvider {
   ${zThemeCss()}
   html, body {
     height: 100%; margin: 0; padding: 0;
-    font-family: "IBM Plex Mono", "JetBrains Mono", ui-monospace, monospace;
-    font-size: 12px;
+    font-size: 12.5px;
   }
   #hdr {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 10px 12px 6px; gap: 8px;
+    padding: 12px 14px 6px; gap: 8px;
   }
   h3 { margin: 0; font-size: 13px; font-weight: 600; color: var(--z-accent-bright); }
   #filters {
-    display: flex; flex-direction: column; gap: 4px; padding: 0 12px 8px;
+    display: flex; flex-direction: column; gap: 6px; padding: 0 14px 10px;
   }
-  #filters row, .row { display: flex; gap: 4px; flex-wrap: wrap; }
+  #filters row, .row { display: flex; gap: 6px; flex-wrap: wrap; }
   input, select, textarea {
-    padding: 4px 6px; font-size: 11px; font-family: inherit; box-sizing: border-box;
+    padding: 5px 8px; font-size: 11.5px; font-family: inherit; box-sizing: border-box;
   }
   input, select { flex: 1; min-width: 0; }
   textarea { width: 100%; min-height: 72px; resize: vertical; }
-  button { padding: 4px 10px; font-size: 11px; }
-  #list, #detail, #create { padding: 0 12px 16px; overflow-y: auto; }
+  button { padding: 5px 12px; font-size: 11.5px; }
+  #list, #detail, #create { padding: 0 14px 18px; overflow-y: auto; }
   .item {
-    padding: 8px 0; border-bottom: 1px solid var(--z-border);
+    padding: 10px 0; border-bottom: 1px solid var(--z-border);
     cursor: pointer;
   }
   .item:hover .title { color: var(--z-accent-bright); }
   .item .title { font-weight: 600; }
-  .item .meta { color: var(--z-muted); margin-top: 2px; font-size: 11px; }
+  .item .meta { color: var(--z-text-secondary); margin-top: 3px; font-size: 11px; }
   .badge {
     display: inline-block; font-size: 10px; padding: 1px 5px; margin-right: 4px;
     border: 1px solid var(--z-accent-dim); color: var(--z-accent);
   }
-  .empty, .err, .status { padding: 8px 0; line-height: 1.4; color: var(--z-muted); }
-  .err { color: var(--z-accent-bright); }
-  .status { color: var(--z-accent); }
+  .empty, .err, .status { padding: 8px 0; line-height: 1.5; color: var(--z-text-secondary); }
+  .err { color: var(--z-status-blocked); }
+  .status { color: var(--z-status-ok); }
   .field { margin: 0 0 8px; }
   .field label {
     display: block; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;

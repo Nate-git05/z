@@ -141,6 +141,43 @@ class LocalStoreTest(unittest.TestCase):
         self.assertEqual(len(candidates), 2)
 
 
+class PrintSkillsListFormattingTest(unittest.TestCase):
+    """`z skill list` tag formatting.
+
+    Regression: tags were built by concatenating leading-space strings then
+    calling .strip() on the combined value, which stripped the space needed
+    to separate the closing `]` from the first tag — rendering
+    `[bug_pattern/cpp]needs-review draft shared` instead of
+    `[bug_pattern/cpp] needs-review draft shared`.
+    """
+
+    def test_tags_are_space_separated_from_bracket(self):
+        from aider.z.skills.session import print_skills_list
+
+        skill = Skill(
+            title="Avoid stale references",
+            description="d",
+            content="c",
+            kind="bug_pattern",
+            languages=["cpp"],
+            needs_review=True,
+            quality_state="draft",
+            shared=True,
+        )
+        io_mock = mock.MagicMock()
+        with mock.patch(
+            "aider.z.skills.session.LocalSkillStore"
+        ) as store_cls, mock.patch(
+            "aider.z.skills.session.fetch_skill_index", return_value=[]
+        ):
+            store_cls.return_value.list_skills.return_value = [skill]
+            print_skills_list(io_mock)
+
+        lines = [c.args[0] for c in io_mock.tool_output.call_args_list if c.args]
+        title_line = next(line for line in lines if "Avoid stale references" in line)
+        self.assertIn("[bug_pattern/cpp] needs-review draft shared", title_line)
+
+
 class SkillAcceptCollisionTest(unittest.TestCase):
     def test_accept_by_title_picks_sole_draft_with_note(self):
         root = Path(tempfile.mkdtemp(prefix="z_accept_collide_"))

@@ -202,6 +202,10 @@ export class UncertaintyTreeProvider implements vscode.WebviewViewProvider {
     if (!this.view) {
       return;
     }
+    const openCount = this.nodes.filter((n) => n.status !== "resolved").length;
+    this.view.badge = openCount
+      ? { value: openCount, tooltip: `${openCount} open uncertainty` }
+      : undefined;
     this.view.webview.postMessage({
       type: "state",
       connection: this.manager.connectionState,
@@ -224,12 +228,11 @@ export class UncertaintyTreeProvider implements vscode.WebviewViewProvider {
   ${zThemeCss()}
   html, body {
     height: 100%; margin: 0; padding: 0;
-    font-family: "IBM Plex Mono", "JetBrains Mono", ui-monospace, monospace;
-    font-size: 12px;
+    font-size: 12.5px;
   }
   #hdr {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 10px 12px 4px; gap: 8px;
+    padding: 12px 14px 6px; gap: 8px;
   }
   h3 { margin: 0; font-size: 13px; font-weight: 600; color: var(--z-accent-bright); }
   .live {
@@ -244,13 +247,13 @@ export class UncertaintyTreeProvider implements vscode.WebviewViewProvider {
     font-size: 11px; padding: 2px 4px;
   }
   #toolbar label { display: flex; align-items: center; gap: 4px; border: none; background: transparent; color: var(--z-muted); }
-  #chain { padding: 0 10px 16px; overflow-y: auto; }
+  #chain { padding: 0 14px 18px; overflow-y: auto; }
   .group-title {
-    font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
-    color: var(--z-accent-dim); padding: 8px 4px 4px;
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--z-text-secondary); padding: 10px 4px 6px;
   }
   .card {
-    position: relative; margin: 0 0 0 10px; padding: 8px 10px 8px 14px;
+    position: relative; margin: 0 0 2px 10px; padding: 10px 12px 10px 16px;
     border-left: 2px solid var(--z-border);
     cursor: pointer;
   }

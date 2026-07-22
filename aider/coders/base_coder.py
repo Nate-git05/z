@@ -1220,7 +1220,7 @@ class Coder:
                         self._end_turn_idle()
                 except KeyboardInterrupt:
                     self.keyboard_interrupt()
-        except EOFError:
+        except (EOFError, OSError):
             return
 
     def _next_user_message(self):
@@ -2775,11 +2775,18 @@ class Coder:
 
         self._drift_asked_this_task = True
         prompt = confirm_prompt(signal)
+        # When the checklist is already complete, "refocus" is the wrong verb —
+        # there's nothing left to refocus on, the real question is whether to
+        # stop the unrequested extra work. Match confirm_prompt()'s branching
+        # so the actual yes/no question matches what accepting does.
+        question = (
+            "Stop here?" if is_complete_task_creep(signal) else "Refocus on the original task?"
+        )
         try:
             # Long drift text goes in the escalation panel (subject); keep the
             # prompt_toolkit line short so terminal resize does not garble it.
             accepted = self.io.confirm_ask(
-                "Refocus on the original task?",
+                question,
                 subject=prompt,
                 default="n",
                 explicit_yes_required=True,

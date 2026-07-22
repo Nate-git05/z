@@ -131,6 +131,36 @@
       "params": { "id": "string", "note": { "optional": true } },
       "result": { "ok": true, "block": "CommitBlockRecord" }
     },
+    "git/log": {
+      "params": {},
+      "result": { "commits": "GitCommitSummary[]" },
+      "notes": "Commit Gate 'Pushed' tab — local git history, no auth."
+    },
+    "git/show": {
+      "params": { "sha": "string" },
+      "result": { "commit": "GitCommitSummary", "diff": "string" },
+      "notes": "Unified diff text for the Code tab of a Pushed-tab detail view."
+    },
+    "github/prs/list": {
+      "params": {},
+      "result": {
+        "connected": "boolean",
+        "owner": "string|null",
+        "repo": "string|null",
+        "prs": "GitHubPrSummary[]"
+      },
+      "notes": "Scoped to the workspace's origin remote. connected=false when no GitHub remote or no connected token — client shows the existing MCP GitHub connect CTA."
+    },
+    "github/prs/get": {
+      "params": { "number": "number" },
+      "result": {
+        "pr": "GitHubPrDetail",
+        "checks": "GitHubCheckRun[]",
+        "comments": "GitHubIssueComment[]",
+        "diff": "string"
+      },
+      "notes": "Bundles PR detail + check-runs + issue comments + unified diff in one round trip."
+    },
     "mcp/list": {
       "params": {},
       "result": { "connections": "McpConnectionSummary[]" },

@@ -20,6 +20,13 @@ from aider.z.login_screen import (
     prompt_login_choice_plain,
     render_login_screen,
 )
+from aider.z.theme import ACCENT
+
+
+def _hex_to_ansi_rgb(hex_color: str) -> str:
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"{r};{g};{b}"
 
 
 def _render_to_text(**kwargs) -> str:
@@ -123,7 +130,7 @@ class LoginScreenRenderTest(unittest.TestCase):
 
     def test_orange_accent_used_not_green(self):
         out = _render_to_text()
-        self.assertIn("201;106;43", out)
+        self.assertIn(_hex_to_ansi_rgb(ACCENT), out)
         self.assertNotIn("0;255;0", out)
 
     def test_option_order_google_email_phone(self):

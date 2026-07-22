@@ -59,6 +59,7 @@ export class AppServerClient {
   private pending = new Map<JsonRpcId, Pending>();
   private url: string;
   private onNotify: NotifyHandler | null = null;
+  private onClose: (() => void) | null = null;
   private openState = 1;
 
   constructor(url: string) {
@@ -75,6 +76,11 @@ export class AppServerClient {
 
   setNotificationHandler(handler: NotifyHandler | null): void {
     this.onNotify = handler;
+  }
+
+  /** Fired when the socket closes for any reason after a successful connect. */
+  setCloseHandler(handler: (() => void) | null): void {
+    this.onClose = handler;
   }
 
   async connect(timeoutMs = 5000): Promise<void> {
@@ -103,6 +109,7 @@ export class AppServerClient {
             p.reject(new Error("z-app-server disconnected"));
           }
           this.pending.clear();
+          this.onClose?.();
         });
         resolve();
       });
