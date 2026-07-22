@@ -5,6 +5,7 @@
 
 import * as vscode from "vscode";
 import { AppServerManager } from "./appServerManager";
+import { deriveStateIndicator, StateIndicator } from "./stateIndicator";
 import { zThemeCss } from "./zTheme";
 
 type ChatRole = "user" | "assistant" | "system";
@@ -129,6 +130,8 @@ export class MainChatPanel {
   private gateBlockedCount = 0;
   /** Auto-open Uncertainty overlay once per turn when first open node arrives. */
   private uncertaintyAutoOpenedThisTurn = false;
+  /** True while assistant answer tokens are arriving — hides Contemplating row. */
+  private answerStreaming = false;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -286,6 +289,7 @@ export class MainChatPanel {
       }
       this.waiting = null;
       this.busyLabel = "";
+      this.answerStreaming = false;
       this.resetActivityImmediate();
       this.postState();
       return;
@@ -295,6 +299,7 @@ export class MainChatPanel {
       this.streamingAssistantId = null;
       this.waiting = null;
       this.busyLabel = "";
+      this.answerStreaming = false;
       this.resetActivityImmediate();
       this.queue = { queueLen: 0, items: [], preview: null };
       this.postState();
@@ -317,12 +322,26 @@ export class MainChatPanel {
     this.activity.live = true;
     if (phase) {
       this.activity.phase = phase;
+      this.clearAnswerStreamingForToolPhase(phase);
+    }
+  }
+
+  /** After answer tokens pause and tools run, Contemplating/Editing may show again. */
+  private clearAnswerStreamingForToolPhase(phase: ActivityPhase): void {
+    if (
+      phase === "editing" ||
+      phase === "searching" ||
+      phase === "running" ||
+      phase === "mcp"
+    ) {
+      this.answerStreaming = false;
     }
   }
 
   private settleActivitySoon(): void {
     this.activity.live = false;
     this.activity.phase = "idle";
+    this.answerStreaming = false;
     if (this.activityClearTimer) {
       clearTimeout(this.activityClearTimer);
     }
@@ -378,6 +397,7 @@ export class MainChatPanel {
       });
       this.streamingAssistantId = null;
       this.busyLabel = "Working…";
+      this.answerStreaming = false;
       this.activity = emptyActivity();
       this.markActivityLive("thinking");
       this.queue = { queueLen: 0, items: [], preview: null };
@@ -482,6 +502,7 @@ export class MainChatPanel {
         const p = String(params.phase) as ActivityPhase;
         if (p !== "idle") {
           this.activity.phase = p;
+          this.clearAnswerStreamingForToolPhase(p);
         }
       }
       if (Array.isArray(params.fileNames)) {
@@ -497,6 +518,7 @@ export class MainChatPanel {
     }
     if (method === "turn/started") {
       this.uncertaintyAutoOpenedThisTurn = false;
+      this.answerStreaming = false;
       const text = String(params.text || "").trim();
       const fromQueue = Boolean(params.fromQueue);
       if (fromQueue && text) {
@@ -522,6 +544,7 @@ export class MainChatPanel {
       if (!chunk) {
         return;
       }
+      this.answerStreaming = true;
       if (!this.streamingAssistantId) {
         this.streamingAssistantId = `a-${Date.now()}`;
         this.messages.push({
@@ -598,6 +621,7 @@ export class MainChatPanel {
       this.waiting = null;
       this.streamingAssistantId = null;
       this.uncertaintyAutoOpenedThisTurn = false;
+      this.answerStreaming = false;
       if (params.ok === false && params.interrupted) {
         this.messages.push({
           id: `sys-${Date.now()}`,
@@ -617,6 +641,7 @@ export class MainChatPanel {
         text: friendlyError(String(params.message || "turn failed")),
       });
       this.busyLabel = "";
+      this.answerStreaming = false;
       this.settleActivitySoon();
       this.postState();
       return;
@@ -672,6 +697,17 @@ export class MainChatPanel {
     }, 50);
   }
 
+  private buildIndicator(): StateIndicator {
+    return deriveStateIndicator({
+      live: this.activity.live,
+      phase: this.activity.phase,
+      answerStreaming: this.answerStreaming,
+      waitingForUser: Boolean(this.waiting),
+      busyLabel: this.busyLabel,
+      exploredFiles: this.activity.exploredFiles,
+    });
+  }
+
   private postState(): void {
     if (!this.panel) {
       return;
@@ -686,6 +722,7 @@ export class MainChatPanel {
       queue: this.queue,
       banner: this.connectionBanner,
       gateBlockedCount: this.gateBlockedCount,
+      indicator: this.buildIndicator(),
     });
   }
 
@@ -849,6 +886,44 @@ export class MainChatPanel {
   }
   #gatePill.blocked { color: var(--z-text); border-color: rgba(217,119,87,0.45); }
   #gatePill.blocked .dot { background: var(--z-status-blocked); }
+  /* Phase 1 — Contemplating / live state indicator (ambient, not content) */
+  #stateIndicator {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    margin: 0 20px 10px;
+    padding: 2px 0;
+    opacity: 0.7;
+    color: var(--z-secondary);
+    font-family: var(--z-font-ui);
+    font-size: 13px;
+    line-height: 1.2;
+    transition: opacity 0.15s ease;
+  }
+  #stateIndicator.show { display: inline-flex; }
+  #stateIndicator .si-icon {
+    width: 16px; height: 16px; flex: 0 0 16px;
+    color: var(--z-accent);
+    display: none;
+  }
+  #stateIndicator .si-icon svg { width: 16px; height: 16px; display: block; }
+  #stateIndicator.icon-sunburst .si-icon.sunburst { display: block; }
+  #stateIndicator.icon-magnifier .si-icon.magnifier { display: block; }
+  #stateIndicator .si-label {
+    font-weight: 450;
+    color: var(--z-secondary);
+    font-family: var(--z-font-ui);
+  }
+  #stateIndicator .si-icon.sunburst {
+    animation: z-sunburst-spin 3.5s linear infinite;
+  }
+  @keyframes z-sunburst-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #stateIndicator .si-icon.sunburst { animation: none; }
+  }
 </style>
 </head>
 <body>
@@ -869,6 +944,22 @@ export class MainChatPanel {
     </div>
     <div id="banner"><span id="bannerText"></span><button class="secondary" id="reconnect">Reconnect</button></div>
     <div id="msgs"></div>
+    <div id="stateIndicator" class="icon-sunburst" aria-live="polite" aria-hidden="true">
+      <span class="si-icon sunburst" aria-hidden="true">
+        <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M8 1.2v2.2M8 12.6v2.2M1.2 8h2.2M12.6 8h2.2M3.05 3.05l1.56 1.56M11.39 11.39l1.56 1.56M3.05 12.95l1.56-1.56M11.39 4.61l1.56-1.56"
+            stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+          <circle cx="8" cy="8" r="2.1" stroke="currentColor" stroke-width="1.4"/>
+        </svg>
+      </span>
+      <span class="si-icon magnifier" aria-hidden="true">
+        <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="7" cy="7" r="4.2" stroke="currentColor" stroke-width="1.4"/>
+          <path d="M10.2 10.2L13.5 13.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+      </span>
+      <span class="si-label">Contemplating</span>
+    </div>
     <div id="waiting">
       <div class="q" id="wq"></div>
       <div class="subject" id="wsubject"></div>
@@ -906,6 +997,7 @@ export class MainChatPanel {
     const activityEl = document.getElementById('activity');
     const waitingEl = document.getElementById('waiting');
     const queueEl = document.getElementById('queue');
+    const stateIndicatorEl = document.getElementById('stateIndicator');
     const input = document.getElementById('input');
     let waiting = null;
 
@@ -1070,6 +1162,21 @@ export class MainChatPanel {
       }
     }
 
+    function renderIndicator(ind) {
+      if (!stateIndicatorEl) return;
+      if (!ind || !ind.visible) {
+        stateIndicatorEl.classList.remove('show');
+        stateIndicatorEl.setAttribute('aria-hidden', 'true');
+        return;
+      }
+      const icon = ind.icon === 'magnifier' ? 'magnifier' : 'sunburst';
+      stateIndicatorEl.className = 'show icon-' + icon;
+      stateIndicatorEl.setAttribute('aria-hidden', 'false');
+      stateIndicatorEl.setAttribute('aria-label', ind.label || 'Contemplating');
+      const labelEl = stateIndicatorEl.querySelector('.si-label');
+      if (labelEl) labelEl.textContent = ind.label || 'Contemplating';
+    }
+
     function renderWaiting(w) {
       waiting = w;
       waitingEl.className = 'kind-' + ((w && w.kind) || 'confirm');
@@ -1117,6 +1224,7 @@ export class MainChatPanel {
       renderWaiting(data.waiting || null);
       renderQueue(data.queue || null);
       renderGate(data.gateBlockedCount);
+      renderIndicator(data.indicator);
     });
 
     document.getElementById('send').onclick = () => {
