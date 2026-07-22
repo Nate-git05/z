@@ -2,7 +2,7 @@
   "name": "z-editor",
   "displayName": "Z",
   "description": "Z coding agent — agent-first chat, uncertainty chain, skills, commit gate (Z Terminal orange/black)",
-  "version": "0.8.1",
+  "version": "0.8.3",
   "publisher": "z",
   "license": "MIT",
   "repository": {
@@ -172,7 +172,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "vscode:prepublish": "npm run compile",
-    "package": "npm run compile && vsce package --no-dependencies --allow-missing-repository"
+    "package": "npm run compile && vsce package --allow-missing-repository"
   },
   "dependencies": {
     "ws": "^8.16.0"

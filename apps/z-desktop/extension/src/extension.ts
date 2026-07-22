@@ -9,89 +9,112 @@ let manager: AppServerManager | null = null;
 let status: vscode.StatusBarItem;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  manager = new AppServerManager(context);
-  context.subscriptions.push(manager);
+  // Register commands first so palette never hits "command not found" if later setup fails.
+  try {
+    manager = new AppServerManager(context);
+    context.subscriptions.push(manager);
 
-  status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
-  status.command = "z.showStatus";
-  status.show();
-  context.subscriptions.push(status);
+    status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
+    status.command = "z.showStatus";
+    status.show();
+    context.subscriptions.push(status);
 
-  const { refreshProfile, openChat } = registerViews(context, manager);
-  const refreshUi = () => {
-    updateStatusBar(manager!);
-    refreshProfile();
-  };
-  context.subscriptions.push(manager.onDidChange(refreshUi));
+    const { refreshProfile, openChat } = registerViews(context, manager);
+    const refreshUi = () => {
+      updateStatusBar(manager!);
+      refreshProfile();
+    };
+    context.subscriptions.push(manager.onDidChange(refreshUi));
 
-  registerAuthCommands(context, manager, refreshUi);
-  registerWorkspaceSync(context, manager);
+    registerAuthCommands(context, manager, refreshUi);
+    registerWorkspaceSync(context, manager);
 
-  // Agent-first: Chat is the main interface (center), not a sidebar.
-  const cfgEarly = vscode.workspace.getConfiguration("z");
-  if (cfgEarly.get<boolean>("applyTerminalThemeOnActivate", true)) {
-    await applyZTerminalTheme();
-  }
-  if (cfgEarly.get<boolean>("openChatOnActivate", true)) {
-    openChat();
-    void vscode.commands.executeCommand("workbench.view.extension.z-left");
-    void vscode.commands.executeCommand("workbench.view.extension.z-right");
-  }
-
-  // P5 — guide install when `z` is missing (before auto-start fails silently)
-  await ensureEngineOrWizard(context);
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand("z.applyTerminalTheme", () => applyZTerminalTheme(true)),
-    vscode.commands.registerCommand("z.startAppServer", async () => {
-      try {
-        await manager!.startProcess();
-        await manager!.ensureConnected();
-        vscode.window.showInformationMessage("Z app-server ready.");
+    context.subscriptions.push(
+      vscode.commands.registerCommand("z.applyTerminalTheme", () => applyZTerminalTheme(true)),
+      vscode.commands.registerCommand("z.startAppServer", async () => {
+        try {
+          await manager!.startProcess();
+          await manager!.ensureConnected();
+          vscode.window.showInformationMessage("Z app-server ready.");
+          refreshUi();
+        } catch (err) {
+          vscode.window.showErrorMessage(
+            `Start failed: ${err instanceof Error ? err.message : err}`
+          );
+          refreshUi();
+        }
+      }),
+      vscode.commands.registerCommand("z.stopAppServer", async () => {
+        await manager!.stop();
+        vscode.window.showInformationMessage("Z app-server stopped.");
         refreshUi();
-      } catch (err) {
-        vscode.window.showErrorMessage(
-          `Start failed: ${err instanceof Error ? err.message : err}`
-        );
-        refreshUi();
-      }
-    }),
-    vscode.commands.registerCommand("z.stopAppServer", async () => {
-      await manager!.stop();
-      vscode.window.showInformationMessage("Z app-server stopped.");
-      refreshUi();
-    }),
-    vscode.commands.registerCommand("z.reconnectAppServer", async () => {
-      try {
-        await manager!.ensureConnected();
-        refreshUi();
-      } catch (err) {
-        vscode.window.showErrorMessage(
-          `Reconnect failed: ${err instanceof Error ? err.message : err}`
-        );
-        refreshUi();
-      }
-    }),
-    vscode.commands.registerCommand("z.showStatus", () => showStatus(manager!, refreshUi)),
-    vscode.commands.registerCommand("z.openAppServerLog", () => {
-      // Output channel is created inside manager; expose via command palette indirectly
-      vscode.commands.executeCommand("workbench.action.output.show");
-    }),
-    vscode.commands.registerCommand("z.installEngineHelp", () =>
-      ensureEngineOrWizard(context)
-    )
-  );
+      }),
+      vscode.commands.registerCommand("z.reconnectAppServer", async () => {
+        try {
+          await manager!.ensureConnected();
+          refreshUi();
+        } catch (err) {
+          vscode.window.showErrorMessage(
+            `Reconnect failed: ${err instanceof Error ? err.message : err}`
+          );
+          refreshUi();
+        }
+      }),
+      vscode.commands.registerCommand("z.showStatus", () => showStatus(manager!, refreshUi)),
+      vscode.commands.registerCommand("z.openAppServerLog", () => {
+        vscode.commands.executeCommand("workbench.action.output.show");
+      }),
+      vscode.commands.registerCommand("z.installEngineHelp", () =>
+        ensureEngineOrWizard(context)
+      )
+    );
 
-  updateStatusBar(manager);
+    updateStatusBar(manager);
 
-  const cfg = vscode.workspace.getConfiguration("z");
-  if (cfg.get<boolean>("autoStartAppServer", true)) {
+    // Soft setup — never fail activation
+    const cfg = vscode.workspace.getConfiguration("z");
     try {
-      await manager.ensureConnected();
-      refreshUi();
+      if (cfg.get<boolean>("applyTerminalThemeOnActivate", true)) {
+        await applyZTerminalTheme();
+      }
     } catch {
-      refreshUi();
+      /* ignore */
     }
+    try {
+      if (cfg.get<boolean>("openChatOnActivate", true)) {
+        openChat();
+        void vscode.commands.executeCommand("workbench.view.extension.z-left");
+        void vscode.commands.executeCommand("workbench.view.extension.z-right");
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
+      await ensureEngineOrWizard(context);
+    } catch {
+      /* ignore */
+    }
+    if (cfg.get<boolean>("autoStartAppServer", true)) {
+      try {
+        await manager.ensureConnected();
+        refreshUi();
+      } catch {
+        refreshUi();
+      }
+    }
+  } catch (err) {
+    // Last resort: still expose Open Chat so the user isn't stuck on "not found".
+    console.error("Z extension activate failed", err);
+    context.subscriptions.push(
+      vscode.commands.registerCommand("z.openChat", () => {
+        vscode.window.showErrorMessage(
+          `Z failed to activate: ${err instanceof Error ? err.message : err}`
+        );
+      })
+    );
+    void vscode.window.showErrorMessage(
+      `Z extension failed to activate: ${err instanceof Error ? err.message : err}`
+    );
   }
 }
 
