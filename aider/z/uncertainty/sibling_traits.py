@@ -277,7 +277,7 @@ def find_sibling_companion_gaps(
     If siblings share a companion registration trait and the new file is missing
     from that companion (and the diff doesn't add it), return gap(s).
     """
-    root = Path(root)
+    root = Path(root).resolve()
     new_file = new_file.replace("\\", "/")
     family = _family_siblings(new_file, sibling_matches)
     # Need enough peers to establish a shared trait (not a one-off)

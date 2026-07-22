@@ -206,6 +206,77 @@ def _search_path_names(
     return found
 
 
+_CODE_LIKE_SUFFIXES = frozenset(
+    {
+        ".py", ".pyi", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".go", ".rs",
+        ".java", ".kt", ".rb", ".php", ".c", ".h", ".cpp", ".hpp", ".cc", ".cs",
+        ".swift", ".md", ".txt", ".json", ".yaml", ".yml", ".toml",
+    }
+)
+
+
+def _search_content_fallback(
+    root: Path,
+    keyword: str,
+    *,
+    max_hits: int = 8,
+    max_files_scanned: int = 2500,
+    deadline: Optional[float] = None,
+) -> List[Tuple[str, str]]:
+    """Pure-Python content grep used when ``rg`` isn't on PATH.
+
+    Bounded like ``_search_path_names`` — must never hang or scan the whole
+    tree on a large repo. Without this, machines lacking ripgrep get a
+    silently empty explore pass (filename-only fallback never finds a
+    keyword that only appears inside file contents).
+    """
+    import time
+
+    skip_dirs = {
+        ".git", "node_modules", ".venv", "venv", "__pycache__", "dist",
+        "build", ".tox", ".mypy_cache", ".pytest_cache", "vendor", "third_party",
+    }
+    key = keyword.lower()
+    hits: List[Tuple[str, str]] = []
+    scanned = 0
+    try:
+        root_res = root.resolve()
+        for dirpath, dirnames, filenames in os.walk(root):
+            if deadline is not None and time.monotonic() > deadline:
+                break
+            dirnames[:] = [
+                d for d in dirnames if d not in skip_dirs and not d.startswith(".")
+            ]
+            for name in filenames:
+                scanned += 1
+                if scanned > max_files_scanned:
+                    return hits
+                if deadline is not None and time.monotonic() > deadline:
+                    return hits
+                path = Path(dirpath) / name
+                if path.suffix.lower() not in _CODE_LIKE_SUFFIXES:
+                    continue
+                try:
+                    if path.stat().st_size > 300_000:
+                        continue
+                    text = path.read_text(encoding="utf-8", errors="ignore")
+                except OSError:
+                    continue
+                for line in text.splitlines():
+                    if key in line.lower():
+                        try:
+                            rel = str(path.resolve().relative_to(root_res))
+                        except ValueError:
+                            rel = str(path)
+                        hits.append((rel, line.strip()[:120]))
+                        break
+                if len(hits) >= max_hits:
+                    return hits
+    except OSError:
+        return hits
+    return hits
+
+
 def peek_signatures(
     path: Path,
     *,
@@ -314,6 +385,13 @@ def _rank_candidates(
                 file_hits.setdefault(rel.replace("\\", "/"), []).append(f"{kw}: {snip}")
             # rg already covers content; skip unbounded filename walks.
             continue
+        # No rg on PATH — fall back to a bounded pure-Python content grep so
+        # keywords that only appear inside file bodies (not filenames) still
+        # surface candidates instead of silently returning nothing.
+        for rel, snip in _search_content_fallback(
+            root, kw, max_hits=5, max_files_scanned=2500, deadline=pass_deadline
+        ):
+            file_hits.setdefault(rel.replace("\\", "/"), []).append(f"{kw}: {snip}")
         for rel in _search_path_names(
             root,
             kw,

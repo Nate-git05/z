@@ -819,12 +819,13 @@ class Coder:
 
         # Quiet default: one "Working…" line; verbose keeps phase detail.
         public = public_busy_label(text, coder=self)
+        io = getattr(self, "io", None)
         orch = None
         try:
-            orch = self.io.ensure_turn_ux()
+            orch = io.ensure_turn_ux()
             orch.enter_busy(public)
         except Exception:
-            orch = getattr(self.io, "turn_orchestrator", None)
+            orch = getattr(io, "turn_orchestrator", None)
         label = public
         if orch is not None:
             try:
@@ -877,7 +878,7 @@ class Coder:
         from aider.z.ux_preamble import public_busy_label
 
         public = public_busy_label(text, coder=self)
-        orch = getattr(self.io, "turn_orchestrator", None)
+        orch = getattr(getattr(self, "io", None), "turn_orchestrator", None)
         if orch is not None:
             try:
                 orch.set_phase(public)
@@ -1826,8 +1827,12 @@ class Coder:
                 self.io.tool_output(f"{label}: {names}")
                 if getattr(self, "verbose", False):
                     self.io.tool_output(f"  why: {why}")
-            # Gaps stay in context for the model; don't narrate unless verbose.
-            if cap_plan.coverage_gaps and not quiet:
+            # Capability gaps are a false-completion safeguard, not routine
+            # chatter — always surface them so Z never silently *looks*
+            # finished while a required capability has no skill/native
+            # coverage. (Unlike the skill-application label above, this is
+            # not gated on verbose.)
+            if cap_plan.coverage_gaps:
                 self.io.tool_warning(
                     f"Capability gaps ({len(cap_plan.coverage_gaps)}): "
                     "compensate with workflow — no skill ≠ skip verification."
