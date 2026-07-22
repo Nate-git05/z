@@ -534,6 +534,14 @@ class RouterModeFlowTest(unittest.TestCase):
             return_value=OnboardingConfig(
                 auth_mode="router", selected_model="claude-haiku-4-5"
             ),
+        ), patch(
+            # Pin this boundary explicitly — this test asserts the plain
+            # (non-gateway) model flag, so it must not depend on whatever
+            # real session state happens to exist in the test process.
+            "aider.z.gateway_client.apply_gateway_env_for_router",
+            return_value=(False, None),
+        ), patch(
+            "aider.z.gateway_client.router_uses_gateway", return_value=False
         ), patch("aider.main.main", side_effect=fake_main):
             code = _start_agent([])
         self.assertEqual(code, 0)

@@ -122,8 +122,11 @@ class LoginScreenRenderTest(unittest.TestCase):
         self.assertIn("Update available", out)
 
     def test_orange_accent_used_not_green(self):
+        from aider.z.theme import ACCENT
+
         out = _render_to_text()
-        self.assertIn("201;106;43", out)
+        r, g, b = (int(ACCENT.lstrip("#")[i : i + 2], 16) for i in (0, 2, 4))
+        self.assertIn(f"{r};{g};{b}", out)
         self.assertNotIn("0;255;0", out)
 
     def test_option_order_google_email_phone(self):
