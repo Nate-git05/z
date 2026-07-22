@@ -321,6 +321,16 @@ class AppServerSession:
 
     @staticmethod
     def _skill_summary(s) -> dict:
+        def _ts(v):
+            if v is None:
+                return None
+            if hasattr(v, "isoformat"):
+                try:
+                    return v.isoformat()
+                except Exception:
+                    return str(v)
+            return str(v) if v != "" else v
+
         return {
             "id": getattr(s, "id", None),
             "title": getattr(s, "title", None),
@@ -331,7 +341,7 @@ class AppServerSession:
             "quality_state": getattr(s, "quality_state", None),
             "needs_review": bool(getattr(s, "needs_review", False)),
             "source": getattr(s, "source", None),
-            "updated_at": getattr(s, "updated_at", None),
+            "updated_at": _ts(getattr(s, "updated_at", None)),
             "symptom_description": getattr(s, "symptom_description", None) or "",
             "root_cause_category": getattr(s, "root_cause_category", None) or "",
         }
