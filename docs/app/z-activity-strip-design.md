@@ -104,7 +104,7 @@ Single short phrase, sentence case, no ellipsis spam:
 | `waiting` | Waiting for you | `turn/waiting_input` |
 | `queued` | Queued follow-up | queueLen > 0 while busy |
 
-Line 2 uses **accent** (`#C96A2B`) when busy; muted when idle.
+Line 2 uses **accent** (`#D4894A`) when busy; muted when idle.
 
 Optional micro-motion (2–3 max, intentional):
 
@@ -119,16 +119,16 @@ Optional micro-motion (2–3 max, intentional):
 ### Tokens (CSS variables — align `zTheme.ts`)
 
 ```css
---z-bg: #0A0A0A;
---z-text: #F5F5F5;
---z-muted: #D8D8D8;
---z-accent: #C96A2B;
---z-accent-bright: #E07830;
---z-strip-fg: #D8D8D8;          /* Line 1 body */
---z-strip-verb: #F5F5F5;        /* first verb “Editing” */
---z-strip-phase: #C96A2B;       /* Line 2 */
---z-delta-add: #E07830;           /* bright orange — additions */
---z-delta-del: #C96A2B;           /* burnt orange — deletions (still orange, not red) */
+--z-bg: #141414;
+--z-text: #EDE8E3;
+--z-muted: #A39E98;
+--z-accent: #D4894A;
+--z-accent-bright: #E0A06A;
+--z-strip-fg: #A39E98;          /* Line 1 body */
+--z-strip-verb: #EDE8E3;        /* first verb “Editing” */
+--z-strip-phase: #D4894A;       /* Line 2 */
+--z-delta-add: #E0A06A;           /* soft bright orange — additions */
+--z-delta-del: #D4894A;           /* soft burnt orange — deletions (still orange, not red) */
 ```
 
 ### Typography
@@ -308,7 +308,7 @@ Using tools
 - [ ] Busy turn shows two-line orange strip (not a single “Working…”).
 - [ ] Editing + searches + commands + deltas update live.
 - [ ] Phase copy includes Thinking / Planning next moves / Choosing model / Applying edits.
-- [ ] `+N` and `−N` both render orange (`#E07830` / `#C96A2B`); no green or red.
+- [ ] `+N` and `−N` both render orange (`#E0A06A` / `#D4894A`); no green or red.
 - [ ] Idle restores ready copy; no leftover deltas after turn settles.
 - [ ] Desktop + narrow Chat width: Line 1 wraps without overlapping composer.
 
