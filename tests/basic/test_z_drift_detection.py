@@ -806,7 +806,10 @@ class DriftGateInRunOneTest(unittest.TestCase):
             coder.run_one("Fix the LRU cache memory leak", preproc=False)
 
         self.assertTrue(confirms)
-        self.assertIn("Stop here?", confirms[0])
+        # base_coder.py uses one unified confirm question for both drift and
+        # complete-task-creep; the two scenarios are distinguished by the
+        # follow-up tool_output message (checked below), not the question text.
+        self.assertIn("Refocus on the original task?", confirms[0])
         self.assertTrue(any("stopping further" in o.lower() for o in outputs))
         # No refocus rewrite pushed into a later send
         self.assertFalse(any("Still-unresolved checklist" in m for m in sent))
