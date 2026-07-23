@@ -17,6 +17,7 @@ earliest unsupported parent assumption.
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Dict, List, Optional, Sequence
 
@@ -92,6 +93,7 @@ class BacktrackResult:
     invalidated_evidence_kinds: List[str] = field(default_factory=list)
     repair_guidance: str = ""
     weaken_blocked: bool = False
+    earliest_selected_by: str = "rule"  # "rule" | "model"
 
     def to_dict(self) -> dict:
         return {
@@ -101,6 +103,7 @@ class BacktrackResult:
             "invalidated_evidence_kinds": list(self.invalidated_evidence_kinds),
             "repair_guidance": self.repair_guidance,
             "weaken_blocked": self.weaken_blocked,
+            "earliest_selected_by": self.earliest_selected_by,
         }
 
 
@@ -117,6 +120,106 @@ def build_default_assumption_chain() -> List[AssumptionNode]:
     ]
 
 
+def _backtrack_classify_enabled() -> bool:
+    """Escape hatch: Z_BACKTRACK_CLASSIFY=0 disables the model override,
+    keeping the deterministic chain-walk's pick (today's behavior)."""
+    import os
+
+    raw = (os.environ.get("Z_BACKTRACK_CLASSIFY") or "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def _backtrack_classify_timeout() -> float:
+    """Z_BACKTRACK_CLASSIFY_TIMEOUT seconds (default 6.0). Only fires on the
+    prepare_commit safety-net branch (already a failure), not the hot
+    per-turn path, so a longer budget than task_mode's 3.0 is fine."""
+    import os
+
+    raw = os.environ.get("Z_BACKTRACK_CLASSIFY_TIMEOUT", "6.0")
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return 6.0
+    return val if val > 0 else 6.0
+
+
+_BACKTRACK_SYSTEM_PROMPT = (
+    "You are diagnosing a verification failure by causal backtracking. "
+    "Below is a chain of assumptions ordered from EARLIEST (root prerequisite) "
+    "to LATEST (end-to-end journey), each annotated with a status derived from "
+    "evidence freshness:\n"
+    "  assumed      - never checked\n"
+    "  supported    - fresh passing evidence exists for this assumption\n"
+    "  contradicted - this is where/why the failure was detected\n"
+    "A 'supported' status can still be wrong if the raw failure output below "
+    "suggests the freshness check is misleading. Pick the EARLIEST node in "
+    "the chain whose assumption is actually false or unverified, given the "
+    "failure classification and raw output. Only choose from the candidate "
+    "ids listed. Respond with EXACTLY ONE WORD: the node id, lowercase, "
+    "nothing else."
+)
+
+
+def _select_earliest_via_model(
+    *,
+    chain: List[AssumptionNode],
+    candidate_ids: List[str],
+    cls: FailureClassification,
+    output: str,
+    error: str,
+    classifier_model,
+) -> Optional[str]:
+    """One-shot weak-model override of the deterministic earliest-node pick.
+
+    Returns a validated node id from ``candidate_ids``, or None on ANY
+    failure/timeout/disabled/unparseable/invalid output — caller keeps the
+    rule-based pick. Never raises.
+    """
+    if classifier_model is None or not _backtrack_classify_enabled():
+        return None
+    if len(candidate_ids) <= 1:
+        return None  # nothing to choose between
+
+    candidates = set(candidate_ids)
+    by_id = {n.id: n for n in chain}
+    lines = [
+        f"  [{by_id[nid].status}] {nid}: {by_id[nid].claim}"
+        for nid in candidate_ids
+        if nid in by_id
+    ]
+    excerpt = "\n".join(p for p in (error, output) if p)[-2000:]
+    user_content = (
+        f"Candidate node ids (earliest first): {', '.join(candidate_ids)}\n\n"
+        "Chain:\n" + "\n".join(lines) + "\n\n"
+        f"Failure layer: {cls.layer}\n"
+        f"Classification summary: {cls.summary}\n"
+        f"Backtrack target hint: {cls.backtrack_target}\n\n"
+        f"Raw failure excerpt:\n{excerpt}"
+    )
+    messages = [
+        {"role": "system", "content": _BACKTRACK_SYSTEM_PROMPT},
+        {"role": "user", "content": user_content},
+    ]
+
+    from aider.z.latency import join_future, submit_background
+
+    def _call():
+        return classifier_model.simple_send_with_retries(messages)
+
+    try:
+        fut = submit_background(_call)
+    except Exception:
+        return None
+    raw = join_future(fut, timeout=_backtrack_classify_timeout())
+    if not raw or not isinstance(raw, str):
+        return None
+
+    for word in re.findall(r"[a-z_]+", raw.strip().lower()):
+        if word in candidates:
+            return word
+    return None
+
+
 def backtrack_failure(
     *,
     output: str = "",
@@ -126,6 +229,7 @@ def backtrack_failure(
     failure_kind: str = "",
     ledger: Optional[EvidenceLedger] = None,
     proposed_repair_touches_detector: bool = False,
+    classifier_model=None,
 ) -> BacktrackResult:
     """
     Walk from the failure layer up to the earliest unsupported assumption.
@@ -156,10 +260,12 @@ def backtrack_failure(
     # its parent is still assumed/supported; if parent is also weak, go up.
     earliest = target
     cursor = target
+    visited_ids: List[str] = [target.id]
     while cursor and cursor.parent_id:
         parent = by_id.get(cursor.parent_id)
         if not parent:
             break
+        visited_ids.append(parent.id)
         # If we have fresh evidence for the parent layer's prerequisite, stop
         parent_ok = False
         if ledger and parent.layer:
@@ -184,6 +290,21 @@ def backtrack_failure(
 
     if earliest:
         earliest.status = "contradicted"
+
+    earliest_selected_by = "rule"
+    if classifier_model is not None:
+        picked_id = _select_earliest_via_model(
+            chain=chain,
+            candidate_ids=visited_ids,
+            cls=cls,
+            output=output,
+            error=error,
+            classifier_model=classifier_model,
+        )
+        if picked_id and picked_id != earliest.id and picked_id in by_id:
+            earliest = by_id[picked_id]
+            earliest.status = "contradicted"
+            earliest_selected_by = "model"
 
     invalidated: List[str] = []
     if ledger:
@@ -233,6 +354,7 @@ def backtrack_failure(
         invalidated_evidence_kinds=invalidated,
         repair_guidance=guidance,
         weaken_blocked=weaken_blocked,
+        earliest_selected_by=earliest_selected_by,
     )
 
 
@@ -271,6 +393,7 @@ def backtrack_nodes(
             signals={
                 "causal_backtrack": True,
                 "earliest_id": result.earliest.id,
+                "earliest_selected_by": result.earliest_selected_by,
                 "failure_layer": result.classification.layer,
                 "weaken_blocked": result.weaken_blocked,
                 "verification_blocked": result.weaken_blocked,
