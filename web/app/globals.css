@@ -314,13 +314,15 @@ button.lp-btn {
 }
 
 /* —— Pricing page —— */
-.pricing-page {
+.pricing-page,
+.guide-page {
   max-width: var(--max);
   margin: 0 auto;
   padding: 3rem 1.25rem 4rem;
 }
 
-.pricing-page h1 {
+.pricing-page h1,
+.guide-page h1 {
   margin: 0 0 0.75rem;
   font-family: var(--sans);
   font-size: clamp(2rem, 4vw, 2.75rem);
@@ -472,6 +474,61 @@ button.lp-btn {
   color: var(--muted);
   font-family: var(--sans);
   line-height: 1.55;
+}
+
+/* —— Guide page —— */
+.guide-section-first {
+  padding-top: 0.5rem;
+}
+
+.guide-steps {
+  display: grid;
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.guide-step {
+  background: var(--bg-raised);
+  padding: 1.25rem 1.5rem;
+  display: flex;
+  gap: 1.1rem;
+  align-items: flex-start;
+}
+
+.guide-step-num {
+  flex-shrink: 0;
+  width: 1.6rem;
+  height: 1.6rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 0.8rem;
+  color: var(--accent);
+  margin-top: 0.1rem;
+}
+
+.guide-step h3 {
+  margin: 0 0 0.35rem;
+  font-family: var(--mono);
+  font-size: 0.98rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.guide-step p {
+  margin: 0;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 0.95rem;
+  line-height: 1.5;
 }
 
 /* —— Main / layout —— */
