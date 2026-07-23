@@ -1509,8 +1509,9 @@ class Coder:
                 self._turn_preamble = TurnPreamble(verbose=ux_verbose(coder=self))
                 explore_fut = None
                 try:
-                    self._phase_spinner_start("Planning — matching skills…")
-                    self._maybe_pull_skills(user_text, checkpoint="turn")
+                    if mode.allows_requirement_decomposition:
+                        self._phase_spinner_start("Planning — matching skills…")
+                        self._maybe_pull_skills(user_text, checkpoint="turn")
 
                     if mode.allows_explore_pass:
                         try:
@@ -1705,7 +1706,9 @@ class Coder:
             # (e.g. after verify gate asks for tests, or a requirement gap).
             # Injects newly relevant skills; skips scaffolds already satisfied.
             if isinstance(message, str) and not message.startswith("/"):
-                self._maybe_pull_skills(message, checkpoint="reflect")
+                mode_now = getattr(self, "task_mode", None)
+                if mode_now is None or mode_now.allows_requirement_decomposition:
+                    self._maybe_pull_skills(message, checkpoint="reflect")
                 try:
                     from aider.z.skills.session import note_scaffold_progress
 
@@ -1854,6 +1857,13 @@ class Coder:
                 limit=2,
                 checkpoint=checkpoint,
             )
+            if skills:
+                from aider.z.skills.router import filter_skills_by_relevance
+
+                classifier_model = getattr(self.main_model, "weak_model", None)
+                skills = filter_skills_by_relevance(
+                    skills, user_message, classifier_model
+                )
             self._phase_spinner_update("Planning — building capability plan…")
             # Retrieve trace: verbose or Z_SKILL_RETRIEVE_LOG (quiet by default)
             try:
