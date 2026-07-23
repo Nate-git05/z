@@ -144,15 +144,25 @@ def extract_intent(
             elif re.search(r"(?i)\bonly reproduce\b|\breproduce locally\b", text):
                 resolved_mode = "investigate"
             else:
-                clauses.append(
-                    TaskClause(
-                        text=text.strip(),
-                        kind="requested_action",
-                        polarity="required",
-                        confidence=0.55,
-                        source_span=(0, len(text)),
+                # A lone observation/background clause (e.g. "hello my name is
+                # X", "I'm working on a Python project") isn't a coding
+                # request just because it wasn't recognized as chat. Only
+                # fabricate an action from it when the text itself carries an
+                # implement signal — same bar the no-clauses case below uses.
+                from aider.z.task_mode import has_implement_signal
+
+                if has_implement_signal(text) or len(text) > 40:
+                    clauses.append(
+                        TaskClause(
+                            text=text.strip(),
+                            kind="requested_action",
+                            polarity="required",
+                            confidence=0.55,
+                            source_span=(0, len(text)),
+                        )
                     )
-                )
+                else:
+                    resolved_mode = "ask"
         elif not clauses:
             # Bare text with no clauses: only invent an action when it looks
             # like a real coding request, not chat or an ambiguous topic.
