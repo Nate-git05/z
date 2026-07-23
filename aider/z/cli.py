@@ -300,11 +300,8 @@ def _complete_mode_setup(io, mode: str) -> bool:
 
         io.tool_output("")
         io.tool_output(
-            "Z's router picks the model. Choose a preferred starting model — "
-            "Z can escalate to a stronger one when the task needs it."
-        )
-        io.tool_output(
-            "Model calls go through Z's routing gateway (no provider keys on this machine)."
+            "Z's router picks a model per task and can escalate when needed — "
+            "no provider keys required on this machine."
         )
         model_id = prompt_router_model_choice(io)
         if not model_id:

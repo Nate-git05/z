@@ -237,5 +237,5 @@ class CapabilityProgressTests(unittest.TestCase):
         blob = "\n".join(warnings + outputs)
         self.assertIn("Capability gaps", blob)
         self.assertIn("continuing", blob.lower())
-        self.assertIn("not stopped", blob.lower())
+        self.assertIn("not stopping", blob.lower())
 

@@ -440,9 +440,7 @@ def test_open_web_login_asks_google_vs_z_then_opens_method_url():
         z_auth, "get_auth_base_url", return_value="https://auth.example.test"
     ), patch.object(z_auth, "AUTH_TIMEOUT_SECONDS", 3), patch(
         "aider.z.login_screen.prompt_web_login_choice", return_value="google"
-    ), patch(
-        "aider.z.login_screen.prompt_auth_intent_choice"
-    ) as intent_prompt, patch.object(
+    ), patch.object(
         z_auth.webbrowser, "open", side_effect=capture_open
     ), patch("aider.z.auth.save_credentials"), patch(
         "aider.z.auth.apply_credentials_to_env"
@@ -450,7 +448,6 @@ def test_open_web_login_asks_google_vs_z_then_opens_method_url():
         creds = open_web_login(io)
 
     assert creds is not None
-    intent_prompt.assert_not_called()
     assert "auth.example.test/app/login" in opened["url"]
     assert "method=google" in opened["url"]
     assert "intent=signin" in opened["url"]

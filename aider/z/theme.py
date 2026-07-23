@@ -30,6 +30,21 @@ ACCENT_DIM = "#C98858"
 STATUS = "#9C948A"
 
 
+def hex_to_ansi_fg(hex_color: str) -> str:
+    """Convert #RRGGBB to an ANSI 24-bit foreground escape.
+
+    Single source of truth for plain/non-pretty renderers so they match
+    theme.py's actual palette instead of hand-picked raw ANSI constants
+    that can silently drift from it.
+    """
+    hex_color = hex_color.lstrip("#")
+    r, g, b = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
+    return f"\033[38;2;{r};{g};{b}m"
+
+
+ANSI_RESET = "\033[0m"
+
+
 def _status_color() -> str:
     raw = (os.environ.get("Z_STATUS_COLOR") or "").strip()
     if len(raw) == 7 and raw.startswith("#"):

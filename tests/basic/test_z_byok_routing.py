@@ -7,6 +7,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 _HOME = tempfile.mkdtemp(prefix="z_byok_routing_")
 os.environ["Z_HOME"] = _HOME
@@ -51,36 +52,33 @@ class SelectLocalModelTest(ByokRoutingTestCase):
 
     def test_picks_cheapest_eligible_among_configured_providers_only(self):
         from aider.z.byok_routing import select_local_model
-        from aider.z.routing import model_by_id
 
         os.environ["ANTHROPIC_API_KEY"] = "sk-a"
         os.environ["OPENAI_API_KEY"] = "sk-b"
-        chosen = select_local_model(task_mode="ask")
-        self.assertIsNotNone(chosen)
-        profile = model_by_id(chosen)
-        self.assertIn(profile.provider, {"anthropic", "openai"})
+        choice = select_local_model(task_mode="ask")
+        self.assertIsNotNone(choice)
+        self.assertIn(choice.provider, {"anthropic", "openai"})
+        self.assertEqual(choice.tier, "trivial")
 
     def test_never_offers_an_unconfigured_provider(self):
         from aider.z.byok_routing import select_local_model
-        from aider.z.routing import model_by_id
 
         os.environ["DEEPSEEK_API_KEY"] = "sk-d"
-        chosen = select_local_model(task_mode="implement", intent="fix the race condition")
-        self.assertIsNotNone(chosen)
-        self.assertEqual(model_by_id(chosen).provider, "deepseek")
+        choice = select_local_model(task_mode="implement", intent="fix the race condition")
+        self.assertIsNotNone(choice)
+        self.assertEqual(choice.provider, "deepseek")
 
     def test_domain_soft_preference_via_local_entry_point(self):
         from aider.z.byok_routing import select_local_model
-        from aider.z.routing import model_by_id
 
         os.environ["OPENAI_API_KEY"] = "sk-b"
-        chosen = select_local_model(
+        choice = select_local_model(
             task_mode="implement",
             intent="what's the algorithmic complexity of this function",
         )
         # o3-mini is the "reasoning" tagged, math-preferred OpenAI model.
-        self.assertEqual(chosen, "o3-mini")
-        self.assertEqual(model_by_id(chosen).provider, "openai")
+        self.assertEqual(choice.model_id, "o3-mini")
+        self.assertEqual(choice.provider, "openai")
 
     def test_never_imports_a_networking_library(self):
         """Static guard: this module must have zero network dependency by
@@ -110,6 +108,99 @@ class RecordLocalOutcomeTest(ByokRoutingTestCase):
         self.assertTrue(
             any(r.model_id == "gpt-4o-mini" and r.customer_id == "local-byok" for r in store._records)
         )
+
+
+class _FakeMainModel:
+    def __init__(self, name, weak_model_name=None, editor_model_name=None):
+        self.name = name
+        self.weak_model_name = weak_model_name
+        self.editor_model_name = editor_model_name
+
+
+def _fake_coder():
+    from aider.coders.base_coder import Coder
+
+    coder = Coder.__new__(Coder)
+    coder.io = MagicMock()
+    coder._emit_retained_step = Coder._emit_retained_step.__get__(coder)
+    coder._maybe_show_router_request_line = Coder._maybe_show_router_request_line.__get__(coder)
+    coder._maybe_route_byok_model = Coder._maybe_route_byok_model.__get__(coder)
+    return coder
+
+
+class RouterRequestLineTest(ByokRoutingTestCase):
+    def test_shows_once_per_session_not_every_turn(self):
+        coder = _fake_coder()
+        coder.main_model = _FakeMainModel("claude-sonnet-5")
+
+        coder._maybe_show_router_request_line()
+        coder._maybe_show_router_request_line()
+
+        coder.io.tool_output.assert_called_once_with(
+            "→ Routing via Z's router (requested: claude-sonnet-5)"
+        )
+
+
+class MaybeRouteByokModelTest(ByokRoutingTestCase):
+    def test_no_op_when_not_byok_mode(self):
+        from aider.z.onboarding import save_auth_mode
+
+        save_auth_mode("router")
+        coder = _fake_coder()
+        coder.main_model = _FakeMainModel("claude-sonnet-5")
+
+        coder._maybe_route_byok_model(
+            mode="ask", intent_text=None, domain=None, escalation_depth=0
+        )
+        coder.io.tool_output.assert_not_called()
+        self.assertEqual(coder.main_model.name, "claude-sonnet-5")
+
+    def test_prints_routing_line_and_swaps_model_when_different(self):
+        """select_or_prefer never downgrades an already-capable preferred
+        model, even for a trivial task — a swap only happens when the
+        preferred model doesn't meet the task's tier floor. Start from a
+        model too weak for a hard/concurrency task to trigger a real swap."""
+        from aider.z.onboarding import save_auth_mode
+
+        save_auth_mode("byok")
+        os.environ["ANTHROPIC_API_KEY"] = "sk-a"
+        coder = _fake_coder()
+        coder.main_model = _FakeMainModel(
+            "claude-haiku-4-5", weak_model_name="claude-haiku-4-5"
+        )
+
+        coder._maybe_route_byok_model(
+            mode="implement",
+            intent_text="fix the race condition in the connection pool",
+            domain=None,
+            escalation_depth=0,
+        )
+
+        line = coder.io.tool_output.call_args[0][0]
+        self.assertTrue(line.startswith("→ Routing to "))
+        self.assertIn("anthropic", line)
+        self.assertIn("hard", line)
+        self.assertNotEqual(coder.main_model.name, "claude-haiku-4-5")
+
+    def test_pins_weak_model_across_swap(self):
+        from aider.z.onboarding import save_auth_mode
+
+        save_auth_mode("byok")
+        os.environ["ANTHROPIC_API_KEY"] = "sk-a"
+        coder = _fake_coder()
+        coder.main_model = _FakeMainModel(
+            "claude-haiku-4-5", weak_model_name="claude-haiku-4-5"
+        )
+
+        with patch("aider.models.Model") as ModelCls:
+            coder._maybe_route_byok_model(
+                mode="implement",
+                intent_text="fix the race condition in the connection pool",
+                domain=None,
+                escalation_depth=0,
+            )
+        _, kwargs = ModelCls.call_args
+        self.assertEqual(kwargs.get("weak_model"), "claude-haiku-4-5")
 
 
 if __name__ == "__main__":

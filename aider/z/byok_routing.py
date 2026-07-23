@@ -13,6 +13,7 @@ only writes to local disk.
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from typing import Optional, Union
 
 # Registry provider string -> canonical env var name (mirrors
@@ -27,6 +28,15 @@ _PROVIDER_ENV_VAR = {
 }
 
 _LOCAL_BYOK_CUSTOMER_ID = "local-byok"
+
+
+@dataclass(frozen=True)
+class LocalRouteChoice:
+    """What select_local_model actually picked — enough to display it."""
+
+    model_id: str
+    provider: str
+    tier: str
 
 
 def configured_byok_providers() -> set[str]:
@@ -46,8 +56,8 @@ def select_local_model(
     preferred_model_id: Optional[str] = None,
     context_tokens: int = 4096,
     escalation_depth: int = 0,
-) -> Optional[str]:
-    """Resolve a model_id from the user's own configured BYOK providers.
+) -> Optional[LocalRouteChoice]:
+    """Resolve a model from the user's own configured BYOK providers.
 
     Returns ``None`` when zero providers are configured, or when nothing is
     eligible — callers should fall back to the single saved
@@ -94,7 +104,9 @@ def select_local_model(
         )
     except NoEligibleModelError:
         return None
-    return profile.model_id
+    return LocalRouteChoice(
+        model_id=profile.model_id, provider=profile.provider, tier=tier.value
+    )
 
 
 def record_local_outcome(

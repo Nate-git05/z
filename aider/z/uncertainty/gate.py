@@ -128,11 +128,11 @@ def format_commit_blocked_message(
         "Commit blocked by Z verification gate.\n"
         f"Reason: {reason_line}\n"
         f"{dirty_line}\n"
-        "Non-interactive options:\n"
-        "  • Fix issues and re-run\n"
-        "  • Z_FORCE_COMMIT=1  — log override and commit (High still logged)\n"
-        "  • Z_SKIP_VERIFY_GATE=1 — disable gate (escape hatch)\n"
-        "  • Z_NI_GATE=block|force|reflect  — policy (default block)"
+        "To proceed anyway:\n"
+        "  • Fix the issue and re-run\n"
+        "  • Z_FORCE_COMMIT=1 — commit with a logged override (High still logged)\n"
+        "  • Z_SKIP_VERIFY_GATE=1 — disable the gate for this run\n"
+        "  • Z_NI_GATE=block|force|reflect — set a default policy (default: block)"
     )
 
 
