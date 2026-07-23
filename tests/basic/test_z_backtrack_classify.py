@@ -39,7 +39,12 @@ class _FakeClassifierModel:
     def simple_send_with_retries(self, messages):
         self.calls.append(messages)
         if self.hang:
-            time.sleep(30)
+            # Short, not the configured timeout's actual worst case: this
+            # fake runs on aider/z/latency.py's SHARED 2-worker pool, and a
+            # long real sleep here would starve other tests' legitimate
+            # (fast) submit_background calls if they land in the same
+            # pytest process while this thread is still occupying a worker.
+            time.sleep(2)
         if self.raise_exc:
             raise self.raise_exc
         return self.response
