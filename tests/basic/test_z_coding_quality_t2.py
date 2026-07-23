@@ -56,6 +56,55 @@ class PlanModeTests(unittest.TestCase):
             ))
 
 
+class AskModeReminderTests(unittest.TestCase):
+    """A plain greeting/question auto-classified TaskMode.ASK must not get the
+    file-editing system prompt framing that hallucinates a coding task."""
+
+    def _make_coder(self, edit_format="diff"):
+        from aider.coders.base_coder import Coder
+        from aider.io import InputOutput
+        from aider.models import Model
+
+        io = InputOutput(yes=True)
+        coder = Coder.create(
+            main_model=Model("gpt-4o-mini"),
+            io=io,
+            fnames=[],
+            edit_format=edit_format,
+        )
+        coder.root = tempfile.mkdtemp(prefix="z_ask_reminder_")
+        coder.repo = None
+        coder.abs_fnames = set()
+        return coder
+
+    def test_ask_mode_gets_conversational_reminder(self):
+        from aider.z.task_mode import TaskMode
+
+        coder = self._make_coder(edit_format="diff")
+        coder.task_mode = TaskMode.ASK
+        prompt = coder.fmt_system_prompt(coder.gpt_prompts.main_system)
+        self.assertIn("This turn is conversational", prompt)
+        self.assertNotIn("# Coding quality (Z)", prompt)
+
+    def test_implement_mode_has_no_conversational_reminder(self):
+        from aider.z.task_mode import TaskMode
+
+        coder = self._make_coder(edit_format="diff")
+        coder.task_mode = TaskMode.IMPLEMENT
+        prompt = coder.fmt_system_prompt(coder.gpt_prompts.main_system)
+        self.assertNotIn("This turn is conversational", prompt)
+
+    def test_explicit_ask_command_skips_duplicate_reminder(self):
+        """Explicit /ask already uses AskPrompts with no edit framing at all —
+        no need to also inject the diff-format counter-instruction."""
+        from aider.z.task_mode import TaskMode
+
+        coder = self._make_coder(edit_format="ask")
+        coder.task_mode = TaskMode.ASK
+        prompt = coder.fmt_system_prompt(coder.gpt_prompts.main_system)
+        self.assertNotIn("This turn is conversational", prompt)
+
+
 class ExplorePassTests(unittest.TestCase):
     def test_extract_and_find(self):
         from aider.z.explore import extract_keywords, run_explore_pass

@@ -142,6 +142,26 @@ def format_skills_compact(
     return "\n".join(parts).strip()
 
 
+def ask_mode_reminder() -> str:
+    """
+    Counter-instruction for ASK-mode turns (greetings, small talk, plain
+    questions auto-classified with no explicit /ask). The base edit-format
+    system prompt (e.g. EditBlockPrompts.main_system) unconditionally tells
+    the model to identify files needing changes and ask to add them — with
+    no escape hatch for "this isn't a coding request." Without this reminder,
+    a plain "hello" gets hallucinated into a fake file-editing task.
+    """
+    return (
+        "# This turn is conversational (Z)\n"
+        "- This message does not describe a coding task — answer it directly, "
+        "in plain prose.\n"
+        "- Do not propose SEARCH/REPLACE edits, do not invent files to change, "
+        "and do not ask the user to add files to the chat.\n"
+        "- Only shift into file edits if the user's own words actually request "
+        "a code change.\n"
+    )
+
+
 def coding_quality_reminder() -> str:
     """
     Short implement-mode reminder (OpenCode-style discipline, Z-shaped).
