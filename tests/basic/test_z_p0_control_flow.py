@@ -182,6 +182,22 @@ class TaskModeTests(unittest.TestCase):
             self.assertFalse(TaskMode.ASK.allows_planning)
             self.assertFalse(TaskMode.ASK.allows_requirement_decomposition)
 
+    def test_self_introduction_is_ask_not_implement(self):
+        """A plain declarative statement ("hello my name is X") isn't a bare
+        greeting (fails the anchored casual-chat regex once there's more text
+        after "hello"), so extract_intent used to fabricate a bogus
+        "requested_action" out of the whole sentence and classify_task_mode
+        (given that intent_mode, exactly as _resolve_task_mode_and_intent
+        calls it in base_coder.py) followed it into IMPLEMENT — surfacing a
+        high-stakes plan ("Do: hello my name is X.") for a message that was
+        never a coding request."""
+        msg = "hello my name Nathaniel Matora."
+        intent = extract_intent(msg)
+        self.assertEqual(intent.mode, "ask")
+        self.assertFalse(intent.requested_actions)
+        mode = classify_task_mode(None, msg, intent_mode=intent.mode)
+        self.assertEqual(mode, TaskMode.ASK)
+
     def test_pure_question_is_ask(self):
         self.assertEqual(
             classify_task_mode(None, "What is an LRU cache?"),
