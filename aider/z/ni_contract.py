@@ -398,6 +398,19 @@ def maybe_auto_seed_reflect(
     # *approved implementation*. Without this check, a plain "hello" could
     # satisfy the plan_ok branch below and get force-reflected into
     # fabricating an edit.
+    #
+    # looks_like_casual_chat() alone is too narrow — it only matches a BARE
+    # greeting token ("hey"), not "hey z how u doin" (extra words break its
+    # anchored regex) — so defer first to the turn's already-resolved
+    # TaskMode, which classify_task_mode's fuller heuristics (plus its
+    # weak-model escalation for ambiguous cases) computed for this exact
+    # message. Auto-seeding only makes sense when this turn could actually
+    # produce an edit; every other mode (ASK/INVESTIGATE/REVIEW/VERIFY/PLAN)
+    # would just have the eventual edit blocked by allowed_to_edit() anyway,
+    # after wastefully auto-adding files and burning a reflection first.
+    mode = getattr(coder, "task_mode", None)
+    if isinstance(mode, TaskMode) and not mode.allows_edits:
+        return False
     if looks_like_casual_chat(user_message):
         return False
 
