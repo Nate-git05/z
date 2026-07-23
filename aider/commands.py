@@ -1534,6 +1534,20 @@ class Commands:
         user_msg = args
         coder.run(user_msg)
 
+        # `task_mode` here is a one-shot override for *this* command only
+        # (e.g. `/ask <question>`, `/context <question>`) — PLAN is the one
+        # deliberately sticky mode (`/plan <description>` starts a session
+        # that stays PLAN until `/plan-exit`). Coder.create() propagates a
+        # non-None forced_task_mode to every coder created from this one via
+        # SwitchCoder, so leaving it set here would silently lock all later
+        # turns into this turn's mode — including genuine edit requests,
+        # which the enforcement in allowed_to_edit() would then keep
+        # refusing with no obvious cause.
+        from aider.z.task_mode import TaskMode
+
+        if task_mode is not None and task_mode is not TaskMode.PLAN:
+            coder.forced_task_mode = None
+
         # Use the provided placeholder if any
         raise SwitchCoder(
             edit_format=self.coder.edit_format,
