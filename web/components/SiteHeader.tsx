@@ -12,6 +12,8 @@ export function SiteHeader({ onOpenWaitlist, signedIn }: Props) {
   const pathname = usePathname();
   const onPricing = pathname === "/pricing";
   const onLogin = pathname === "/login";
+  const onGuide = pathname === "/guide";
+  const onHome = !onPricing && !onLogin && !onGuide;
 
   return (
     <header className="lp-header">
@@ -23,7 +25,7 @@ export function SiteHeader({ onOpenWaitlist, signedIn }: Props) {
           <span className="lp-logo-word">Z</span>
         </Link>
         <nav className="lp-nav" aria-label="Primary">
-          {!onPricing && !onLogin ? (
+          {onHome ? (
             <>
               <a href="#why">Why</a>
               <a href="#how">How it works</a>
@@ -40,6 +42,9 @@ export function SiteHeader({ onOpenWaitlist, signedIn }: Props) {
               <Link href="/#install">Try it</Link>
             </>
           )}
+          <Link href="/guide" className={onGuide ? "lp-nav-active" : undefined}>
+            Guide
+          </Link>
           <Link href="/pricing" className={onPricing ? "lp-nav-active" : undefined}>
             Pricing
           </Link>

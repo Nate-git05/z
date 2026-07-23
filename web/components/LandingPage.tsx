@@ -1,43 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
 import { SiteShell, openWaitlistEvent } from "@/components/SiteShell";
 import { TerminalDemo } from "@/components/TerminalDemo";
-
-function CopyInstall({
-  id,
-  cmd,
-  label,
-}: {
-  id: string;
-  cmd: string;
-  label: string;
-}) {
-  const [copied, setCopied] = useState(false);
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(cmd);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1600);
-    } catch {
-      /* ignore */
-    }
-  }
-  return (
-    <>
-      <p className="lp-install-label">{label}</p>
-      <div className="lp-code">
-        <code id={id} data-cmd={cmd}>
-          <span className="prompt">$</span> {cmd}
-        </code>
-        <button type="button" className={copied ? "copied" : undefined} onClick={copy}>
-          {copied ? "Copied" : "Copy"}
-        </button>
-      </div>
-    </>
-  );
-}
+import { CopyInstall } from "@/components/CopyInstall";
 
 export function LandingPage() {
   return (
@@ -145,6 +111,14 @@ export function LandingPage() {
               </p>
             </article>
           </div>
+          <p className="lp-lede lp-lede-after">
+            That&apos;s the shape of it. For the full first-run walkthrough —
+            login, choosing BYOK or the router, and the commands you&apos;ll
+            actually use — see the{" "}
+            <Link href="/guide" className="mono">
+              guide →
+            </Link>
+          </p>
         </section>
 
         <section className="lp-section" id="skills">
