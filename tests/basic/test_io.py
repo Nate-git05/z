@@ -1,4 +1,5 @@
 import os
+import sys
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -604,6 +605,71 @@ class TestInputOutputFormatFiles(unittest.TestCase):
         self.assertEqual(
             renderables_ed, [Text("Editable:"), Text("edit1.txt"), Text("edit[markup].txt")]
         )
+
+
+class TestNonInteractiveInputErrorDetection(unittest.TestCase):
+    def test_detects_einval(self):
+        from aider.io import _is_non_interactive_input_error
+
+        err = OSError(22, "Invalid argument")
+        self.assertTrue(_is_non_interactive_input_error(err))
+
+    def test_detects_enotty(self):
+        from aider.io import _is_non_interactive_input_error
+
+        err = OSError(25, "Inappropriate ioctl for device")
+        self.assertTrue(_is_non_interactive_input_error(err))
+
+    def test_ignores_unrelated_oserror(self):
+        from aider.io import _is_non_interactive_input_error
+
+        err = OSError(2, "No such file or directory")
+        self.assertFalse(_is_non_interactive_input_error(err))
+
+    def test_ignores_non_oserror(self):
+        from aider.io import _is_non_interactive_input_error
+
+        self.assertFalse(_is_non_interactive_input_error(ValueError("boom")))
+
+
+class TestInputOutputNonInteractiveStdin(unittest.TestCase):
+    """A non-interactive stdin (piped/redirected/no real TTY) used to
+    surface as an OSError only on the first actual .prompt() call, well
+    after PromptSession construction succeeded — and get_input() swallowed
+    that OSError and returned "", so callers just retried immediately,
+    hitting the identical failure forever and spamming the chat history
+    file with duplicate tracebacks on every spin."""
+
+    def test_fancy_input_skipped_when_stdin_is_not_a_tty(self):
+        with patch("aider.io.PromptSession") as mock_session_cls:
+            with patch.object(sys.stdin, "isatty", return_value=False):
+                io = InputOutput(fancy_input=True)
+        self.assertIsNone(io.prompt_session)
+        mock_session_cls.assert_not_called()
+
+    def test_fancy_input_kept_when_stdin_is_a_tty(self):
+        with patch("aider.io.PromptSession") as mock_session_cls:
+            with patch.object(sys.stdin, "isatty", return_value=True):
+                InputOutput(fancy_input=True)
+        mock_session_cls.assert_called_once()
+
+    def test_get_input_raises_eof_instead_of_looping_on_non_interactive_error(self):
+        io = InputOutput(pretty=False, fancy_input=False)
+        io.prompt_session = MagicMock()
+        io.prompt_session.prompt.side_effect = OSError(22, "Invalid argument")
+
+        root = "/"
+        rel_fnames = []
+        addable_rel_fnames = []
+        commands = MagicMock()
+
+        with self.assertRaises(EOFError):
+            io.get_input(root, rel_fnames, addable_rel_fnames, commands)
+        # Confirms it fails once and raises — not that it retried and
+        # eventually gave up; get_input() itself only calls .prompt() once
+        # per invocation, so the real regression this guards is at the
+        # caller level (no more silent "" results to retry on forever).
+        io.prompt_session.prompt.assert_called_once()
 
 
 if __name__ == "__main__":
