@@ -129,6 +129,76 @@ def has_implement_signal(user_message: str) -> bool:
     return bool(_IMPLEMENT_RE.search(user_message or ""))
 
 
+_CLASSIFY_SYSTEM_PROMPT = (
+    "You are a fast intent classifier for a coding assistant chat turn. "
+    "Read the user's message and output EXACTLY ONE WORD, lowercase, "
+    "nothing else — no punctuation, no explanation:\n"
+    "  ask         - answer a question or discuss; no code changes needed\n"
+    "  investigate - explain/diagnose/find something; read-only, no edits\n"
+    "  review      - review existing code/diff/PR; no new edits requested\n"
+    "  verify      - run tests/checks to confirm something works\n"
+    "  implement   - write/change/fix code; a concrete edit is requested\n"
+    "Respond with only one of: ask, investigate, review, verify, implement."
+)
+
+_MODE_CLASSIFY_TOKENS = {
+    "ask": TaskMode.ASK,
+    "investigate": TaskMode.INVESTIGATE,
+    "implement": TaskMode.IMPLEMENT,
+    "review": TaskMode.REVIEW,
+    "verify": TaskMode.VERIFY,
+}
+
+
+def _mode_classify_timeout() -> float:
+    """Z_MODE_CLASSIFY_TIMEOUT seconds (default 3.0) — a hard cap independent
+    of the model's own retry loop, since this must stay a cheap, fast gate,
+    not a generation the user is waiting on."""
+    import os
+
+    raw = os.environ.get("Z_MODE_CLASSIFY_TIMEOUT", "3.0")
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return 3.0
+    return val if val > 0 else 3.0
+
+
+def _classify_via_weak_model(user_message: str, classifier_model) -> Optional["TaskMode"]:
+    """One-shot weak-model escalation for the ambiguous fallback zone.
+
+    Returns None on ANY failure/timeout/disabled/unparseable output — the
+    caller keeps the existing regex default. Never raises.
+    """
+    if classifier_model is None:
+        return None
+    text = (user_message or "").strip()
+    if not text:
+        return None
+
+    from aider.z.latency import join_future, submit_background
+
+    def _call():
+        messages = [
+            {"role": "system", "content": _CLASSIFY_SYSTEM_PROMPT},
+            {"role": "user", "content": text[:2000]},
+        ]
+        return classifier_model.simple_send_with_retries(messages)
+
+    try:
+        fut = submit_background(_call)
+    except Exception:
+        return None
+    raw = join_future(fut, timeout=_mode_classify_timeout())
+    if not raw or not isinstance(raw, str):
+        return None
+
+    for word in re.findall(r"[a-z]+", raw.strip().lower()):
+        if word in _MODE_CLASSIFY_TOKENS:
+            return _MODE_CLASSIFY_TOKENS[word]
+    return None
+
+
 def looks_like_casual_chat(user_message: str) -> bool:
     """True for greetings / small-talk that should stay in ASK (no plan gate)."""
     text = (user_message or "").strip()
@@ -222,6 +292,7 @@ def classify_task_mode(
     user_message: str = "",
     *,
     intent_mode: Optional[str] = None,
+    classifier_model=None,
 ) -> TaskMode:
     """
     Resolve TaskMode for one user message.
@@ -231,6 +302,9 @@ def classify_task_mode(
       2. Intent.mode from structured extraction when provided
       3. Conservative prompt heuristics; default IMPLEMENT for coding work,
          but greetings / pure questions / ambiguous topics stay ASK (no plan UX)
+      4. If nothing above resolved it and ``classifier_model`` is given
+         (duck-typed: needs ``.simple_send_with_retries(messages)``), escalate
+         to a bounded weak-model call before falling back to IMPLEMENT.
     """
     fmt = (edit_format or "").strip().lower()
     if fmt in ("ask", "context"):
@@ -286,6 +360,11 @@ def classify_task_mode(
 
     if _VERIFY_RE.search(text) and not _IMPLEMENT_RE.search(text):
         return TaskMode.VERIFY
+
+    if classifier_model is not None and _mode_classify_enabled():
+        escalated = _classify_via_weak_model(text, classifier_model)
+        if escalated is not None:
+            return escalated
 
     return TaskMode.IMPLEMENT
 
