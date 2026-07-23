@@ -1,4 +1,5 @@
 import base64
+import errno
 import functools
 import os
 import shutil
@@ -70,6 +71,18 @@ def restore_multiline(func):
             self.multiline_mode = orig_multiline
 
     return wrapper
+
+
+def _is_non_interactive_input_error(err: BaseException) -> bool:
+    """True for the OSError prompt_toolkit raises when it can't attach an
+    event-loop reader to stdin (e.g. stdin is piped/redirected/otherwise
+    not a real TTY). This is not a transient failure — every retry hits
+    the identical error, so a caller must treat it like EOFError (stop
+    asking for input) rather than log-and-retry, or it busy-loops forever,
+    appending a fresh traceback to the chat history file on every spin."""
+    if not isinstance(err, OSError):
+        return False
+    return err.errno in (errno.EINVAL, errno.ENOTTY)
 
 
 class CommandCompletionException(Exception):
@@ -350,6 +363,14 @@ class InputOutput:
 
         if self.is_dumb_terminal:
             self.pretty = False
+            fancy_input = False
+
+        # prompt_toolkit's PromptSession needs a real interactive stdin to
+        # attach an event-loop reader to; without one (piped/redirected/
+        # non-interactive stdin) it raises OSError on the first .prompt()
+        # call, not at construction time — is_dumb_terminal() alone doesn't
+        # catch this since it only inspects TERM, not stdin itself.
+        if fancy_input and not (sys.stdin and sys.stdin.isatty()):
             fancy_input = False
 
         if fancy_input:
@@ -896,6 +917,16 @@ class InputOutput:
             except Exception as err:
                 import traceback
 
+                if _is_non_interactive_input_error(err):
+                    # Stdin can't be read interactively and retrying would
+                    # hit the exact same failure forever — treat it like
+                    # end-of-input so callers stop asking, instead of
+                    # spinning in a tight retry loop.
+                    self.tool_error(
+                        "No usable interactive input (stdin isn't a real "
+                        f"terminal): {err}"
+                    )
+                    raise EOFError from err
                 self.tool_error(str(err))
                 self.tool_error(traceback.format_exc())
                 return ""
