@@ -3389,7 +3389,7 @@ class Coder:
             final_reminders.append(core_rule)
         # OpenCode-inspired coding discipline — implement modes only (keep ask thin)
         try:
-            from aider.z.coding_context import coding_quality_reminder
+            from aider.z.coding_context import ask_mode_reminder, coding_quality_reminder
             from aider.z.task_mode import TaskMode
 
             mode = getattr(self, "task_mode", None)
@@ -3406,6 +3406,11 @@ class Coder:
                 from aider.z.plan_mode import format_plan_mode_reminder
 
                 final_reminders.append(format_plan_mode_reminder())
+            elif mode is TaskMode.ASK and fmt not in ("ask", "context", "help"):
+                # Explicit /ask already uses AskPrompts (no edit framing at all);
+                # this covers ASK auto-classified from a normal message while
+                # edit_format (e.g. "diff") is still what's active for the turn.
+                final_reminders.append(ask_mode_reminder())
         except Exception:
             pass
         # Phase 11 — inject connected MCP tool catalog when available
