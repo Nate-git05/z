@@ -302,6 +302,99 @@ def _clean_plan_title(planning_text: str, fallback: str = "Implementation plan")
     return f"{summary[0].upper()}{summary[1:]} — plan"
 
 
+def _plan_classify_enabled() -> bool:
+    """Escape hatch: Z_PLAN_CLASSIFY=0 disables the model-authored plan
+    text, keeping today's canned-template approach/steps."""
+    raw = (os.environ.get("Z_PLAN_CLASSIFY") or "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def _plan_classify_timeout() -> float:
+    """Z_PLAN_CLASSIFY_TIMEOUT seconds (default 6.0). Only fires when
+    planning was already triaged as required — a rarer, already-blocking-UI
+    moment, same reasoning as backtrack's 6s budget."""
+    raw = os.environ.get("Z_PLAN_CLASSIFY_TIMEOUT", "6.0")
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return 6.0
+    return val if val > 0 else 6.0
+
+
+_PLAN_DRAFT_SYSTEM_PROMPT = (
+    "You are writing a short implementation plan for a coding agent, shown "
+    "to the user for approval before any edits happen. Given the user's "
+    "request below, write:\n"
+    "1. ONE sentence describing the concrete approach — specific to the "
+    "actual technology/domain/framework mentioned in the request, not "
+    "generic boilerplate. Do not just restate the request; synthesize an "
+    "actual plan.\n"
+    "2. 3 to 5 concrete, ordered implementation steps specific to this "
+    "request.\n"
+    "Format your response EXACTLY as:\n"
+    "APPROACH: <one sentence>\n"
+    "STEPS:\n"
+    "1. <step>\n"
+    "2. <step>\n"
+    "...\n"
+    "Nothing else — no preamble, no markdown headers, no code."
+)
+
+
+def _draft_via_model(
+    user_message: str, intent, classifier_model
+) -> Optional[Tuple[str, List[str]]]:
+    """One-shot weak-model authoring of the plan's approach + steps text,
+    replacing the canned template selection in ``_draft_approach_and_steps``.
+
+    Returns ``(approach, steps)`` on a successfully parsed response, or None
+    on ANY failure/timeout/disabled/unparseable response — caller keeps the
+    deterministic template result. Never raises.
+    """
+    if classifier_model is None or not _plan_classify_enabled():
+        return None
+    text = (user_message or "").strip()
+    if not text:
+        return None
+
+    extra = ""
+    actions = list(getattr(intent, "requested_actions", None) or [])
+    if actions:
+        extra = "\n\nRequested actions:\n" + "\n".join(f"- {a}" for a in actions[:8])
+    user_content = f"User's request:\n{text[:2000]}{extra}"
+    messages = [
+        {"role": "system", "content": _PLAN_DRAFT_SYSTEM_PROMPT},
+        {"role": "user", "content": user_content},
+    ]
+
+    from aider.z.latency import join_future, submit_background
+
+    def _call():
+        return classifier_model.simple_send_with_retries(messages)
+
+    try:
+        fut = submit_background(_call)
+    except Exception:
+        return None
+    raw = join_future(fut, timeout=_plan_classify_timeout())
+    if not raw or not isinstance(raw, str):
+        return None
+
+    approach_match = re.search(r"(?im)^APPROACH:\s*(.+)$", raw)
+    if not approach_match:
+        return None
+    approach = approach_match.group(1).strip()
+    if not approach:
+        return None
+
+    step_lines = re.findall(r"(?m)^\s*\d+[.)]\s*(.+)$", raw)
+    steps = [s.strip() for s in step_lines if s.strip()][:8]
+    if not steps:
+        return None
+
+    return approach, steps
+
+
 def _draft_approach_and_steps(
     intent,
     *,
@@ -533,6 +626,7 @@ def draft_plan_from_request(
     skill_capabilities: Sequence[str] = (),
     skill_ids: Sequence[str] = (),
     intent=None,
+    classifier_model=None,
 ) -> PlanningArtifact:
     """
     Build a mechanical planning skeleton from structured TaskIntent.
@@ -572,6 +666,11 @@ def draft_plan_from_request(
     approach, steps, out_of_scope = _draft_approach_and_steps(
         intent, checklist=checklist
     )
+
+    if classifier_model is not None:
+        override = _draft_via_model(user_message, intent, classifier_model)
+        if override is not None:
+            approach, steps = override
 
     # P1.1 — active constraint check: drop / flag steps that violate constraints
     try:

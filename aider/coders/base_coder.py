@@ -3036,6 +3036,7 @@ class Coder:
                 files=files,
                 symbols=symbols,
                 reference_count=reference_count,
+                classifier_model=getattr(self.main_model, "weak_model", None),
             )
             if plan is None:
                 return True

@@ -144,6 +144,7 @@ class UncertaintyEngine:
         files: Optional[Sequence[str]] = None,
         symbols: Optional[Sequence[str]] = None,
         reference_count: int = 0,
+        classifier_model=None,
     ) -> Optional[PlanningArtifact]:
         """
         Pre-edit triage: if high-stakes / blast-radius fires, draft a plan
@@ -196,6 +197,7 @@ class UncertaintyEngine:
             ),
             skill_ids=list(getattr(self.ctx, "_skill_ids", None) or []),
             intent=intent,
+            classifier_model=classifier_model,
         )
         self.ctx.plan = plan
         self.ctx.plan_required = True
