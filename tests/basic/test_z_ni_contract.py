@@ -313,6 +313,50 @@ class AutoSeedTest(unittest.TestCase):
         self.assertEqual(added, [])
         self.assertIsNone(coder.reflected_message)
 
+    def test_non_bare_greeting_does_not_auto_seed_reflect(self):
+        """"hey z how u doin" fails looks_like_casual_chat()'s anchored bare-
+        greeting regex (extra words after "hey" break it) even though it's
+        genuinely ASK-mode chat. Reported bug: this used to still trigger
+        auto-seed, adding an unrelated file to chat ("Auto-added to chat —
+        aider.chat.history.md") and reflecting the model into fabricating a
+        SEARCH/REPLACE edit for a plain greeting. Guarding on the turn's
+        already-resolved TaskMode (not just looks_like_casual_chat) closes
+        this regardless of exact wording.
+        """
+        (self.root / "README.md").write_text("# repo\n", encoding="utf-8")
+        eng = MagicMock()
+        eng.ctx = MagicMock()
+        eng.ctx.plan_approved = True
+
+        coder = MagicMock()
+        coder.root = str(self.root)
+        coder.io = MagicMock()
+        coder.io.yes = True  # NI-style session, same as the reported case
+        coder.reflected_message = None
+        coder.aider_edited_files = set()
+        coder._z_ni_auto_seed_done = False
+        coder.uncertainty_engine = eng
+        coder.task_mode = TaskMode.ASK
+        coder.get_inchat_relative_files = MagicMock(return_value=[])
+        added = []
+        coder.add_rel_fname = lambda r: added.append(r)
+
+        from aider.z.task_mode import looks_like_casual_chat
+
+        self.assertFalse(looks_like_casual_chat("hey z how u doin"))
+
+        ok = maybe_auto_seed_reflect(
+            coder,
+            user_message="hey z how u doin",
+            assistant_text=(
+                "I'm doing well, thank you! If you have any requests or "
+                "changes you'd like to make, just let me know!"
+            ),
+        )
+        self.assertFalse(ok)
+        self.assertEqual(added, [])
+        self.assertIsNone(coder.reflected_message)
+
 
 class ReflectionFloorTest(unittest.TestCase):
     def tearDown(self):
