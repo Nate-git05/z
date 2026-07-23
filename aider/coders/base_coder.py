@@ -4758,6 +4758,23 @@ class Coder:
                 prev = getattr(self, "reflected_message", None) or ""
                 self.reflected_message = (prev + "\n" + msg).strip() if prev else msg
                 return
+
+            # Real enforcement for TaskMode.allows_edits — this is the one
+            # place edits actually get written to disk / committed, so it
+            # must not depend on the model behaving per a prompt reminder.
+            # Whatever produced a SEARCH/REPLACE block for this turn
+            # (hallucination, a stalled-plan auto-seed reflect, anything
+            # else), a turn classified ASK/INVESTIGATE/REVIEW/VERIFY never
+            # gets to apply it. No reflected_message here on purpose — we
+            # don't want to nag the model into another generation attempt
+            # for a turn that was never a coding request in the first place.
+            if mode is not None and not mode.allows_edits:
+                msg = (
+                    f"Edit blocked: this turn wasn't classified as a coding "
+                    f"request, so `{path}` was not touched."
+                )
+                self.io.tool_warning(msg)
+                return
         except Exception:
             pass
 
