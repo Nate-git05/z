@@ -87,6 +87,59 @@ class InvestigateModeTests(unittest.TestCase):
             self.assertEqual(coder.abs_fnames, set())
 
 
+class OneShotForcedModeTests(unittest.TestCase):
+    """`/ask <question>` and `/context <question>` are one-shot overrides for
+    that single command, not sticky session state. Coder.create() propagates
+    a non-None forced_task_mode to every coder spun up afterwards (that's how
+    `/plan` stays sticky across turns), so if a one-shot `/ask` left it set,
+    every later turn — including genuine edit requests — would be silently
+    forced into ASK and refused by the allowed_to_edit() enforcement, with no
+    obvious cause. PLAN is the one mode that's supposed to stay sticky."""
+
+    def _make_commands(self):
+        from aider.coders.base_coder import Coder
+        from aider.commands import Commands
+        from aider.io import InputOutput
+        from aider.models import Model
+
+        io = InputOutput(yes=True)
+        coder = Coder.create(
+            main_model=Model("gpt-4o-mini"), io=io, fnames=[], edit_format="diff"
+        )
+        coder.root = tempfile.mkdtemp(prefix="z_oneshot_")
+        coder.repo = None
+        coder.abs_fnames = set()
+        commands = Commands(io, coder)
+        coder.commands = commands
+        commands.coder = coder
+        Coder.run = lambda self, msg=None: None  # skip the real model call
+        return commands
+
+    def test_ask_with_args_does_not_leak_forced_mode(self):
+        from aider.commands import SwitchCoder
+        from aider.z.task_mode import TaskMode
+
+        commands = self._make_commands()
+        with self.assertRaises(SwitchCoder) as ctx:
+            commands._generic_chat_command(
+                "why does X fail?", "ask", task_mode=TaskMode.ASK
+            )
+        new_coder = ctx.exception.kwargs.get("from_coder")
+        self.assertIsNone(new_coder.forced_task_mode)
+
+    def test_plan_with_args_stays_sticky(self):
+        from aider.commands import SwitchCoder
+        from aider.z.task_mode import TaskMode
+
+        commands = self._make_commands()
+        with self.assertRaises(SwitchCoder) as ctx:
+            commands._generic_chat_command(
+                "draft a plan for X", "diff", task_mode=TaskMode.PLAN
+            )
+        new_coder = ctx.exception.kwargs.get("from_coder")
+        self.assertIs(new_coder.forced_task_mode, TaskMode.PLAN)
+
+
 class AskModeReminderTests(unittest.TestCase):
     """A plain greeting/question auto-classified TaskMode.ASK must not get the
     file-editing system prompt framing that hallucinates a coding task."""
