@@ -1666,6 +1666,9 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
             touches_detector = any(
                 is_protected_path(str(p)) for p in edited_list
             )
+            classifier_model = getattr(
+                getattr(coder, "main_model", None), "weak_model", None
+            )
             bt = backtrack_failure(
                 output=record.output_excerpt or "",
                 error=record.error or "",
@@ -1674,6 +1677,7 @@ def prepare_commit(coder, edited: Sequence[str]) -> GateResult:
                 failure_kind=record.failure_kind or "",
                 ledger=ledger,
                 proposed_repair_touches_detector=touches_detector,
+                classifier_model=classifier_model,
             )
             engine.ctx.last_backtrack = bt
             bnodes = backtrack_nodes(
