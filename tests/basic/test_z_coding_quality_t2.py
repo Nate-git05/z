@@ -56,6 +56,37 @@ class PlanModeTests(unittest.TestCase):
             ))
 
 
+class InvestigateModeTests(unittest.TestCase):
+    def test_investigate_blocks_edit_to_disk(self):
+        """A turn classified INVESTIGATE (e.g. 'do not edit any files') must be
+        refused at the point edits are actually applied, not just nudged via
+        a system-prompt reminder the model is free to ignore."""
+        from aider.coders.base_coder import Coder
+        from aider.io import InputOutput
+        from aider.models import Model
+        from aider.z.task_mode import TaskMode
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            product = root / "app.py"
+            product.write_text("x=1\n", encoding="utf-8")
+
+            io = InputOutput(yes=True)
+            coder = Coder.create(
+                main_model=Model("gpt-4o-mini"),
+                io=io,
+                fnames=[],
+                edit_format="diff",
+            )
+            coder.root = str(root)
+            coder.repo = None
+            coder.abs_fnames = set()
+            coder.task_mode = TaskMode.INVESTIGATE
+
+            self.assertFalse(bool(coder.allowed_to_edit("app.py")))
+            self.assertEqual(coder.abs_fnames, set())
+
+
 class AskModeReminderTests(unittest.TestCase):
     """A plain greeting/question auto-classified TaskMode.ASK must not get the
     file-editing system prompt framing that hallucinates a coding task."""
