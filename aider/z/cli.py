@@ -43,6 +43,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Also sign out (clear ~/.z/credentials)",
     )
+    sub.add_parser(
+        "full-reset",
+        help="Sign out completely and start fresh (same as `z reset --logout`) "
+        "— use this to switch accounts or create another profile",
+    )
     sub.add_parser("logout", help="Sign out and clear ~/.z/credentials")
     sub.add_parser("whoami", help="Show the current Z account / workspace")
 
@@ -515,6 +520,7 @@ def main(argv: list[str] | None = None) -> int | None:
         "login",
         "auth",
         "reset",
+        "full-reset",
         "logout",
         "whoami",
         "workspace",
@@ -552,6 +558,8 @@ def dispatch(args) -> int:
         return cmd_login(io, provider=getattr(args, "provider", None))
     if args.command == "reset":
         return cmd_reset(io, logout=bool(getattr(args, "logout", False)))
+    if args.command == "full-reset":
+        return cmd_reset(io, logout=True)
     if args.command == "logout":
         from aider.z.auth import logout
 
