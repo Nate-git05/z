@@ -332,7 +332,11 @@ def language_compatible(
 
     if not repo_langs:
         # Empty/greenfield repo: still block foreign scaffolds when task is clear
-        return True if not task_langs else bool(skill_langs & task_langs)
+        if not task_langs:
+            # No repo signal AND no task signal — don't inject a
+            # language-specific scaffold the user never asked for.
+            return False
+        return bool(skill_langs & task_langs)
 
     if skill_langs & repo_langs:
         return True
@@ -511,3 +515,84 @@ def route_skills(
                 mark_skill_satisfied(signals.root, skill.id)
 
     return inject, decisions
+
+
+def _skill_relevance_enabled() -> bool:
+    """Escape hatch: Z_SKILL_RELEVANCE_CLASSIFY=0 disables the weak-model
+    relevance gate, keeping today's deterministic retrieval result as-is."""
+    raw = (os.environ.get("Z_SKILL_RELEVANCE_CLASSIFY") or "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def _skill_relevance_timeout() -> float:
+    """Z_SKILL_RELEVANCE_TIMEOUT seconds (default 5.0)."""
+    raw = os.environ.get("Z_SKILL_RELEVANCE_TIMEOUT", "5.0")
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return 5.0
+    return val if val > 0 else 5.0
+
+
+_SKILL_RELEVANCE_SYSTEM_PROMPT = (
+    "A retrieval system suggested these candidate skills/playbooks as "
+    "possibly relevant to the user's message below. For each, decide if it "
+    "is ACTUALLY relevant and should be shown to a coding assistant as "
+    "guidance for this specific message. Respond with a comma-separated "
+    "list of the relevant candidate numbers only (e.g. \"1,3\"), or the "
+    "single word \"none\" if none are relevant. Nothing else — no "
+    "punctuation beyond the commas, no explanation."
+)
+
+
+def filter_skills_by_relevance(
+    skills: List[Skill], user_message: str, classifier_model
+) -> List[Skill]:
+    """One-shot weak-model relevance check on the (small, already-filtered)
+    candidate list returned by retrieval/routing.
+
+    Returns ``skills`` UNCHANGED on any failure/timeout/disabled/unparseable
+    response — fails OPEN to today's deterministic retrieval result. A
+    broken or slow model call must never silently drop skills that already
+    passed real retrieval; it may only narrow the list when it successfully
+    responds. Never raises.
+    """
+    if classifier_model is None or not skills or not _skill_relevance_enabled():
+        return skills
+    if not (user_message or "").strip():
+        return skills
+
+    lines = [
+        f"{i}. {s.title}: {(s.description or '').strip()[:200]}"
+        for i, s in enumerate(skills, start=1)
+    ]
+    user_content = (
+        f"User's message:\n{user_message.strip()[:2000]}\n\n"
+        "Candidate skills:\n" + "\n".join(lines)
+    )
+    messages = [
+        {"role": "system", "content": _SKILL_RELEVANCE_SYSTEM_PROMPT},
+        {"role": "user", "content": user_content},
+    ]
+
+    from aider.z.latency import join_future, submit_background
+
+    def _call():
+        return classifier_model.simple_send_with_retries(messages)
+
+    try:
+        fut = submit_background(_call)
+    except Exception:
+        return skills
+    raw = join_future(fut, timeout=_skill_relevance_timeout())
+    if not raw or not isinstance(raw, str):
+        return skills
+
+    text = raw.strip().lower()
+    if text.startswith("none"):
+        return []
+    indices = {int(m) for m in re.findall(r"\d+", text)}
+    if not indices:
+        return skills  # unparseable — fail open, keep today's result
+    kept = [s for i, s in enumerate(skills, start=1) if i in indices]
+    return kept if kept else skills
