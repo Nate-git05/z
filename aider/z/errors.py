@@ -91,8 +91,9 @@ def handle_classified(
             )
             if io is not None and hasattr(io, "tool_error"):
                 io.tool_error(
-                    f"Integrity gate: planning/verification could not complete "
-                    f"[{diag}]: {exc}"
+                    f"Planning/verification couldn't finish: {exc}. Stopping "
+                    f"rather than guessing — try again, or share diagnostic "
+                    f"{diag} if this keeps happening."
                 )
             return "fail_closed"
         logger.warning("recoverable_agent_error diag=%s %s", diag, msg)
@@ -104,8 +105,8 @@ def handle_classified(
     logger.error("integrity_gate_error diag=%s %s", diag, msg, exc_info=exc)
     if io is not None and hasattr(io, "tool_error"):
         io.tool_error(
-            f"Verification could not be completed [{diag}]: {exc}. "
-            "Not claiming success."
+            f"Couldn't verify the change: {exc}. Treating this as unfinished "
+            f"rather than assuming success. Diagnostic: {diag}."
         )
     return "fail_closed"
 

@@ -1,8 +1,8 @@
 """Persisted first-run auth-mode + model choice.
 
-V1 product default is **Z model router only**. BYOK remains available behind
-``Z_ALLOW_BYOK=1`` for legacy/dev. Separate from z/credentials.py (account
-tokens) and aider/onboarding.py (Aider OpenRouter prompts).
+After login, every user picks BYOK or Z's router — both are first-class,
+always offered. Separate from z/credentials.py (account tokens) and
+aider/onboarding.py (Aider OpenRouter prompts).
 """
 
 from __future__ import annotations
@@ -13,16 +13,6 @@ from dataclasses import dataclass
 from typing import Optional
 
 from .paths import byok_env_path, config_path, ensure_z_home
-
-
-def byok_allowed() -> bool:
-    """True when bring-your-own-key may still be offered (escape hatch)."""
-    return os.environ.get("Z_ALLOW_BYOK", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    )
 
 
 @dataclass

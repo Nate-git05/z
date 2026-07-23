@@ -13,7 +13,7 @@ import time
 
 from rich.console import Console
 
-from .theme import ACCENT
+from .theme import ACCENT, ANSI_RESET, hex_to_ansi_fg
 
 # Multi-line idle pose: yellow scientist with glasses + lab coat vibe.
 # Pure ASCII — macOS Terminal mis-measures rare glyphs and shreds layouts.
@@ -65,16 +65,6 @@ def working_mascot_frame(index: int, unicode_ok: bool | None = None) -> str:
     return frames[index % len(frames)]
 
 
-def _ansi_color(hex_color: str) -> str:
-    """Convert #RRGGBB to an ANSI 24-bit foreground escape."""
-    hex_color = hex_color.lstrip("#")
-    r, g, b = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
-    return f"\033[38;2;{r};{g};{b}m"
-
-
-_ANSI_RESET = "\033[0m"
-
-
 class MascotSpinner:
     """
     Lightweight frame-cycling mascot spinner for active Z work.
@@ -97,7 +87,7 @@ class MascotSpinner:
         self.visible = False
         self.start_time = time.time()
         self.last_display_len = 0
-        self._accent = _ansi_color(ACCENT)
+        self._accent = hex_to_ansi_fg(ACCENT)
 
     def _next_frame(self) -> str:
         frame = self.frames[self.frame_idx]
@@ -134,7 +124,7 @@ class MascotSpinner:
 
         padding = " " * max(0, self.last_display_len - len(plain))
         # Entire status line = orange FG only (no reverse / no bgcolor).
-        colored = f"{self._accent}{plain}{_ANSI_RESET}"
+        colored = f"{self._accent}{plain}{ANSI_RESET}"
         sys.stdout.write(f"\r{colored}{padding}")
         sys.stdout.flush()
         self.last_display_len = len(plain)

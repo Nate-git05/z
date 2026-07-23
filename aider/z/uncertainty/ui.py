@@ -9,16 +9,23 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import List, Optional, Sequence, Tuple
 
+from ..theme import ACCENT as _ACCENT_HEX
+from ..theme import ANSI_RESET as RESET
+from ..theme import TEXT_MUTED as _TEXT_MUTED_HEX
+from ..theme import hex_to_ansi_fg
 from .actions import apply_action
 from .schema import Tier, UncertaintyNode
 from .store import UncertaintyStore, sort_nodes
 from .tree import SortMode, build_tree, flatten_for_display
 
 
-ACCENT = "\033[38;2;201;106;43m"  # burnt orange #C96A2B
-DIM = "\033[38;2;216;216;216m"  # status off-white #D8D8D8
+# Plain/non-pretty rendering must match the same palette the Rich renderer
+# below uses (theme.py) — these used to be separately hand-picked raw ANSI
+# constants that had drifted to a different orange than every bordered
+# panel elsewhere in the app.
+ACCENT = hex_to_ansi_fg(_ACCENT_HEX)
+DIM = hex_to_ansi_fg(_TEXT_MUTED_HEX)
 BOLD = "\033[1m"
-RESET = "\033[0m"
 
 _TIER_MARKERS = {
     Tier.HIGH: "‼",

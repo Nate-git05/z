@@ -148,5 +148,56 @@ class NoSideEffectRegressionTests(unittest.TestCase):
         io._notify.assert_not_called()
 
 
+class AutoCommitBlockedRendersSamePanelTest(unittest.TestCase):
+    """The agent's own auto-commit block path must render the identical
+    panel manual /commit uses — this was the biggest inconsistency found in
+    the UX audit (same event, two different treatments)."""
+
+    def test_renders_panel_and_records_outcome(self):
+        from aider.coders.base_coder import Coder
+
+        coder = Coder.__new__(Coder)
+        coder.io = _fake_io(pretty=True)
+        coder.move_back_cur_messages = MagicMock()
+        coder._report_gateway_routing_outcome = MagicMock()
+        coder._gateway_escalation_depth = 0
+
+        result = GateResult(
+            allow_commit=False,
+            blocked_high=[_node("Untested path")],
+            reason="high-risk blockers",
+        )
+        coder._handle_verify_gate_blocked(result, ["file.py"])
+
+        coder.io.console.print.assert_called_once()
+        panel = coder.io.console.print.call_args[0][0]
+        self.assertIn("Untested path", str(panel.renderable))
+        coder.move_back_cur_messages.assert_called_once()
+        coder._report_gateway_routing_outcome.assert_called_once_with(False, result)
+        self.assertEqual(coder._gateway_escalation_depth, 1)
+
+    def test_reuses_block_message_when_gate_already_emitted_one(self):
+        from aider.coders.base_coder import Coder
+
+        coder = Coder.__new__(Coder)
+        coder.io = _fake_io(pretty=True)
+        coder.move_back_cur_messages = MagicMock()
+        coder._report_gateway_routing_outcome = MagicMock()
+        coder._gateway_escalation_depth = 0
+
+        result = GateResult(
+            allow_commit=False,
+            blocked_high=[_node("Untested path")],
+            reason="high-risk blockers",
+            block_ui_emitted=True,
+            block_message="a very specific pre-rendered message",
+        )
+        coder._handle_verify_gate_blocked(result, ["file.py"])
+
+        coder.move_back_cur_messages.assert_called_once_with(
+            "a very specific pre-rendered message"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

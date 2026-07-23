@@ -819,6 +819,83 @@ class Coder:
         except Exception:
             pass
 
+    def _maybe_show_router_request_line(self) -> None:
+        """Router mode: the server picks the actual model (and may escalate
+        beyond what's requested) — the client has no way to read that back
+        yet (would need a response-header + client-extraction follow-up), so
+        this shows what's honestly known: what's being requested. Once per
+        session rather than every turn, since it doesn't change turn-to-turn
+        today.
+        """
+        if getattr(self, "_shown_router_request_line", False):
+            return
+        self._shown_router_request_line = True
+        self._emit_retained_step(
+            f"→ Routing via Z's router (requested: {self.main_model.name})"
+        )
+
+    def _maybe_route_byok_model(
+        self,
+        *,
+        mode,
+        intent_text: Optional[str],
+        domain: Optional[str],
+        escalation_depth: int,
+    ) -> None:
+        """Multi-key BYOK — locally route across the user's own configured
+        providers per turn instead of always using one saved model. No-op
+        when auth_mode isn't BYOK or nothing is eligible."""
+        from aider.z.onboarding import load_config
+
+        if load_config().auth_mode != "byok":
+            return
+        from aider.z.byok_routing import select_local_model
+
+        choice = select_local_model(
+            task_mode=mode,
+            intent=intent_text,
+            domain=domain,
+            preferred_model_id=getattr(self.main_model, "name", None),
+            escalation_depth=escalation_depth,
+        )
+        if not choice:
+            return
+        self._emit_retained_step(
+            f"→ Routing to {choice.model_id} ({choice.provider}) · {choice.tier} task"
+        )
+        if choice.model_id != getattr(self.main_model, "name", None):
+            from aider.models import Model
+
+            self.main_model = Model(
+                choice.model_id,
+                weak_model=getattr(self.main_model, "weak_model_name", None),
+                editor_model=getattr(self.main_model, "editor_model_name", None),
+            )
+
+    def _handle_verify_gate_blocked(self, gate_result, commit_edited) -> None:
+        """Auto-commit was blocked by the verify gate — render the same
+        panel manual /commit uses (aider/commands.py -> gate_ui.render_commit_gate)
+        so a blocked commit looks identical regardless of who triggered it."""
+        from aider.z.uncertainty.gate import format_commit_blocked_message
+        from aider.z.uncertainty.gate_ui import render_commit_gate
+
+        detail = gate_result.reason or (
+            "Resolve high-risk issues, acknowledge medium-risk, "
+            "or use --force-commit / Z_FORCE_COMMIT."
+        )
+        if getattr(gate_result, "block_ui_emitted", False) and gate_result.block_message:
+            blocked_msg = gate_result.block_message
+        else:
+            blocked_msg = format_commit_blocked_message(
+                detail, dirty_count=len(commit_edited or [])
+            )
+        render_commit_gate(gate_result, io=self.io, dirty_count=len(commit_edited or []))
+        self.move_back_cur_messages(blocked_msg)
+        self._report_gateway_routing_outcome(False, gate_result)
+        self._gateway_escalation_depth = (
+            int(getattr(self, "_gateway_escalation_depth", 0) or 0) + 1
+        )
+
     def _phase_spinner_start(self, text: str) -> None:
         """Start (or restart) the mascot/eyes spinner for a planning step."""
         self._stop_waiting_spinner()
@@ -1376,7 +1453,7 @@ class Coder:
 
             # Phase 5 — push TaskMode/intent to the routing gateway for this turn.
             try:
-                from aider.z.gateway_client import set_gateway_routing_hints
+                from aider.z.gateway_client import router_uses_gateway, set_gateway_routing_hints
 
                 esc_depth = int(getattr(self, "_gateway_escalation_depth", 0) or 0)
                 intent_text = None
@@ -1390,13 +1467,26 @@ class Coder:
                         intent_text = intent_text.strip() or None
                 if not intent_text and isinstance(user_text, str):
                     intent_text = user_text
+                from aider.z.routing.classify import domain_from_text
+
+                domain = domain_from_text(intent_text)
                 set_gateway_routing_hints(
                     task_mode=mode,
                     intent=intent_text,
+                    domain=domain,
                     escalate=esc_depth > 0,
                     escalation_depth=esc_depth,
                     thread_id=getattr(self, "thread_id", None),
                 )
+                if router_uses_gateway():
+                    self._maybe_show_router_request_line()
+                else:
+                    self._maybe_route_byok_model(
+                        mode=mode,
+                        intent_text=intent_text,
+                        domain=domain,
+                        escalation_depth=esc_depth,
+                    )
             except Exception:
                 pass
 
@@ -1869,14 +1959,14 @@ class Coder:
             # not gated on verbose.)
             if cap_plan.coverage_gaps:
                 self.io.tool_warning(
-                    f"Capability gaps ({len(cap_plan.coverage_gaps)}): "
-                    "compensate with workflow — no skill ≠ skip verification."
+                    f"Capability gaps ({len(cap_plan.coverage_gaps)}) — "
+                    "no matching skill, but verification still runs."
                 )
                 # Gaps are informational — never a turn abort.
                 if not skills:
                     self.io.tool_output(
-                        "No matching skill — continuing with native plan / "
-                        "verify workflow (not stopped)."
+                        "No matching skill for this — continuing with the "
+                        "usual plan and verification, not stopping."
                     )
             self.cur_messages += [
                 {"role": "user", "content": block},
@@ -3851,31 +3941,7 @@ class Coder:
                     )
                     return
                 if not gate_result.allow_commit:
-                    from aider.z.uncertainty.gate import format_commit_blocked_message
-
-                    detail = gate_result.reason or (
-                        "Resolve high-risk issues, acknowledge medium-risk, "
-                        "or use --force-commit / Z_FORCE_COMMIT."
-                    )
-                    if getattr(gate_result, "block_ui_emitted", False):
-                        blocked_msg = (
-                            gate_result.block_message
-                            or format_commit_blocked_message(
-                                detail,
-                                dirty_count=len(commit_edited or []),
-                            )
-                        )
-                    else:
-                        blocked_msg = format_commit_blocked_message(
-                            detail,
-                            dirty_count=len(commit_edited or []),
-                        )
-                        self.io.tool_error(blocked_msg)
-                    self.move_back_cur_messages(blocked_msg)
-                    self._report_gateway_routing_outcome(False, gate_result)
-                    self._gateway_escalation_depth = (
-                        int(getattr(self, "_gateway_escalation_depth", 0) or 0) + 1
-                    )
+                    self._handle_verify_gate_blocked(gate_result, commit_edited)
                     return
 
                 self._report_gateway_routing_outcome(True, gate_result)
@@ -4888,8 +4954,9 @@ class Coder:
             self.io.tool_error(str(err))
             return edited
         except Exception as err:
-            self.io.tool_error("Exception while updating files:")
+            self.io.tool_error("Couldn't apply that edit:")
             self.io.tool_error(str(err), strip=False)
+            self.io.tool_output("Z will retry with this error in context.")
 
             traceback.print_exc()
 
@@ -4982,6 +5049,9 @@ class Coder:
             return self.gpt_prompts.files_content_gpt_no_edits
         except ANY_GIT_ERROR as err:
             self.io.tool_error(f"Unable to commit: {str(err)}")
+            self.io.tool_output(
+                "Check `git status` for the actual state, then `/commit` manually."
+            )
             return
 
     def show_auto_commit_outcome(self, res):
@@ -5014,6 +5084,9 @@ class Coder:
             res = self.repo.commit(fnames=self.need_commit_before_edits, coder=self)
         except ANY_GIT_ERROR as err:
             self.io.tool_error(f"Unable to commit: {str(err)}")
+            self.io.tool_output(
+                "Check `git status` for the actual state, then `/commit` manually."
+            )
             return
         if res:
             self.show_auto_commit_outcome(res)

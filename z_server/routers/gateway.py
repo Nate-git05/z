@@ -86,6 +86,7 @@ def chat_completions(
             stream=payload.stream,
             task_mode=task_mode,
             intent=payload.intent,
+            domain=payload.domain,
             tier=payload.tier,
             escalate=bool(payload.escalate),
             escalation_depth=int(payload.escalation_depth or 0),

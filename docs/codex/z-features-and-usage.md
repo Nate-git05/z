@@ -27,7 +27,7 @@ z
 First-run flow:
 
 1. **Z account login** (email / phone / Google) — workspace features, MCP list, skill sync  
-2. **Model access** — **Z model router** (preferred model + escalation). BYOK only if `Z_ALLOW_BYOK=1`  
+2. **Model access** — choose **BYOK** (bring your own provider key — Anthropic, OpenAI, DeepSeek, Groq, Gemini, Kimi/Moonshot) or **Z's router** (preferred model + escalation, no local keys). Both are first-class, always offered.
 3. Agent chat starts in the project directory  
 
 Important: **Z login ≠ model key.** You still need a provider key (or router mode). Keys live in env / `~/.z/byok.env`; account tokens in `~/.z/credentials`.
@@ -146,14 +146,14 @@ Full guide: [docs/skills/README.md](../skills/README.md).
 
 ---
 
-### 3.5 Model routing (Z router — V1 default)
+### 3.5 Model routing
 
 | Mode | Behavior |
 |------|----------|
-| **Router** (default) | Pick a preferred Z model; router classifies difficulty and can escalate within budget |
-| **BYOK** | Escape only: set `Z_ALLOW_BYOK=1` to restore bring-your-own key |
+| **Router** | Pick a preferred Z model; router classifies task complexity/domain and can escalate within budget — no local provider keys |
+| **BYOK** | Pick a provider (Anthropic, OpenAI, DeepSeek, Groq, Gemini, Kimi/Moonshot), paste its key. Z routes per task across that provider's own model tiers; `z byok add` connects more providers so Z can route across all of them |
 
-Reconfigure anytime: `z reset` or `z auth switch`. List models: `z models` / `z models --all`.
+Both are first-class and always offered right after login — reconfigure anytime with `z reset` or `z auth switch`. List models: `z models` / `z models --all`. Manage BYOK provider keys: `z byok add` / `z byok list`.
 
 ---
 

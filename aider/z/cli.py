@@ -32,7 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
     auth_sub = auth.add_subparsers(dest="auth_command")
     auth_sub.add_parser(
         "switch",
-        help="Re-pick preferred Z router model (BYOK only if Z_ALLOW_BYOK=1)",
+        help="Re-pick BYOK vs router, and the provider/model within it",
     )
     reset = sub.add_parser(
         "reset",
@@ -85,6 +85,20 @@ def build_parser() -> argparse.ArgumentParser:
     mcp = sub.add_parser("mcp", help="MCP tool connections (managed in the web app)")
     mcp_sub = mcp.add_subparsers(dest="mcp_command")
     mcp_sub.add_parser("list", help="List MCP tools connected to your Z account/workspace")
+
+    byok = sub.add_parser(
+        "byok",
+        help="Manage multiple BYOK provider keys so Z can route between them per task",
+    )
+    byok_sub = byok.add_subparsers(dest="byok_command")
+    byok_sub.add_parser(
+        "add",
+        help="Add another provider's API key without changing your default model",
+    )
+    byok_sub.add_parser(
+        "list",
+        help="List which providers currently have a configured key",
+    )
 
     unc = sub.add_parser("uncertainty", help="Uncertainty tree utilities")
     unc_sub = unc.add_subparsers(dest="uncertainty_command")
@@ -261,38 +275,33 @@ def _ensure_model_keys(io, model_id: str | None) -> bool:
 
 
 def _complete_mode_setup(io, mode: str) -> bool:
-    """Finish router model preference (or BYOK when ``Z_ALLOW_BYOK=1``).
+    """Finish router model preference, or BYOK provider + key setup.
 
     Only called when the user has just picked a mode (first run or
     ``z auth switch``) — never on every launch once ``auth_mode`` is saved.
+    One provider key at setup is enough; ``z byok add`` adds more later —
+    Z already routes across that single provider's own model tiers per task.
     """
-    from aider.z.onboarding import byok_allowed, save_auth_mode, save_selected_model
+    from aider.z.onboarding import save_auth_mode, save_selected_model
 
     if mode == "byok":
-        if not byok_allowed():
-            io.tool_output("BYOK is disabled — using Z's model router.")
-            mode = "router"
-        else:
-            from aider.z.auth import prompt_byok_setup
+        from aider.z.auth import prompt_byok_setup
 
-            io.tool_output("")
-            io.tool_output("Bring your own key — choose a model and paste its API key.")
-            if not prompt_byok_setup(io):
-                return False
-            save_auth_mode(mode)
-            _load_byok_env()
-            return True
+        io.tool_output("")
+        io.tool_output("Bring your own key — choose a model and paste its API key.")
+        if not prompt_byok_setup(io):
+            return False
+        save_auth_mode(mode)
+        _load_byok_env()
+        return True
 
     if mode == "router":
         from aider.z.login_screen import prompt_router_model_choice
 
         io.tool_output("")
         io.tool_output(
-            "Z's router picks the model. Choose a preferred starting model — "
-            "Z can escalate to a stronger one when the task needs it."
-        )
-        io.tool_output(
-            "Model calls go through Z's routing gateway (no provider keys on this machine)."
+            "Z's router picks a model per task and can escalate when needed — "
+            "no provider keys required on this machine."
         )
         model_id = prompt_router_model_choice(io)
         if not model_id:
@@ -319,18 +328,18 @@ def _complete_mode_setup(io, mode: str) -> bool:
 def ensure_agent_session(io) -> bool:
     """First-run / session gate for the coding agent.
 
-    Bare ``z`` order (V1):
+    Bare ``z`` order:
       1. Not signed in → Google or Z → browser sign-in / sign-up
-      2. After account is live → Z router preferred-model pick (no BYOK menu)
-      3. Next launches: reuse saved router model (``z auth switch`` / ``z reset``)
+      2. After account is live → BYOK vs router choice, then provider/model pick
+      3. Next launches: reuse the saved choice (``z auth switch`` / ``z reset``)
 
-    Set ``Z_ALLOW_BYOK=1`` to restore BYOK vs router. ``Z_SKIP_ACCOUNT=1`` bypasses.
+    ``Z_SKIP_ACCOUNT=1`` bypasses the account gate entirely (dev/CI).
     """
     if _skip_account_gate():
         return True
 
     from aider.z.auth import current_session, open_web_login
-    from aider.z.onboarding import byok_allowed, load_config
+    from aider.z.onboarding import load_config
 
     creds = current_session()
     if not (creds and creds.is_authenticated()):
@@ -344,13 +353,7 @@ def ensure_agent_session(io) -> bool:
     # Remembered choice — do not re-ask mode on every launch.
     # Still collect missing provider keys so we never fall into Aider's docs prompt.
     if config.auth_mode == "byok":
-        if byok_allowed():
-            return _ensure_model_keys(io, config.selected_model)
-        # V1: migrate legacy BYOK installs onto the router path.
-        io.tool_output(
-            "Z now uses the model router by default — picking a preferred model."
-        )
-        return _complete_mode_setup(io, "router")
+        return _ensure_model_keys(io, config.selected_model)
     if config.auth_mode == "router" and config.selected_model:
         from aider.z.gateway_client import apply_gateway_env_for_router
 
@@ -364,10 +367,7 @@ def ensure_agent_session(io) -> bool:
     if config.auth_mode == "router" and not config.selected_model:
         return _complete_mode_setup(io, "router")
 
-    # Fresh install — V1 skips BYOK vs router and goes straight to router.
-    if not byok_allowed():
-        return _complete_mode_setup(io, "router")
-
+    # Fresh install — always ask BYOK vs router.
     from aider.z.login_screen import prompt_auth_mode_choice
 
     mode = prompt_auth_mode_choice(io)
@@ -520,6 +520,7 @@ def main(argv: list[str] | None = None) -> int | None:
         "workspace",
         "models",
         "mcp",
+        "byok",
         "skill",
         "taxonomy",
         "uncertainty",
@@ -568,6 +569,8 @@ def dispatch(args) -> int:
         return cmd_models(io, search=args.search or "", show_all=args.all)
     if args.command == "mcp":
         return cmd_mcp(io, args)
+    if args.command == "byok":
+        return cmd_byok(io, args)
     if args.command == "skill":
         return cmd_skill(io, args)
     if args.command == "taxonomy":
@@ -708,12 +711,44 @@ def cmd_mcp(io, args) -> int:
     return 1
 
 
-def _prompt_mode_or_router(io) -> str | None:
-    """V1: return router immediately unless BYOK escape is enabled."""
-    from aider.z.onboarding import byok_allowed
+def cmd_byok(io, args) -> int:
+    sub = getattr(args, "byok_command", None) or "list"
+    if sub == "list":
+        from aider.z.byok_routing import configured_byok_providers
 
-    if not byok_allowed():
-        return "router"
+        _load_byok_env()
+        providers = sorted(configured_byok_providers())
+        if not providers:
+            io.tool_output("No BYOK provider keys configured.")
+        else:
+            io.tool_output("Configured BYOK providers: " + ", ".join(providers))
+            if len(providers) > 1:
+                io.tool_output(
+                    "Z will route each turn across these providers by task "
+                    "complexity/domain."
+                )
+        return 0
+    if sub == "add":
+        from aider.z.auth import _dev_byok_setup
+
+        io.tool_output("")
+        io.tool_output("Add another provider key — your default model is unchanged.")
+        # _dev_byok_setup already saves the key(s) it collects; deliberately
+        # not calling apply_byok_setup_result so selected_model stays as-is.
+        result = _dev_byok_setup(io)
+        if result is None:
+            io.tool_output("Cancelled.")
+            return 1
+        _load_byok_env()
+        io.tool_output(f"Added a provider key ({result.get('model_id')}).")
+        return 0
+    io.tool_error(f"Unknown byok subcommand: {sub}")
+    io.tool_output("Usage: z byok add | list")
+    return 1
+
+
+def _prompt_mode_or_router(io) -> str | None:
+    """Always offer BYOK vs router — used by ``z auth switch``/``z reset``."""
     from aider.z.login_screen import prompt_auth_mode_choice
 
     return prompt_auth_mode_choice(io)

@@ -253,5 +253,112 @@ class RegistryTest(unittest.TestCase):
             self.assertIsInstance(m.capability_tier, CapabilityTier)
 
 
+class PricingCacheRealLookupTest(unittest.TestCase):
+    """Hermetic against real litellm.model_cost changing — always inject a
+    fake table so these assertions don't drift with a litellm upgrade."""
+
+    def _model(self, model_id="test-model", provider="openai"):
+        return ModelProfile(
+            model_id, provider, 9.0, 9.0, 100_000, CapabilityTier.MODERATE, 500, ()
+        )
+
+    def test_bare_key_hit_converts_per_token_to_per_1m(self):
+        table = {"test-model": {"input_cost_per_token": 1e-06, "output_cost_per_token": 4e-06, "litellm_provider": "openai"}}
+        pc = PricingCache(model_cost_table=table)
+        self.assertEqual(pc.current_cost(self._model()), 1.0)
+
+    def test_alias_hit(self):
+        m = ModelProfile("deepseek-v3", "deepseek", 0.27, 1.10, 64_000, CapabilityTier.TRIVIAL, 900, ())
+        table = {"deepseek-chat": {"input_cost_per_token": 2.8e-07, "output_cost_per_token": 4.2e-07, "litellm_provider": "deepseek"}}
+        pc = PricingCache(model_cost_table=table)
+        self.assertAlmostEqual(pc.current_cost(m), 0.28)
+
+    def test_no_match_falls_back_to_static_row(self):
+        m = ModelProfile("gemini-1.5-pro", "google", 1.25, 5.00, 2_000_000, CapabilityTier.MODERATE, 1500, ())
+        pc = PricingCache(model_cost_table={})
+        self.assertEqual(pc.current_cost(m), 1.25)
+
+    def test_fuzzy_match_never_crosses_providers(self):
+        m = self._model(model_id="sonnet", provider="openai")
+        table = {
+            "vendor-x/sonnet": {"input_cost_per_token": 9e-05, "output_cost_per_token": 9e-05, "litellm_provider": "vendor-x"},
+        }
+        pc = PricingCache(model_cost_table=table)
+        # No same-provider match exists -> falls back to the static row, not vendor-x's.
+        self.assertEqual(pc.current_cost(m), 9.0)
+
+
+class DomainFromTextTest(unittest.TestCase):
+    def test_each_domain(self):
+        from aider.z.routing.classify import domain_from_text
+
+        cases = {
+            "fix the race condition in the worker pool": "concurrency",
+            "add a REST endpoint for user signup": "api",
+            "make this button responsive on mobile": "ui",
+            "add cors handling for the browser fetch call": "web",
+            "what is the algorithmic complexity of this sort": "math",
+        }
+        for text, expected in cases.items():
+            self.assertEqual(domain_from_text(text), expected, msg=text)
+
+    def test_no_domain_signal_returns_none(self):
+        from aider.z.routing.classify import domain_from_text
+
+        self.assertIsNone(domain_from_text("rename variable x to userCount"))
+        self.assertIsNone(domain_from_text(""))
+        self.assertIsNone(domain_from_text(None))
+
+    def test_overlap_ordering_is_deterministic(self):
+        """concurrency is checked before ui — documented tiebreak, not luck."""
+        from aider.z.routing.classify import domain_from_text
+
+        self.assertEqual(
+            domain_from_text("fix the race condition in this css layout"),
+            "concurrency",
+        )
+
+
+class SelectModelDomainDiscountTest(unittest.TestCase):
+    def test_domain_discount_flips_selection(self):
+        reasoning = ModelProfile("reason-model", "openai", 2.0, 8.0, 128_000, CapabilityTier.HARD, 1000, ("reasoning",))
+        plain = ModelProfile("plain-model", "openai", 1.9, 7.6, 128_000, CapabilityTier.HARD, 1000, ())
+        registry = (reasoning, plain)
+        policy = _policy("openai")
+        calibration = CalibrationStore(path=Path(_HOME) / "cal_domain.json", customer_id="cust-1")
+        pricing = PricingCache(model_cost_table={})  # empty -> static registry rows
+
+        without_domain = select_model(
+            CapabilityTier.HARD, policy=policy, context_tokens=1000,
+            latency_budget_ms=None, pricing=pricing, calibration=calibration,
+            registry=registry,
+        )
+        self.assertEqual(without_domain.model_id, "plain-model")
+
+        with_domain = select_model(
+            CapabilityTier.HARD, policy=policy, context_tokens=1000,
+            latency_budget_ms=None, pricing=pricing, calibration=calibration,
+            registry=registry, domain="math",
+        )
+        self.assertEqual(with_domain.model_id, "reason-model")
+
+    def test_preferred_model_ignores_domain(self):
+        # select_or_prefer's preference lookup (model_by_id) always resolves
+        # against the real global MODEL_REGISTRY, regardless of a registry=
+        # override — so the preferred id here must be a real registry row.
+        from aider.z.routing import select_or_prefer
+
+        policy = _policy("openai")
+        calibration = CalibrationStore(path=Path(_HOME) / "cal_domain2.json", customer_id="cust-1")
+        pricing = PricingCache(model_cost_table={})
+
+        result = select_or_prefer(
+            CapabilityTier.HARD, "gpt-4o", policy=policy, context_tokens=1000,
+            latency_budget_ms=None, pricing=pricing, calibration=calibration,
+            domain="math",
+        )
+        self.assertEqual(result.model_id, "gpt-4o")
+
+
 if __name__ == "__main__":
     unittest.main()

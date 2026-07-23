@@ -41,37 +41,20 @@ LOGIN_OPTIONS = [
     ("phone", "Continue with Phone"),
 ]
 
-# Terminal choices before opening the browser (CLI → web auth).
-AUTH_INTENT_OPTIONS = [
-    ("signin", "Sign in"),
-    ("signup", "Sign up"),
-]
-
 WEB_LOGIN_OPTIONS = [
     ("google", "Continue with Google"),
     ("z", "Continue with Z"),
 ]
 
-# V1: router-only. BYOK appears only when Z_ALLOW_BYOK=1.
-AUTH_MODE_OPTIONS_ROUTER_ONLY = [
-    ("router", "Use Z's model router"),
-]
-
-AUTH_MODE_OPTIONS_WITH_BYOK = [
+# Both are first-class and always offered — every user picks one after login.
+AUTH_MODE_OPTIONS = [
     ("byok", "Bring your own API key"),
     ("router", "Use Z's model router"),
 ]
 
-# Back-compat alias — prefer auth_mode_options().
-AUTH_MODE_OPTIONS = AUTH_MODE_OPTIONS_WITH_BYOK
-
 
 def auth_mode_options() -> list[tuple[str, str]]:
-    from aider.z.onboarding import byok_allowed
-
-    if byok_allowed():
-        return list(AUTH_MODE_OPTIONS_WITH_BYOK)
-    return list(AUTH_MODE_OPTIONS_ROUTER_ONLY)
+    return list(AUTH_MODE_OPTIONS)
 
 
 def router_model_options() -> list[tuple[str, str]]:
@@ -472,9 +455,6 @@ def prompt_router_model_choice(
     if pretty and is_tty:
         console = Console(force_terminal=True, color_system="auto", soft_wrap=False)
         try:
-            io.tool_output(
-                "Z's router picks a model per task, starting from your preference."
-            )
             return interactive_login_select(
                 console,
                 version=version,
@@ -485,36 +465,6 @@ def prompt_router_model_choice(
         except Exception:
             return prompt_router_model_choice_plain(io)
     return prompt_router_model_choice_plain(io)
-
-
-def prompt_auth_intent_choice_plain(io) -> str | None:
-    return _plain_choice_menu(
-        io,
-        title="Z account",
-        options=AUTH_INTENT_OPTIONS,
-    )
-
-
-def prompt_auth_intent_choice(
-    io, *, version: str = "", status_message: str = ""
-) -> str | None:
-    """Ask Sign in vs Sign up before opening the browser."""
-    pretty = bool(getattr(io, "pretty", False))
-    is_tty = sys.stdin.isatty() and sys.stdout.isatty()
-
-    if pretty and is_tty:
-        console = Console(force_terminal=True, color_system="auto", soft_wrap=False)
-        try:
-            return interactive_login_select(
-                console,
-                version=version,
-                status_message=status_message,
-                options=AUTH_INTENT_OPTIONS,
-                prompt_text="Do you want to sign in or sign up?",
-            )
-        except Exception:
-            return prompt_auth_intent_choice_plain(io)
-    return prompt_auth_intent_choice_plain(io)
 
 
 def prompt_web_login_choice_plain(io, *, intent: str = "signin") -> str | None:

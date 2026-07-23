@@ -30,6 +30,9 @@ class FakeIO:
     def prompt_ask(self, prompt, default=None):
         return default or ""
 
+    def confirm_ask(self, question, default="y", **kwargs):
+        return str(default).strip().lower() in ("y", "yes", "true", "1")
+
 
 def test_open_web_setup_falls_back_to_dev_flow_when_no_backend(monkeypatch):
     io = FakeIO()
@@ -205,7 +208,7 @@ def test_byok_setup_trip_uses_skip_login_true():
     )
     captured = {}
 
-    with patch.dict("os.environ", {"Z_ALLOW_BYOK": "1"}), patch(
+    with patch(
         "aider.z.auth.current_session", return_value=creds
     ), patch(
         "aider.z.auth.open_web_login"
@@ -244,7 +247,7 @@ def test_login_happens_before_mode_choice_on_fresh_config():
         order.append("byok")
         return True
 
-    with patch.dict("os.environ", {"Z_ALLOW_BYOK": "1"}), patch(
+    with patch(
         "aider.z.auth.current_session", return_value=None
     ), patch(
         "aider.z.auth.open_web_login", side_effect=fake_login
@@ -437,9 +440,7 @@ def test_open_web_login_asks_google_vs_z_then_opens_method_url():
         z_auth, "get_auth_base_url", return_value="https://auth.example.test"
     ), patch.object(z_auth, "AUTH_TIMEOUT_SECONDS", 3), patch(
         "aider.z.login_screen.prompt_web_login_choice", return_value="google"
-    ), patch(
-        "aider.z.login_screen.prompt_auth_intent_choice"
-    ) as intent_prompt, patch.object(
+    ), patch.object(
         z_auth.webbrowser, "open", side_effect=capture_open
     ), patch("aider.z.auth.save_credentials"), patch(
         "aider.z.auth.apply_credentials_to_env"
@@ -447,7 +448,6 @@ def test_open_web_login_asks_google_vs_z_then_opens_method_url():
         creds = open_web_login(io)
 
     assert creds is not None
-    intent_prompt.assert_not_called()
     assert "auth.example.test/app/login" in opened["url"]
     assert "method=google" in opened["url"]
     assert "intent=signin" in opened["url"]
@@ -485,7 +485,7 @@ def test_auth_switch_uses_web_login_and_byok_skip_login():
         expires_at=9_999_999_999,
     )
 
-    with patch.dict("os.environ", {"Z_ALLOW_BYOK": "1"}), patch(
+    with patch(
         "aider.z.auth.current_session", return_value=None
     ), patch(
         "aider.z.auth.open_web_login", return_value=creds
