@@ -1779,10 +1779,19 @@ class Coder:
         except Exception:
             recent = []
 
+        # Ambiguous-case escalation target for classify_task_mode/extract_intent
+        # (falls back to today's regex default on any failure — see
+        # aider/z/task_mode.py's _classify_via_weak_model). weak_model is the
+        # main model itself when no distinct weak model is configured (never
+        # None in that case), and only None when built with weak_model=False —
+        # both are handled by classifier_model=None downstream.
+        classifier_model = getattr(self.main_model, "weak_model", None)
+
         intent = extract_intent(
             user_message or "",
             recent_messages=recent,
             forced_mode=forced_mode_str,
+            classifier_model=classifier_model,
         )
         if isinstance(explicit, TaskMode):
             intent.mode = explicit.value
@@ -1792,6 +1801,7 @@ class Coder:
             self.edit_format,
             user_message or "",
             intent_mode=intent.mode,
+            classifier_model=classifier_model,
         )
         # Explicit /ask|/context always stay non-edit modes
         if self.edit_format in ("ask", "context") and mode is TaskMode.IMPLEMENT:

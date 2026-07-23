@@ -79,9 +79,14 @@ def extract_intent(
     *,
     recent_messages: Sequence[str] = (),
     forced_mode: Optional[str] = None,
+    classifier_model=None,
 ) -> TaskIntent:
     """
     Classify a user turn into TaskIntent with TaskClause detail (P0.2 + P1.1).
+
+    ``classifier_model`` (duck-typed: needs ``.simple_send_with_retries``) is
+    passed straight through to ``classify_task_mode`` for its ambiguous-case
+    weak-model escalation; ``None`` (the default) keeps this pure-regex.
     """
     text = (user_message or "").strip()
     clauses = extract_clauses(text, recent_messages=recent_messages)
@@ -90,7 +95,7 @@ def extract_intent(
     if not mode:
         from aider.z.task_mode import classify_task_mode
 
-        tm = classify_task_mode(None, text)
+        tm = classify_task_mode(None, text, classifier_model=classifier_model)
         has_invest = any(c.kind == "investigation_target" for c in clauses) or bool(
             _INVESTIGATE_VERBS.search(text)
         )
@@ -149,9 +154,11 @@ def extract_intent(
                 # request just because it wasn't recognized as chat. Only
                 # fabricate an action from it when the text itself carries an
                 # implement signal — same bar the no-clauses case below uses.
+                # An explicit forced_mode (e.g. one-shot /code <topic>) is
+                # authoritative and must never be downgraded here.
                 from aider.z.task_mode import has_implement_signal
 
-                if has_implement_signal(text) or len(text) > 40:
+                if forced_mode or has_implement_signal(text) or len(text) > 40:
                     clauses.append(
                         TaskClause(
                             text=text.strip(),
