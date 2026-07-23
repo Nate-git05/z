@@ -233,6 +233,21 @@ class ResetSetupTest(unittest.TestCase):
         clear.assert_called_once_with(clear_keys=True)
         mode.assert_not_called()
 
+    def test_full_reset_dispatches_to_cmd_reset_with_logout(self):
+        """`z full-reset` is a discoverable alias for `z reset --logout` —
+        same full-wipe behavior, easier to find without knowing the flag."""
+        from aider.z import cli as z_cli
+
+        io = FakeIO()
+        with patch("aider.z.cli.cmd_reset", return_value=0) as reset:
+            parser = z_cli.build_parser()
+            args = parser.parse_args(["full-reset"])
+            code = z_cli.dispatch(args)
+        self.assertEqual(code, 0)
+        reset.assert_called_once()
+        _, kwargs = reset.call_args
+        self.assertTrue(kwargs.get("logout"))
+
 
 class ByokCommandTest(unittest.TestCase):
     """`z byok add|list` — multi-key BYOK CLI surface."""
