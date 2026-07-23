@@ -274,6 +274,45 @@ class AutoSeedTest(unittest.TestCase):
         self.assertIn("CMakeLists.txt", added)
         self.assertIsNone(coder.io.yes)
 
+    def test_casual_chat_does_not_auto_seed_reflect(self):
+        """A plain greeting must never be force-reflected into fabricating edits.
+
+        The casual-chat bypass in base_coder.py sets plan_approved=True purely
+        to skip the planning gate for that turn — not as evidence of a stalled
+        approved implementation. Without the TaskMode check, that flag alone
+        could satisfy the plan_ok branch and fabricate a SEARCH/REPLACE edit
+        in response to "hello".
+        """
+        (self.root / "README.md").write_text("# repo\n", encoding="utf-8")
+        eng = MagicMock()
+        eng.ctx = MagicMock()
+        eng.ctx.plan_approved = True  # set by the casual-chat bypass, not a real plan
+
+        coder = MagicMock()
+        coder.root = str(self.root)
+        coder.io = MagicMock()
+        coder.io.yes = None
+        coder.reflected_message = None
+        coder.aider_edited_files = set()
+        coder._z_ni_auto_seed_done = False
+        coder.uncertainty_engine = eng
+        coder.task_mode = TaskMode.ASK
+        coder.get_inchat_relative_files = MagicMock(return_value=[])
+        added = []
+        coder.add_rel_fname = lambda r: added.append(r)
+
+        ok = maybe_auto_seed_reflect(
+            coder,
+            user_message="hello",
+            assistant_text=(
+                "It seems like you want to initiate a new request. Please let "
+                "me know what changes or updates you would like to make."
+            ),
+        )
+        self.assertFalse(ok)
+        self.assertEqual(added, [])
+        self.assertIsNone(coder.reflected_message)
+
 
 class ReflectionFloorTest(unittest.TestCase):
     def tearDown(self):
