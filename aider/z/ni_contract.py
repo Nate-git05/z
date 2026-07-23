@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Sequence, Set
 
-from aider.z.task_mode import TaskMode, classify_task_mode
+from aider.z.task_mode import TaskMode, classify_task_mode, looks_like_casual_chat
 
 
 def _env_bool(name: str, default: bool = True) -> bool:
@@ -390,6 +390,15 @@ def maybe_auto_seed_reflect(
     if getattr(coder, "reflected_message", None):
         return False
     if getattr(coder, "_z_ni_auto_seed_done", False):
+        return False
+
+    # Greetings / small-talk set plan_approved=True purely to skip the
+    # planning gate for that turn (aider/coders/base_coder.py's
+    # looks_like_casual_chat branch) — that is not evidence of a stalled
+    # *approved implementation*. Without this check, a plain "hello" could
+    # satisfy the plan_ok branch below and get force-reflected into
+    # fabricating an edit.
+    if looks_like_casual_chat(user_message):
         return False
 
     content = assistant_text or ""
